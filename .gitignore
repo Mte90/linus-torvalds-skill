@@ -1,0 +1,58 @@
+# === Secrets ===
+.env
+.env.*
+!.env.example
+
+# === Re-downloadable data (regenerable via pipeline) ===
+# data/lkml.mbox      — 192MB, from NNTP (scripts/fetch_torvalds_mbox.py)
+# data/corpus.jsonl   — 59MB,  from mbox (scripts/mbox_to_jsonl.py)
+# data/reviews.jsonl  — 40MB,  classified reviews
+# data/moves.jsonl    — 23MB,  LLM extraction (~$5-8 to regenerate)
+# data/patterns.json  — 116KB, from cluster stage
+# data/manifest.json  — 4KB,   provenance metadata
+data/
+
+# === Curated data worth committing (not re-downloadable) ===
+# skip_list.json — 6379 message IDs that produce 0 moves; saves API calls on future runs
+!data/skip_list.json
+
+# === Legacy output dir (no longer used; skill now lives in linus-torvalds-skill/) ===
+out/
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# === Test / cache ===
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# === Logs / checkpoints ===
+*.log
+data/checkpoint.jsonl
+data/fetch_progress.json
+
+# === Editor / IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Tool caches ===
+.cortexkit/
