@@ -4,6 +4,8 @@ Distills Linus Torvalds' code-review methodology from his LKML emails into a reu
 
 The final artifact is a single Markdown document — [`linus-torvalds-skill/SKILL.md`](linus-torvalds-skill/SKILL.md) — that captures *how* Torvalds reviews code: what he flags, why it matters, and how he reacts. It is built from **38,293 real review moves** extracted from 19,802 of his emails (2003–2026) on the Linux kernel mailing list.
 
+The extraction stage uses the **gpt-oss-120b** model via the **[regolo.ai](https://regolo.ai)** API. The distillation stage can use different models — three variants are included (`SKILL.md`, `SKILL-GLM.md`, `SKILL-Mistral.md`), each generated from the same data with a different LLM. See [Model Variants](#model-variants) below. The skill is fully language- and project-agnostic — it captures Torvalds' reviewing *method*, not his C/kernel-specific knowledge.
+
 ## What you get
 
 The skill is a decision engine, not a style guide. For each review trigger it gives you:
@@ -54,6 +56,7 @@ It covers 13 categories: API-stability, correctness, performance, complexity, ab
 
 4. **Extraction** — `src/torvalds_skill/extract.py`
    - One LLM call per email (sequential — batching tested and rejected: 46% move loss)
+   - LLM: **gpt-oss-120b** via **regolo.ai** API
    - Extracts structured review moves: `trigger`, `principle`, `response`, `severity`, `category`
    - Persistent skip-list for zero-move emails (saves API calls on future runs)
    - Checkpointing every 1,000 emails for crash recovery
@@ -68,11 +71,35 @@ It covers 13 categories: API-stability, correctness, performance, complexity, ab
 6. **Distillation** — `src/torvalds_skill/distill.py`
    - Single LLM call synthesizes the skill from sampled moves
    - Produces language-agnostic guidance with verbatim quotes
+   - LLM: **gpt-oss-120b** via **regolo.ai** API (`api.regolo.ai`)
    - Output: `linus-torvalds-skill/SKILL.md` (SKILL.md format compliant)
 
 7. **Verification** — `scripts/verify_skill.py`
    - Quality metrics: coverage, coherence, uniqueness, severity calibration
    - Validates skill completeness
+
+### Model Variants
+
+The distillation step can use different LLMs on **regolo.ai** to produce
+variant skills from the same extracted moves. All variants share identical
+input data (`data/patterns.json`); only the synthesizing model differs.
+
+| File                                  | Model                  | Words  | Notes                                      |
+| ------------------------------------- | ---------------------- | ------ | ------------------------------------------ |
+| `linus-torvalds-skill/SKILL.md`           | gpt-oss-120b (default) | ~7170  | Default; fast (~30s)                        |
+| `linus-torvalds-skill/skill-glm.md`       | glm5.2                 | ~10500 | Reasoning model; slow (~10–15 min, streaming) |
+| `linus-torvalds-skill/skill-mistral.md`   | mistral-small-4-119b   | ~9400  | Fast (~30s)                                 |
+
+Generate a variant:
+
+```bash
+python -m torvalds_skill distill --model glm5.2 --out linus-torvalds-skill/skill-glm.md
+python -m torvalds_skill distill --model mistral-small-4-119b --out linus-torvalds-skill/skill-mistral.md
+```
+
+> **Note:** GLM5.2 is a reasoning model — distillation can take 10+ minutes.
+> The pipeline uses SSE streaming to keep the connection alive during long
+> reasoning phases.
 
 ## Setup
 
@@ -114,8 +141,12 @@ python3 -m torvalds_skill extract --resume --workers 16
 # 5. Cluster moves into stratified samples
 python3 -m torvalds_skill cluster
 
-# 6. Distill into the final skill
+# 6. Distill into the final skill (default: gpt-oss-120b → SKILL.md)
 python3 -m torvalds_skill distill
+
+#    Generate a variant with a different model:
+python3 -m torvalds_skill distill --model glm5.2 --out linus-torvalds-skill/skill-glm.md
+python3 -m torvalds_skill distill --model mistral-small-4-119b --out linus-torvalds-skill/skill-mistral.md
 
 # 7. Verify quality
 python3 scripts/verify_skill.py
@@ -164,7 +195,9 @@ All files under `data/` are regenerable and excluded from version control. The o
 ```
 torvalds-skill/
 ├── linus-torvalds-skill/        # Distributable artifact (tracked)
-│   └── SKILL.md                 # The final skill document (SKILL.md format)
+│   ├── SKILL.md                 # Default skill (gpt-oss-120b, SKILL.md format)
+│   ├── skill-glm.md             # Variant: glm5.2
+│   └── skill-mistral.md         # Variant: mistral-small-4-119b
 ├── src/torvalds_skill/          # Pipeline source
 │   ├── classify.py              # Rule-based review filtering
 │   ├── extract.py               # LLM move extraction

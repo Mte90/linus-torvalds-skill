@@ -230,12 +230,13 @@ def stage_cluster():
     cluster_moves(MOVES, PATTERNS)
 
 
-def stage_distill(top_n: int):
-    """Distill patterns.json → SKILL.md."""
+def stage_distill(top_n: int, model: str = None, out: str = None):
+    """Distill patterns.json → SKILL.md (or custom output path)."""
     if not PATTERNS.exists():
         print(f"error: {PATTERNS} not found. Run cluster first.")
         sys.exit(1)
-    distill_skill(PATTERNS, SKILL, top_n=top_n)
+    target = Path(out) if out else SKILL
+    distill_skill(PATTERNS, target, top_n=top_n, model=model)
 
 
 def stage_run(sample_size: int, workers: int):
@@ -268,6 +269,10 @@ def main():
     p_distill = sub.add_parser("distill", help="distill patterns → skill")
     p_distill.add_argument("--top-n", type=int, default=40,
                            help="top N patterns to include")
+    p_distill.add_argument("--model", type=str, default=None,
+                           help="override LLM model (default: from config)")
+    p_distill.add_argument("--out", type=str, default=None,
+                           help="output file path (default: linus-torvalds-skill/SKILL.md)")
 
     p_run = sub.add_parser("run", help="run full pipeline")
     p_run.add_argument("--sample", type=int, default=2000,
@@ -286,7 +291,7 @@ def main():
     elif args.stage == "cluster":
         stage_cluster()
     elif args.stage == "distill":
-        stage_distill(args.top_n)
+        stage_distill(args.top_n, model=args.model, out=args.out)
     elif args.stage == "run":
         stage_run(args.sample, args.workers)
 
