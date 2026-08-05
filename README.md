@@ -1,36 +1,28 @@
 # Torvalds Skill
 
-Distills Linus Torvalds' code-review methodology from his LKML emails into a reusable, language-agnostic skill.
+Distills Linus Torvalds' code-review methodology from his LKML emails into a reusable, language-agnostic skill.  
+It is built from **38,293 real review moves** extracted from 19,802 of his emails (2003–2026) on the Linux kernel mailing list.  
 
-The final artifact is a single Markdown document — [`linus-torvalds-skill/SKILL.md`](linus-torvalds-skill/SKILL.md) — that captures *how* Torvalds reviews code: what he flags, why it matters, and how he reacts. It is built from **38,293 real review moves** extracted from 19,802 of his emails (2003–2026) on the Linux kernel mailing list.
+This repository provides 3 different skill generated with different models using the same prompt and corpus:
 
-The extraction stage uses the **gpt-oss-120b** model via the **[regolo.ai](https://regolo.ai)** API. The distillation stage can use different models — three variants are included (`SKILL.md`, `SKILL-GLM.md`, `SKILL-Mistral.md`), each generated from the same data with a different LLM. See [Model Variants](#model-variants) below. The skill is fully language- and project-agnostic — it captures Torvalds' reviewing *method*, not his C/kernel-specific knowledge.
+* [linus-torvalds-skill/SKILL.md](linus-torvalds-skill/SKILL.md) - Generated with [regolo.ai](https://regolo.ai) and GPT-OSS-120b
+* [linus-torvalds-skill/SKILL-GLM.md](linus-torvalds-skill/SKILL-GLM.md) - Generated with [regolo.ai](https://regolo.ai) and GLM 5.2
+* [linus-torvalds-skill/SKILL.md](linus-torvalds-skill/SKILL-Mistral.md) - Generated with [regolo.ai](https://regolo.ai) and Mistral-Small-4-119b
 
-## What you get
-
-The skill is a decision engine, not a style guide. For each review trigger it gives you:
-
-- **What to look for** — the concrete code smell
-- **Principle** — why it matters
-- **Severity** — reject / request-changes / nitpick / discussion / approve (calibrated to Torvalds' real distribution)
-- **Real quote** — verbatim from LKML, so the voice is part of the method
-
-It covers 13 categories: API-stability, correctness, performance, complexity, abstraction, style, process, concurrency, memory-safety, documentation, testing, error-handling, and other.
-
-## Architecture
+## Distillation Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Acquisition    │────▶│  Classification │────▶│  Extraction     │
-│  (NNTP gmane)   │     │  (rule-based)   │     │  (LLM per email)│
+│  Acquisition                   │────▶│  Classification │              ────▶│  Extraction     │
+│  (NNTP gmane)               │     │  (rule-based)   │                   │  (LLM per email)│
 └─────────────────┘     └─────────────────┘     └─────────────────┘
-                                                        │
-┌─────────────────┐     ┌─────────────────┐             │
-│  Verification   │◀────│  Distillation   │◀────────────┘
-│  (quality stats)│     │  (LLM synthesis)│
+                                                                      │
+┌─────────────────┐     ┌─────────────────┐                 │
+│  Verification                    │◀────│  Distillation   │◀────────────┘
+│  (quality stats)                 │     │  (LLM synthesis)│
 └─────────────────┘     └─────────────────┘
-                                │
-                                ▼
+                                              │
+                                              ▼
                         ┌──────────────────────┐
                         │  linus-torvalds-skill│
                         │  /SKILL.md           │
@@ -78,11 +70,10 @@ It covers 13 categories: API-stability, correctness, performance, complexity, ab
    - Quality metrics: coverage, coherence, uniqueness, severity calibration
    - Validates skill completeness
 
-### Model Variants
+## Model Variants
 
-The distillation step can use different LLMs on **regolo.ai** to produce
-variant skills from the same extracted moves. All variants share identical
-input data (`data/patterns.json`); only the synthesizing model differs.
+The distillation step can use different LLMs on **regolo.ai** to produce variant skills from the same extracted moves.  
+All variants share identical input data (`data/patterns.json`); only the synthesizing model differs.
 
 | File                                  | Model                  | Words  | Notes                                      |
 | ------------------------------------- | ---------------------- | ------ | ------------------------------------------ |
@@ -96,10 +87,6 @@ Generate a variant:
 python -m torvalds_skill distill --model glm5.2 --out linus-torvalds-skill/skill-glm.md
 python -m torvalds_skill distill --model mistral-small-4-119b --out linus-torvalds-skill/skill-mistral.md
 ```
-
-> **Note:** GLM5.2 is a reasoning model — distillation can take 10+ minutes.
-> The pipeline uses SSE streaming to keep the connection alive during long
-> reasoning phases.
 
 ## Setup
 
@@ -196,8 +183,8 @@ All files under `data/` are regenerable and excluded from version control. The o
 torvalds-skill/
 ├── linus-torvalds-skill/        # Distributable artifact (tracked)
 │   ├── SKILL.md                 # Default skill (gpt-oss-120b, SKILL.md format)
-│   ├── skill-glm.md             # Variant: glm5.2
-│   └── skill-mistral.md         # Variant: mistral-small-4-119b
+│   ├── SKILL-GLM.md             # Variant: glm5.2
+│   └── SKILL-Mistral.md         # Variant: mistral-small-4-119b
 ├── src/torvalds_skill/          # Pipeline source
 │   ├── classify.py              # Rule-based review filtering
 │   ├── extract.py               # LLM move extraction
@@ -219,14 +206,9 @@ torvalds-skill/
 
 ## Troubleshooting
 
-### Extraction hangs
-- Check API rate limits (429 errors in logs)
-- Reduce workers: `python3 -m torvalds_skill extract --workers 8 --resume`
-- Jitter and batched futures are enabled by default to prevent thundering-herd
-
 ### Zero moves extracted
 - Some emails are genuinely not reviews (discussions, RFC debates)
-- The skip-list persists these message IDs automatically
+- The `skip-list.json` persists these message IDs automatically
 - Check pre-filter patterns in `classify.py`
 
 ### Resume fails
