@@ -1,31 +1,31 @@
 # Torvalds Skill
 
-Distills Linus Torvalds' code-review methodology from his LKML emails into a reusable, language-agnostic skill.  
+Distills Linus Torvalds' code-review methodology from his LKML emails into a reusable, language-agnostic skill (**No swear words included**).  
 It is built from **38,293 real review moves** extracted from 19,802 of his emails (2003–2026) on the Linux kernel mailing list.  
 
 This repository provides 3 different skill generated with different models using the same prompt and corpus:
 
 * [linus-torvalds-skill/SKILL.md](linus-torvalds-skill/SKILL.md) - Generated with [regolo.ai](https://regolo.ai) and GPT-OSS-120b
 * [linus-torvalds-skill/SKILL-GLM.md](linus-torvalds-skill/SKILL-GLM.md) - Generated with [regolo.ai](https://regolo.ai) and GLM 5.2
-* [linus-torvalds-skill/SKILL.md](linus-torvalds-skill/SKILL-Mistral.md) - Generated with [regolo.ai](https://regolo.ai) and Mistral-Small-4-119b
+* [linus-torvalds-skill/SKILL-Mistral.md](linus-torvalds-skill/SKILL-Mistral.md) - Generated with [regolo.ai](https://regolo.ai) and Mistral-Small-4-119b
 
 ## Distillation Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Acquisition                   │────▶│  Classification │              ────▶│  Extraction     │
-│  (NNTP gmane)               │     │  (rule-based)   │                   │  (LLM per email)│
+│  Acquisition                     │────▶│          Classification            │      ────▶│      Extraction        │
+│  (NNTP gmane)               │     │         (rule-based)      │                   │     (LLM per email)│
 └─────────────────┘     └─────────────────┘     └─────────────────┘
-                                                                      │
+                                                                                      │
 ┌─────────────────┐     ┌─────────────────┐                 │
-│  Verification                    │◀────│  Distillation   │◀────────────┘
-│  (quality stats)                 │     │  (LLM synthesis)│
+│  Verification                    │◀────│  Distillation              │◀────────────┘
+│  (quality stats)                 │     │  (LLM synthesis)  │
 └─────────────────┘     └─────────────────┘
                                               │
                                               ▼
                         ┌──────────────────────┐
-                        │  linus-torvalds-skill│
-                        │  /SKILL.md           │
+                        │  linus-torvalds-skill           │
+                        │  /SKILL.md                     │
                         └──────────────────────┘
 ```
 
