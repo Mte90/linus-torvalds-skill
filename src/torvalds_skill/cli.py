@@ -280,6 +280,12 @@ def main():
     p_run.add_argument("--workers", type=int, default=8,
                        help="concurrent LLM calls")
 
+    p_soul = sub.add_parser("soul", help="generate AI assistant soul document")
+    p_soul.add_argument("--model", type=str, default=None,
+                        help="override LLM model (default: from config)")
+    p_soul.add_argument("--out", type=str, default=None,
+                        help="output file path (default: soul/soul.md)")
+
     args = parser.parse_args()
 
     print(f"config: model={config.MODEL}, host={config.HOST}")
@@ -294,6 +300,14 @@ def main():
         stage_distill(args.top_n, model=args.model, out=args.out)
     elif args.stage == "run":
         stage_run(args.sample, args.workers)
+    elif args.stage == "soul":
+        from .soul import generate_soul
+        patterns_path = Path(__file__).parent.parent.parent / "data" / "patterns.json"
+        if not patterns_path.exists():
+            print(f"ERROR: {patterns_path} not found. Run clustering first.")
+            return 1
+        output_path = Path(args.out) if args.out else Path(__file__).parent.parent.parent / "soul" / "soul.md"
+        generate_soul(patterns_path, output_path, model=args.model)
 
 
 if __name__ == "__main__":

@@ -99,13 +99,25 @@ SKILL QUALITIES
 ═══════════════════════════════════════════════════════════════════════
 
 1. Language-agnostic — see the critical rule above. This is non-negotiable.
-2. Actionable. Every principle must tell the reviewer WHAT to do and WHEN. Not "be careful" \
-but "when X appears, flag it because Y."
-3. Grounded in real examples. Use the provided quotes — they show the voice and tone \
-that IS part of the method. Preserve them verbatim.
-4. Honest about what the data shows. Use the actual counts. Don't invent statistics.
-5. Comprehensive. The skill should be a thorough reference, not a summary. Aim for \
-6000-9000 words. Cover each theme in depth with multiple examples.
+2. Four qualities of review rules — EVERY trigger must be ONE of these four types:
+   a) **Invariant TRUE**: A condition that MUST always be true (e.g., "API must not break existing users without compelling reason"). State it as a verifiable condition.
+   b) **Invariant FALSE**: A condition that MUST NEVER be true (e.g., "Never crash the system for a recoverable error"). State it as something to reject outright.
+   c) **Precedence rule**: An explicit ordering when rules conflict (e.g., "Correctness > Performance > Complexity > Style", "Breaking users > Performance optimization", "Security > Convenience").
+   d) **General guideline for identifiable pattern**: A concrete pattern that can be detected (e.g., "When you see X, flag it because Y"). Must have clear detection criteria, not vague advice.
+3. Explicit precedence chain — state the hierarchy early in the skill:
+   - Correctness (invariants, safety, no crashes) > Performance > Complexity > Style
+   - Protecting existing users > Adding new features
+   - Security > Convenience
+   - Bisectability > Quick fixes
+4. Concrete definitions — define key terms explicitly:
+   - "Bug": A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities.
+   - "Hack" / "Workaround": A temporary fix that masks the root cause without addressing it.
+   - "Patch": A code change (neutral term).
+   - "Non-negotiable": A rule that has no exceptions (e.g., "Never break existing APIs without compelling reason").
+5. Actionable. Every principle must tell the reviewer WHAT to do and WHEN. Not "be careful" but "when X appears, flag it because Y."
+6. Grounded in real examples. Use the provided quotes — they show the voice and tone that IS part of the method. Preserve them verbatim.
+7. Honest about what the data shows. Use the actual counts. Don't invent statistics.
+8. Comprehensive. The skill should be a thorough reference, not a summary. Aim for 6000-9000 words. Cover each theme in depth with multiple examples.
 
 ═══════════════════════════════════════════════════════════════════════
 YOUR TASK
@@ -122,7 +134,13 @@ differently. Group them semantically, not lexically. "Don't break userspace" and
 3. For each theme, pick the most representative quotes and triggers. Use multiple quotes \
 per theme when they show different facets. GENERALIZE every trigger using the \
 translation table and the self-check rules above.
-4. SYNTHESIZE the themes into the skill structure below.
+4. LABEL each trigger with its type: invariant-true, invariant-false, precedence-rule, \
+or general-guideline. Every trigger MUST be one of these four types — no soft guidelines.
+5. ENFORCE the precedence chain: when rules conflict, correctness > performance > \
+complexity > style. Make this explicit in the Precedence and Priorities section.
+6. DEFINE key terms concretely: bug, hack, workaround, patch, non-negotiable. No \
+vague language — each definition must be verifiable.
+7. SYNTHESIZE the themes into the skill structure below.
 
 The output MUST start with YAML frontmatter enclosed in --- fences, then the markdown body.
 
@@ -154,6 +172,7 @@ and a real Torvalds quote. Explain WHY each attitude matters.]
 [Comprehensive catalog of "when you see X, flag it" patterns, grouped by semantic \
 theme (not by the raw category labels — use themes you discover across categories). \
 For EACH trigger provide:
+- **Type**: invariant-true / invariant-false / precedence-rule / general-guideline
 - **What to look for**: generalized, language-agnostic description of the pattern
 - **Why it's a problem**: the underlying design principle being violated
 - **Severity**: reject / request-changes / nitpick
@@ -163,13 +182,31 @@ introduce it with the generalized trigger, then show the verbatim quote
 
 EVERY trigger must pass the self-check: no language-specific terms, makes sense to \
 reviewers in any language, describes a design problem. Cover at least 12 distinct \
-trigger themes. Each theme should have 3-6 specific triggers.]
+trigger themes. Each theme should have 3-6 specific triggers. Label each trigger \
+with its type (invariant-true, invariant-false, precedence-rule, or general-guideline).]
 
-## Severity Calibration
-[How to calibrate: when is something a reject vs. a request-changes vs. a nitpick? \
-Use the severity distribution from the data. Give concrete examples of each severity \
-level with real quotes. Explain the reasoning behind the calibration.]
+## Precedence and Priorities
+[Explicit hierarchy of rules when they conflict. State clearly:
+- Correctness (invariants, safety, no crashes) > Performance > Complexity > Style
+- Protecting existing users > Adding new features
+- Security > Convenience
+- Bisectability > Quick fixes
+- Measured performance > Theoretical optimization
 
+For each priority rule, explain WHY it takes precedence and give a real quote \
+showing Torvalds making that tradeoff. This section is CRITICAL — it resolves \
+ambiguity when multiple rules apply.]
+
+## Key Definitions
+[Define key terms explicitly so there is no ambiguity:
+- "Bug": A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities.
+- "Hack" / "Workaround": A temporary fix that masks the root cause without addressing it.
+- "Patch": A code change (neutral term).
+- "Non-negotiable": A rule that has no exceptions (e.g., "Never break existing APIs without compelling reason").
+- "Recoverable error": A condition that can be handled gracefully without crashing.
+- "API contract": The documented or implied behavior that external code depends on.
+
+For each definition, give a real Torvalds quote showing how he uses the term.]
 ## Anti-Patterns
 [What Torvalds consistently rejects: over-engineering, abstraction for its own sake, \
 breaking existing users, cleverness without measurement, etc. For each anti-pattern:
@@ -221,7 +258,7 @@ LANGUAGE must be invisible.
 """
 
 
-def _call_llm(prompt: str, retries: int = None, model: str = None) -> str:
+def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt: str = None) -> str:
     """Call the LLM for the distillation step. Returns raw text.
 
     Uses SSE streaming so reasoning models (e.g. GLM5.2) that spend minutes
@@ -229,11 +266,12 @@ def _call_llm(prompt: str, retries: int = None, model: str = None) -> str:
     the connection alive.
     """
     retries = retries if retries is not None else config.MAX_RETRIES
+    sys_prompt = system_prompt if system_prompt is not None else DISTILL_SYSTEM_PROMPT
 
     payload = {
         "model": model or config.MODEL,
         "messages": [
-            {"role": "system", "content": DISTILL_SYSTEM_PROMPT},
+            {"role": "system", "content": sys_prompt},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.3,

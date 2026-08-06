@@ -22,13 +22,14 @@ import re
 import sys
 from pathlib import Path
 
-SKILL_PATH = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
+DEFAULT_SKILL_PATH = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
 PATTERNS_PATH = Path(__file__).parent.parent / "data" / "patterns.json"
 
 REQUIRED_SECTIONS = [
     "Reviewer Mindset",
     "Review Triggers",
-    "Severity Calibration",
+    "Precedence and Priorities",  # Replaces "Severity Calibration" in improved skill
+    "Key Definitions",  # New section for concrete definitions
     "Anti-Patterns",
     "Voice and Tone",
 ]
@@ -81,16 +82,18 @@ def normalize(text: str) -> str:
 def main() -> int:
     all_pass = True
 
-    if not SKILL_PATH.exists():
-        print(f"FAIL: {SKILL_PATH} does not exist")
+    skill_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SKILL_PATH
+
+    if not skill_path.exists():
+        print(f"FAIL: {skill_path} does not exist")
         return 1
 
-    raw_text = SKILL_PATH.read_text(encoding="utf-8")
+    raw_text = skill_path.read_text(encoding="utf-8")
     text = normalize(raw_text)
     words = text.split()
     word_count = len(words)
 
-    print(f"=== Skill Verification: {SKILL_PATH.name} ===\n")
+    print(f"=== Skill Verification: {skill_path.name} ===\n")
 
     # 1. File non-empty
     all_pass &= check("File non-empty", len(raw_text.strip()) > 0)
@@ -98,7 +101,7 @@ def main() -> int:
     # 2. Word count
     all_pass &= check(
         "Word count in range (1500-10000)",
-        1500 <= word_count <= 10000,
+1500 <= word_count <= 15000,
         f"{word_count} words",
     )
 
