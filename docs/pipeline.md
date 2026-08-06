@@ -20,6 +20,39 @@ Four stages, each with a single responsibility:
 | 3. Cluster | `moves.jsonl` | `patterns.json` (325 samples) | No (stratified) | seconds |
 | 4. Distill | `patterns.json` | `SKILL.md` (7,000+ words) | Yes (1 call) | ~2 min |
 
+## Usage
+
+```bash
+# Run the full pipeline
+python3 -m torvalds_skill run --sample 2000 --workers 16
+
+# Run individual stages
+python3 -m torvalds_skill classify       # rule-based filter
+python3 -m torvalds_skill extract --resume --workers 16   # LLM extraction
+python3 -m torvalds_skill cluster        # stratified sampling
+python3 -m torvalds_skill distill       # generate SKILL.md
+python3 -m torvalds_skill soul          # generate soul.md
+
+# Generate a variant skill with a different model
+python3 -m torvalds_skill distill --model glm5.2 --out linus-torvalds-skill/SKILL-GLM.md
+python3 -m torvalds_skill distill --model mistral-small-4-119b --out linus-torvalds-skill/SKILL-Mistral.md
+
+# Generate a variant soul with a different model
+python3 -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
+python3 -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
+
+# Verify quality
+python3 scripts/verify_skill.py
+```
+
+### Resume after a crash
+
+```bash
+python3 -m torvalds_skill extract --resume --workers 16
+```
+
+Extraction checkpoints every 1,000 emails and skips zero-move message IDs from `data/skip_list.json`.
+
 ## Stage 1: Classify (`classify.py`)
 
 **Purpose:** filter announcements from actual reviews.
@@ -171,8 +204,18 @@ A **soul document** defines the AI's persona, values, and voice — not its rule
 The soul generator uses the same `patterns.json` but a different system prompt
 focused on identity, decision hierarchy, and communication style.
 
+Three variants generated from the same `patterns.json`:
+
+| File | Model | Words | Notes |
+|---|---|---|---|
+| `soul.md` | gpt-oss-120b | ~990 | Default. |
+| `soul-glm.md` | glm5.2 | ~1,650 | Reasoning model. Needs streaming + 600s timeout. |
+| `soul-mistral.md` | mistral-small-4-119b | ~1,940 | Most verbose. |
+
 ```bash
 python -m torvalds_skill soul
+python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
+python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
 ```
 
 Output: `soul/soul.md` — includes a Voice and Tone section that replicates
@@ -208,7 +251,9 @@ linus-torvalds-skill/SKILL.md    ~50 KB, 7,000+ words
 linus-torvalds-skill/SKILL-GLM.md    ~67 KB
 linus-torvalds-skill/SKILL-Mistral.md    ~35 KB
     ↓ soul
-soul/soul.md             ~5 KB, 1,000 words
+soul/soul.md             ~5 KB
+soul/soul-glm.md         ~10 KB
+soul/soul-mistral.md     ~12 KB
 ```
 
 ## Configuration

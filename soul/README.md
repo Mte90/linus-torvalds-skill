@@ -5,18 +5,9 @@ This one distils Linus Torvalds' reviewer temperament from 19,802 of his LKML
 emails into a portable identity card that can be prepended to any AI reviewer
 system prompt.
 
-## What is a soul?
-
-A skill tells an AI *what to do*. A soul tells it *who to be*.
-
-- **Skill** (`SKILL.md`) — rules, triggers, precedence, definitions. The "how".
-- **Soul** (`soul.md`) — identity, values, decision hierarchy, voice. The "who".
-
-Use them together: the soul sets the temperament, the skill sets the rules.
-
 ## What's in it
 
-`Soul.md` contains:
+`soul.md` contains:
 
 | Section | Purpose |
 |---|---|
@@ -46,16 +37,15 @@ encodes the **severity signal**: when this reviewer swears, the issue is serious
 ## Generation
 
 ```bash
-# Generate soul.md from the same patterns.json used by the skill
 PYTHONPATH=src python -m torvalds_skill soul
 
 # Use a different model
 PYTHONPATH=src python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
+PYTHONPATH=src python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
 ```
 
-The soul generator uses the same `data/patterns.json` (325 stratified samples
-across 13 categories) as the skill distiller, but with a different system
-prompt that focuses on persona, values, and voice rather than review rules.
+The soul generator uses `data/patterns.json` (325 stratified samples across 13
+categories) with a system prompt focused on persona, values, and voice.
 
 ## License
 
