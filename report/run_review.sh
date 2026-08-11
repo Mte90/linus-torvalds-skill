@@ -94,7 +94,7 @@ run_review() {
 Write the report to: $out_file"
 
   echo "[$(date +%H:%M:%S)] Starting $model_label review -> $(basename "$out_file")"
-  opencode run --prompt "$prompt" >/dev/null 2>&1 || {
+  opencode run -m "regolo-ai/$model_label" "$prompt" > "$REPORT_DIR/review-$model_label.log" 2>&1 || {
     echo "[$(date +%H:%M:%S)] $model_label review FAILED" >&2
     return 1
   }

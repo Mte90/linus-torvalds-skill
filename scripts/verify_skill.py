@@ -51,6 +51,53 @@ BANNED_PATTERNS = [
     r"NotImplementedError",
 ]
 
+# C/kernel-specific tokens forbidden outside verbatim quote blocks
+FORBIDDEN_TERMS = [
+    "BUG_ON", "WARN_ON", "READ_ONCE", "WRITE_ONCE",
+    "rcu_dereference", "copy_to_user", "copy_from_user",
+    "get_user", "put_user", "kmalloc", "kfree",
+    "spin_lock", "mutex", "volatile",
+    "#ifdef", "#ifndef", "#define", "inline", "typedef",
+    "strlcpy", "strscpy", "IS_ERR", "ERR_PTR",
+    "GFP_KERNEL", "module_alloc", "procfs", "sysfs",
+    "debugfs", "ioctl",
+]
+
+
+def check_forbidden_terms(path: Path) -> list[tuple[int, str, str]]:
+    """Check for C/kernel-specific tokens outside verbatim quote blocks.
+
+    Returns a list of (line_number, token, line_content) tuples for violations.
+    Exempts:
+      - Lines starting with '> ' (markdown blockquotes)
+      - Text inside quoted spans (straight "..." and curly "...")
+      - Text inside inline code spans (`...`)
+    """
+    violations: list[tuple[int, str, str]] = []
+    content = path.read_text(encoding="utf-8")
+
+    # Strip quoted spans: straight double-quotes, curly double-quotes, inline code backticks
+    quote_patterns = [
+        re.compile(r'"[^"]*"'),
+        re.compile(r'\u201c[^\u201d]*\u201d'),
+        re.compile(r'`[^`]*`'),
+    ]
+
+    for line_num, line in enumerate(content.splitlines(), start=1):
+        if line.strip().startswith('> '):
+            continue
+
+        cleaned = line
+        for pat in quote_patterns:
+            cleaned = pat.sub('', cleaned)
+
+        for term in FORBIDDEN_TERMS:
+            if term in cleaned:
+                violations.append((line_num, term, line.strip()))
+
+    return violations
+
+
 
 def check(label: str, condition: bool, detail: str = "") -> bool:
     status = "PASS" if condition else "FAIL"
@@ -131,7 +178,15 @@ def main() -> int:
     all_pass &= check(
         "No placeholder/TODO/stub text",
         len(banned_found) == 0,
-        f"banned: {banned_found}" if banned_found else "clean",
+    )
+
+    # 5b. No forbidden C/kernel terms outside quote blocks
+    print()
+    forbidden_violations = check_forbidden_terms(skill_path)
+    all_pass &= check(
+        "No forbidden C/kernel terms outside quotes",
+        len(forbidden_violations) == 0,
+        f"violations: {forbidden_violations}" if forbidden_violations else "clean",
     )
 
     # 6. Category coverage + moves extracted (if patterns.json exists)

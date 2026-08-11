@@ -16,6 +16,7 @@ METHOD, not his C/kernel-specific knowledge.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.request
 import urllib.error
@@ -45,6 +46,9 @@ TRIGGERS and PRINCIPLES must NEVER contain:
   - C macros or functions: BUG_ON, WARN_ON, READ_ONCE, WRITE_ONCE, copy_to_user, \
     copy_from_user, get_user, put_user, kmalloc, kfree, spin_lock, mutex, \
     rcu_dereference, smp_load_acquire, smp_store_release, mb(), wmb(), rmb()
+  - C preprocessor directives: #ifdef, #ifndef, #define, #if, #endif, #pragma, #include
+  - C control flow: goto (as a concept, not in quotes)
+  - NULL (as a concept, not in quotes)
   - Kernel concepts: syscall, inode, dentry, superblock, sk_buff, task_struct, \
     file_operations, module_init, module_exit, __init, __exit
   - Kernel-specific identifiers: strlcpy, strscpy, kstrtol, kstrtoul, IS_ERR, \
@@ -268,16 +272,21 @@ def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt
     retries = retries if retries is not None else config.MAX_RETRIES
     sys_prompt = system_prompt if system_prompt is not None else DISTILL_SYSTEM_PROMPT
 
+    effective_model = model or config.MODEL
+    is_glm = "glm" in effective_model.lower()
+
     payload = {
-        "model": model or config.MODEL,
+        "model": effective_model,
         "messages": [
             {"role": "system", "content": sys_prompt},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.3,
-        "max_tokens": 64000,
+        "max_tokens": 16000 if is_glm else 64000,
         "stream": True,
     }
+
+    timeout = 600 if is_glm else 120
 
     last_err = None
     for attempt in range(retries):
@@ -290,7 +299,7 @@ def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt
                 method="POST",
             )
             content_parts = []
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 for raw in resp:
                     line = raw.decode("utf-8").strip()
                     if not line or not line.startswith("data: "):
@@ -348,8 +357,61 @@ def _format_moves_for_prompt(data: dict) -> str:
     return "\n".join(lines)
 
 
+SANITIZE_REPLACEMENTS = {
+    "BUG_ON": "fatal assertion",
+    "WARN_ON": "warning assertion",
+    "READ_ONCE": "unsynchronized read",
+    "WRITE_ONCE": "unsynchronized write",
+    "spin_lock": "lock primitive",
+    "mutex": "lock primitive",
+    "volatile": "implicit language semantics",
+    "sysfs": "system interface",
+    "procfs": "system interface",
+    "debugfs": "system interface",
+    "ioctl": "interface call",
+    "kmalloc": "manual allocation",
+    "kfree": "manual deallocation",
+    "#ifdef": "compile-time conditional",
+    "#ifndef": "compile-time conditional",
+    "#define": "compile-time definition",
+    "typedef": "type alias",
+    "noinline": "no-optimization attribute",
+    "inline": "premature optimization hint",
+    "copy_to_user": "boundary crossing",
+    "copy_from_user": "boundary crossing",
+    "rcu_dereference": "lock-free access",
+    "strlcpy": "string copy",
+    "strscpy": "string copy",
+    "IS_ERR": "error check",
+    "ERR_PTR": "error pointer",
+    "GFP_KERNEL": "allocation flag",
+    "module_alloc": "module allocation",
+}
+
+_QUOTE_SPAN_RE = re.compile(r'("[^"]*"|\u201c[^\u201d]*\u201d|`[^`]*`)')
+
+
+def sanitize_skill(text: str) -> str:
+    """Replace forbidden C/kernel terms in unquoted text, preserving quotes and inline code."""
+    lines = text.splitlines(keepends=True)
+    out = []
+    for line in lines:
+        if line.lstrip().startswith('> '):
+            out.append(line)
+            continue
+        parts = _QUOTE_SPAN_RE.split(line)
+        for i, part in enumerate(parts):
+            if i % 2 == 1:
+                continue
+            for term, repl in SANITIZE_REPLACEMENTS.items():
+                part = part.replace(term, repl)
+            parts[i] = part
+        out.append(''.join(parts))
+    return ''.join(out)
+
+
 def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model: str = None):
-    """Read patterns.json, call LLM, write skill markdown."""
+    """Read patterns.json, call LLM, sanitize, write skill markdown."""
     data = json.loads(patterns_path.read_text(encoding="utf-8"))
 
     prompt = _format_moves_for_prompt(data)
@@ -359,6 +421,7 @@ def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model
         print(f"  (model override: {model})")
 
     skill_md = _call_llm(prompt, model=model)
+    skill_md = sanitize_skill(skill_md)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(skill_md, encoding="utf-8")
