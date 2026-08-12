@@ -1,9 +1,9 @@
 ---
 title: Skill variant comparison — antirez/smallchat
-date: 2026-08-11
+date: 2026-08-12
 target: antirez/smallchat (706 LOC, C)
 models: [gpt-oss-120b, glm5.2, mistral-small-4-119b]
-previous_run: 2026-08-06
+previous_run: 2026-08-12 (keyword calibration)
 ---
 
 # Skill Variant Comparison
@@ -14,230 +14,185 @@ Each model received its matching skill file and soul file. This document
 synthesizes where they agree, where they diverge, and what that says about the
 skill + model combination.
 
-This run uses skill and soul files regenerated on 2026-08-11 after prompt
-improvements (forbidden-terms list, translation table, sanitizer post-processor,
-code-fence stripper). The previous run (2026-08-06) used the pre-improvement
-files. Where the two runs diverge, this document notes the shift.
+This run uses skill and soul files regenerated on 2026-08-12 after removing the
+keyword-based decision rules from the calibration data. The previous run used
+keyword rules derived from the corpus, which caused mistral to collapse from 25
+findings to 0 (APPROVE) — it treated the keyword checklist as exhaustive and,
+finding no C/kernel keyword matches in SmallChat, approved the code outright.
+The fix replaces keyword matching with category-based severity calibration
+(P(severity | category) only), which is genuinely language-agnostic.
 
 ## Headline numbers
 
 | Metric | gpt-oss-120b | glm5.2 | mistral-small-4-119b |
 |--------|-------------|--------|----------------------|
-| Findings (total) | 9 | 16 | 25 |
-| CRITICAL | 1 | 2 | 0 |
-| HIGH | 6 | 3 | 0 |
-| MEDIUM | 1 | 5 | 0 |
-| LOW | 1 | 6 | 25 |
-| Report words | 667 | 2,840 | 2,194 |
-| Verdict | FAIL | FAIL | Does not pass |
+| Findings (total) | 18 | 12 | 15 |
+| CRITICAL | 4 | 1 | 1 |
+| HIGH | 4 | 2 | 9 |
+| MEDIUM | 4 | 4 | 0 |
+| LOW | 6 | 5 | 5 |
+| Report words | 936 | 2,350 | 1,993 |
+| Verdict | FAIL | FAIL | FAIL |
 
-All three models reach the same verdict: the code does not pass Torvalds' review.
-But the severity distribution has shifted dramatically from the previous run.
+All three models now agree the code fails. This is the most important outcome:
+no model approves code with known memory-corruption bugs.
 
-### Shift from previous run (2026-08-06)
+### Shift from previous run (keyword calibration → category calibration)
 
 | Metric | gpt-oss-120b | glm5.2 | mistral-small-4-119b |
 |--------|-------------|--------|----------------------|
-| Findings (prev) | 21 | 15 | 12 |
-| Findings (now) | 9 | 16 | 25 |
-| CRITICAL (prev) | 2 | 2 | 3 |
-| CRITICAL (now) | 1 | 2 | 0 |
-| Words (prev) | 4,076 | 3,449 | 2,426 |
-| Words (now) | 667 | 2,840 | 2,194 |
+| Findings (prev) | 13 | 20 | 0 |
+| Findings (now) | 18 | 12 | 15 |
+| CRITICAL (prev) | 2 | 2 | 0 |
+| CRITICAL (now) | 4 | 1 | 1 |
+| Verdict (prev) | FAIL | FAIL | APPROVE |
+| Verdict (now) | FAIL | FAIL | FAIL |
 
-gpt-oss-120b shrank from 21 findings to 9 and from 4,076 words to 667 — it
-became far more concise but lost coverage on several bugs it previously caught.
-glm5.2 stayed roughly stable (15 → 16 findings, 3,449 → 2,840 words) and is the
-only model that maintained its bug-finding quality. mistral inverted: previously
-12 findings with 3 CRITICAL and the highest signal-to-noise ratio; now 25
-findings, all LOW, zero CRITICAL, and several false positives.
+The keyword-rules removal affected the three models differently:
 
-## Consensus findings (all three agree)
+- **mistral recovered**: 0 findings → 15 findings, APPROVE → FAIL. This is the
+  primary outcome of the fix. The keyword-based decision tree was causing mistral
+  to treat C/kernel tokens (`set_fs`, `size_t`, `mutex`) as an exhaustive
+  checklist. When none matched SmallChat, it approved. With category-based
+  calibration, mistral now reasons about severity by category (error-handling,
+  memory-safety, correctness) and produces real findings.
 
-The consensus core has thinned. In the previous run, seven findings were
-unanimous. Now only two are.
+- **glm5.2 tightened**: 20 → 12 findings. It still found the most consequential
+  bug (`acceptClient(-1)` memory corruption) but dropped several lower-signal
+  findings from the previous run. The precision improved: every finding now maps
+  to a specific code location with a concrete fix.
 
-### 1. Unchecked `write()` returns — severity varies (all three agree)
+- **gpt-oss grew**: 13 → 18 findings, 2 → 4 CRITICAL. The growth is mixed —
+  two of the four CRITICALs are the same bug (chatMalloc OOM) reported in two
+  files. But it also found `setRawMode` terminal state and `setsockopt` errors
+  silently ignored, both real issues.
 
-All three models flag that `write()` return values are discarded in
-`sendMsgToAllClientsBut`, the client send path, and `inputBufferShow`. Severity
-diverges sharply: gpt-oss-120b rates it HIGH, glm5.2 MEDIUM, mistral LOW. The
-fix is the same everywhere: check the return and handle short writes.
+## Consensus findings
 
-### 2. No handling of partial reads / message framing — gpt-oss + mistral
+All three models now agree on the core failure: the code has real bugs that
+must be fixed before merge. Three findings are shared by at least two models:
 
-`read()` may return a partial message; the code assumes a full line and forwards
-it directly. gpt-oss-120b flags this MEDIUM, mistral LOW. glm5.2 does not flag
-it explicitly but covers the broader error-handling theme.
+1. **`write()` return values ignored** (all three) — every `write` to a client
+   socket discards the return. gpt-oss rates HIGH, glm5.2 rates LOW, mistral
+   rates HIGH. glm5.2 notes it as a documented design choice for a teaching
+   example.
 
-## Key divergence: glm5.2 is the only model finding the CRITICAL bugs
+2. **Missing null terminator on `c->nick`** (glm5.2 + mistral) — `chatMalloc`
+   allocates `nicklen+1` but only `nicklen` bytes are copied. The +1 byte is
+   uninitialized heap garbage, broadcast to all clients. glm5.2 rates HIGH,
+   mistral rates CRITICAL.
 
-In the previous run, the headline divergence was that only mistral found the
-un-NUL-terminated nickname. In this run, the situation has reversed completely.
+3. **`chatMalloc`/`chatRealloc` OOM abort** (gpt-oss + glm5.2) — `exit(1)` on
+   out-of-memory. gpt-oss rates HIGH, glm5.2 rates LOW and calls it "a
+   documented design choice."
 
 ### Bugs only glm5.2 found
 
-glm5.2 is the sole model that found four of the five most consequential bugs in
-the codebase — bugs that all three models (including glm5.2) found in the
-previous run:
+glm5.2 remains the sole model that found the most consequential bug:
 
-1. **SIGPIPE kills the server** (CRITICAL) — `write()` to a dead socket raises
-   `SIGPIPE`; no `signal(SIGPIPE, SIG_IGN)` anywhere. A client disconnecting
-   kills the server. Previously unanimous CRITICAL; now only glm5.2 flags it.
-
-2. **`acceptClient()` return unchecked → `createClient(-1)`** (CRITICAL) —
+1. **`acceptClient()` return unchecked → `createClient(-1)`** (CRITICAL) —
    `accept()` failure passes `-1` to `createClient`, which writes to
-   `Chat->clients[-1]` — out-of-bounds memory corruption. Previously unanimous
-   CRITICAL; now only glm5.2 flags it.
+   `Chat->clients[-1]` — out-of-bounds memory corruption. Triggered by EMFILE,
+   ECONNABORTED, or any transient accept failure under load.
 
-3. **`select()` exits on `EINTR`** (HIGH) — `select() == -1` calls `exit(1)`
-   with no `errno == EINTR` check. Any delivered signal kills the server.
-   Previously unanimous MEDIUM; now only glm5.2 flags it (upgraded to HIGH).
+glm5.2 also found two bugs no other model caught:
 
-4. **No bounds check on `fd` vs `MAX_CLIENTS`** (HIGH) — `clients[fd]` indexed
-   without validating `fd < MAX_CLIENTS`; `FD_SET(j, &readfds)` with
-   `j >= FD_SETSIZE` corrupts the `fd_set`. Previously unanimous HIGH; now only
-   glm5.2 flags it.
+2. **`select()` exits on `EINTR`** (HIGH) — any delivered signal kills the
+   server. EINTR is the textbook recoverable condition.
 
-5. **`TCPConnect` leaks `addrinfo` on `EINPROGRESS`** (MEDIUM) — early return
-   skips `freeaddrinfo(servinfo)`. Previously unanimous; now only glm5.2 flags it.
+3. **`freeaddrinfo()` leaked on `EINPROGRESS` early return** (MEDIUM) — the
+   non-blocking connect path skips `freeaddrinfo(servinfo)`. Real resource leak.
 
-### The nickname NUL terminator — reversal
+### Bugs only mistral found
 
-The most consequential divergence from the previous run: the un-NUL-terminated
-nickname bug.
+Mistral found one bug neither other model flagged:
 
-```c
-int nicklen = snprintf(nick, sizeof(nick), "user:%d", fd);
-c->nick = chatMalloc(nicklen + 1);
-memcpy(c->nick, nick, nicklen);   // copies nicklen bytes — NO NUL
-```
+1. **`assert` used for runtime sanity check** (HIGH) — `assert(Chat->clients[c->fd] == NULL)`
+   aborts the server if the slot is occupied. Under `-DNDEBUG` the check vanishes
+   entirely. glm5.2 mentions this in passing but rates it LOW; mistral correctly
+   identifies it as HIGH.
 
-`snprintf` returns the length excluding the terminator. `memcpy` copies `nicklen`
-bytes. The allocated `nicklen+1`th byte is uninitialized heap memory. `c->nick`
-is not a valid C string. Every `printf("%s", c->nick)`, every relay reads past
-the allocation until it hits a zero byte. Heap over-read on every connection.
-The `/nick` command path four screens down does it correctly (`nicklen + 1`),
-confirming this is a copy-paste bug, not a design choice.
+### Bugs only gpt-oss found
 
-In the previous run, only mistral found this (CRITICAL). In this run:
-- **gpt-oss-120b**: found it, rated CRITICAL. The headline finding of its review.
-- **glm5.2**: found it, rated HIGH, with the most detailed analysis (cross-references
-  the correct `/nick` path, traces the data flow to `sendMsgToAllClientsBut`,
-  identifies it as an information leak to other clients).
-- **mistral**: did NOT find it. Did not flag it at all.
+gpt-oss found two issues neither other model flagged:
 
-This is a complete reversal. The model that previously uniquely caught this bug
-now misses it, while the two that previously missed it now catch it.
+1. **`setsockopt` errors silently ignored** (CRITICAL) — lines 33 and 46 call
+   `setsockopt` with "no need to check for errors." gpt-oss rates this CRITICAL,
+   which is aggressive — the comment says "best-effort" — but the finding is
+   technically correct.
 
-## Findings unique to one model
-
-### gpt-oss-120b only
-- **Missing NUL terminator on nick** (CRITICAL) — the headline finding. gpt-oss
-  found it this run; missed it last run.
-- `setRawMode()` return discarded (HIGH) — previously unanimous MEDIUM; now only
-  gpt-oss flags it.
-- Magic number for input buffer size `IB_MAX 128` (LOW).
-
-### glm5.2 only
-- **SIGPIPE kills server** (CRITICAL) — previously unanimous; now glm5.2 alone.
-- **`acceptClient(-1)` memory corruption** (CRITICAL) — previously unanimous; now
-  glm5.2 alone.
-- **`select()` EINTR → exit** (HIGH) — previously unanimous; now glm5.2 alone.
-- **No fd bounds check** (HIGH) — previously unanimous; now glm5.2 alone.
-- **`assert()` for recoverable condition** (MEDIUM) — `assert` compiled out in
-  release; recoverable condition turned fatal in debug.
-- **No test suite** (MEDIUM) — "zero tests. The code compiles. That is all that
-  was verified."
-- **`TCPConnect` addrinfo leak** (MEDIUM) — previously unanimous; now glm5.2 alone.
-- **`socketSetNonBlockNoDelay` return ignored** (MEDIUM) — blocking socket can
-  hang the event loop.
-- `MAX_CLIENTS` comment contradicts name (LOW).
-- Dead code in client — unreachable `close(s); return 0;` (LOW).
-- `read()` from stdin does not handle `EINTR` (LOW).
-- `chatMalloc`/`chatRealloc` OOM abort — acceptable, noted with tradeoff (LOW).
-- Makefile `.PHONY` missing (LOW).
-- Makefile `CFLAGS` ordering — flags after sources (LOW).
-
-### mistral only
-- 25 LOW findings, no CRITICAL or HIGH. Several are false positives or
-  self-contradictory:
-  - "No handling for `free()` failure" — `free()` returns `void`; the fix says
-    "Remove the check for free() return value — it is not necessary," contradicting
-    the finding.
-  - "No handling for `bind()` failure" — the code does check `bind()` return and
-    exits on failure. False positive.
-  - "No handling for `$(CC)` failure in build rules" — `make` exits on non-zero
-    return by default. The fix (`|| exit 1`) is redundant.
-  - "No handling for `setsockopt()` failure in `createTCPServer()`" — the code
-    checks and exits. False positive.
-- The review's own summary says "LOW: 14" but there are 25 `[LOW]` headers. The
-  model miscounted its own findings.
-- The verdict says "does not pass" but also "these issues are not blockers" —
-  internally contradictory.
+2. **`setRawMode` can leave terminal in broken state** (CRITICAL) —
+   `atexit_registered` is set before `tcgetattr` succeeds, so cleanup tries to
+   restore a terminal state that was never saved. Real bug, real impact.
 
 ## Skill quality observations
 
 ### Trigger labeling
-All three models applied trigger labels (invariant-true, invariant-false,
-guideline) and cited specific trigger numbers. glm5.2's labeling is the most
-precise — every finding maps to a numbered trigger with the theme name. gpt-oss
-labels are correct but less specific. mistral labels are present but often
-mismatched: several findings are labelled "invariant-true" with trigger 7.3
-("does not clean up resources on error paths") for issues that are really about
-unchecked returns, not resource cleanup.
+
+glm5.2's trigger labeling remains the most precise — every finding maps to a
+numbered trigger with the theme name (e.g., "Trigger 6.2 — Missing cleanup on
+error paths"). gpt-oss labels triggers by name without numbers. Mistral labels
+triggers by name and includes the trigger description — a significant improvement
+from the previous run where it applied no trigger labels at all.
 
 ### Voice and tone
-glm5.2 has the strongest Torvalds voice: "This is complete and utter shit,"
-"This is untested code, and it shows," "the predictable consequences of
-shipping code with no tests." Profanity is reserved for CRITICAL findings on
-negligent bugs, matching the soul's directive. gpt-oss is direct but more
-measured — no profanity this run (previously it was the most profuse). mistral's
-voice is flat and formulaic — the closing quote attempts Torvalds' tone but the
-body reads like a checklist.
+
+glm5.2 has the strongest Torvalds voice: "One line. This is complete and utter
+shit. You do not feed an error sentinel into an array index. Ever." Direct,
+technical, profane where warranted. gpt-oss is measured but forceful: "This is
+bullshit — if you can't handle an error, you shouldn't be calling the function."
+Mistral's voice is the weakest — correct in structure but flat in tone, reading
+more like a checklist than a review.
+
+### Calibration impact (keyword → category)
+
+The keyword-rules removal had the expected effect on mistral and a neutral
+effect on the other two:
+
+- **mistral**: recovered from 0 to 15 findings. The category-based calibration
+  gives the model severity guidance without forcing it to match specific tokens.
+  This is the correct design — the skill should teach *how to think about
+  severity*, not *what keywords to look for*.
+
+- **glm5.2**: tightened from 20 to 12 findings. The previous run's keyword rules
+  may have been inflating the count by suggesting patterns to look for. Without
+  them, glm5.2 focuses on the bugs it can justify from the code itself.
+
+- **gpt-oss**: grew from 13 to 18 findings. The category-based calibration may
+  be giving the model more confidence to flag issues without needing a keyword
+  match.
 
 ### Coverage vs. precision tradeoff
-- **glm5.2**: 16 findings, 2 CRITICAL, 3 HIGH. Found every consequential bug in
-  the codebase. Highest signal-to-noise ratio. The only model that found bugs
-  no other model found at CRITICAL severity. 2,840 words — thorough but not
-  bloated.
-- **gpt-oss-120b**: 9 findings, 1 CRITICAL. Found the nickname bug (which glm5.2
-  also found) but missed SIGPIPE, `acceptClient(-1)`, `select()` EINTR, fd
-  bounds, and the addrinfo leak — all of which it caught in the previous run.
-  667 words — very concise, but the brevity came at the cost of missing
-  correctness bugs.
-- **mistral**: 25 findings, 0 CRITICAL, 0 HIGH. Highest count, lowest signal.
-  Several false positives. Missed every CRITICAL bug. The review that previously
-  had the highest signal-to-noise ratio now has the lowest. 2,194 words — much
-  of it spent on low-value findings like "magic value `-O2` lacks justification."
 
-### Regression from previous run
-The skill regeneration affected the three models very differently:
-- **glm5.2** improved or maintained quality on every dimension. It is now the
-  clear standout.
-- **gpt-oss-120b** became more concise (4,076 → 667 words) but lost coverage on
-  critical bugs it previously caught. The conciseness may be a side effect of the
-  tightened prompt — the model may be interpreting the "no useless commentary"
-  directive too aggressively and skipping findings.
-- **mistral** collapsed. The model that previously produced the sharpest, most
-  economical review now produces volume over signal. The 25 LOW findings suggest
-  the model is pattern-matching on the trigger list rather than reasoning about
-  severity. The skill prompt changes may have pushed mistral toward breadth over
-  depth.
+- **glm5.2**: 12 findings, 1 CRITICAL, 2 HIGH. Found the most consequential bug
+  (acceptClient(-1)) that no other model found. Highest precision — every finding
+  maps to a specific code location with a concrete fix. 2,350 words — thorough
+  but not bloated. The clear standout for bug-finding.
+
+- **gpt-oss-120b**: 18 findings, 4 CRITICAL (2 are duplicates), 4 HIGH. Widest
+  coverage but lowest precision — two CRITICALs are the same bug reported twice.
+  Found setsockopt and setRawMode bugs that glm5.2 missed. 936 words — concise.
+
+- **mistral**: 15 findings, 1 CRITICAL, 9 HIGH. Dramatic recovery from the
+  previous run's 0 findings. The HIGH count is inflated (several are the same
+  "ignored error return" pattern applied to different call sites), but the
+  findings are real. 1,993 words — thorough. The model is now functional as a
+  reviewer.
 
 ## Recommendation
 
-For a codebase of this size (<1000 LOC), glm5.2 is now the strongest single-model
-reviewer. It found every CRITICAL bug, maintained the Torvalds voice, and
-produced the most precise trigger labeling. If running one model only, use glm5.2.
+For a codebase of this size (<1000 LOC), glm5.2 remains the strongest
+single-model reviewer. It found the most consequential bug (acceptClient(-1))
+that no other model found, maintained the strongest Torvalds voice, and
+produced the most precise trigger labeling.
 
 For production review, run at least two models and union the findings. gpt-oss
-caught the nickname bug with the right severity (CRITICAL) where glm5.2 rated it
-HIGH — the severity calibration differs even when both find the same bug. But
-glm5.2 caught four CRITICAL/HIGH bugs that gpt-oss missed entirely.
+catches setsockopt and setRawMode issues that glm5.2 skips; glm5.2 catches
+acceptClient(-1) and select() EINTR that gpt-oss misses. Together they cover
+more ground than either alone.
 
-The previous run's recommendation (mistral for signal-to-noise, gpt-oss for
-breadth, glm5.2 as middle ground) no longer holds. The regenerated skill files
-shifted the models' behavior: glm5.2 improved, gpt-oss narrowed, and mistral
-collapsed. This suggests the skill prompt changes interact differently with
-different models — a finding worth tracking as the skill evolves further.
+Mistral is now functional as a reviewer — it produces real findings and correctly
+fails the code. It should not be used as a sole reviewer (it missed
+acceptClient(-1) and select() EINTR), but it is no longer dangerous (it no
+longer approves code with known bugs). The keyword-rules removal was the correct
+fix.

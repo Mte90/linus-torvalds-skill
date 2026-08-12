@@ -48,6 +48,7 @@ done
 review_prompt() {
   local skill_file="$1"
   local soul_file="$2"
+  local out_file="$3"
   cat <<EOF
 You are a code reviewer applying the Linus Torvalds reviewer skill to a real codebase.
 
@@ -78,6 +79,7 @@ Rules:
 - English. Torvalds' voice from the soul.
 
 Read all source files first, then the skill, then the soul, then write the report.
+Write the final report to: $out_file
 EOF
 }
 
@@ -89,15 +91,20 @@ run_review() {
   local out_file="$4"
   local prompt
 
-  prompt="$(review_prompt "$skill_file" "$soul_file")
-
-Write the report to: $out_file"
+  prompt="$(review_prompt "$skill_file" "$soul_file" "$out_file")"
 
   echo "[$(date +%H:%M:%S)] Starting $model_label review -> $(basename "$out_file")"
+  local start_ts
+  start_ts=$(date +%s)
   opencode run -m "regolo-ai/$model_label" "$prompt" > "$REPORT_DIR/review-$model_label.log" 2>&1 || {
     echo "[$(date +%H:%M:%S)] $model_label review FAILED" >&2
     return 1
   }
+  # If the agent didn't write the file itself, extract the report from stdout log.
+  # The report starts at the first YAML frontmatter delimiter (---) line.
+  if [ ! -s "$out_file" ] || [ "$(stat -c %Y "$out_file" 2>/dev/null || echo 0)" -lt "$start_ts" ]; then
+    awk '/^---$/{found=1} found{print}' "$REPORT_DIR/review-$model_label.log" > "$out_file"
+  fi
   echo "[$(date +%H:%M:%S)] $model_label review done: $(wc -w < "$out_file" 2>/dev/null || echo '?') words"
 }
 
@@ -128,5 +135,9 @@ echo "All reviews complete:"
 for f in "$REPORT_DIR"/review-*.md; do
   printf '  %-40s %s words\n' "$(basename "$f")" "$(wc -w < "$f")"
 done
+
+# Clean up per-review log files.
+rm -f "$REPORT_DIR"/review-*.log
+
 echo ""
 echo "Next: generate the comparison with report/build_comparison.sh"

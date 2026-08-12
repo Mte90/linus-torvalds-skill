@@ -28,10 +28,12 @@ PATTERNS_PATH = Path(__file__).parent.parent / "data" / "patterns.json"
 REQUIRED_SECTIONS = [
     "Reviewer Mindset",
     "Review Triggers",
-    "Precedence and Priorities",  # Replaces "Severity Calibration" in improved skill
-    "Key Definitions",  # New section for concrete definitions
+    "Precedence and Priorities",
+    "Key Definitions",
     "Anti-Patterns",
     "Voice and Tone",
+    "Severity Calibration",
+    "Severity Decision Tree",
 ]
 
 CATEGORIES = [

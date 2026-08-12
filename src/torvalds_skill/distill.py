@@ -247,13 +247,38 @@ error handling, concurrency, etc.]
 check things, when to reject vs. request changes, when to defer to maintainers, \
 when to insist. Include the principles behind each decision point.]
 
+## Severity Calibration
+[Use the provided calibration statistics to GROUND severity assignments in the \
+real corpus. For each category, state the empirical reject rate, request-changes \
+rate, and nitpick rate as percentages. Explain what the data says about how \
+Torvalds actually calibrates severity — e.g., "API-stability issues are rejected \
+37.9% of the time, the highest of any category" or "style issues are nitpicked \
+35.5% of the time but rarely rejected." Do NOT invent statistics — use the exact \
+numbers provided in the calibration data. Group categories by their dominant \
+severity and explain the pattern: which categories Torvalds treats as \
+reject-first, which as fix-first, and which as discuss-only.]
+
+## Severity Decision Tree
+[A category-based decision tree derived from the calibration statistics. \
+Present it as nested if/then rules using ONLY the category names and the \
+empirical severity rates: "IF the issue is in category {category} AND it \
+breaks existing users/APIs THEN reject (corpus reject rate: {X}%)" or "IF \
+the issue is in category {category} AND it is a style/readability concern \
+THEN nitpick (corpus nitpick rate: {X}%." Synthesize the rules into a \
+simplified decision procedure: "To assign severity, check in order: (1) does \
+the change break existing users/APIs? → reject; (2) does it introduce a \
+correctness or memory-safety bug? → reject or request-changes depending on \
+severity; (3) is it a style issue? → nitpick; etc." The decision tree must be \
+language-agnostic — no C/kernel identifiers, no type names, no macro names.]
+
 ## Quick Reference Checklist
 [A one-page checklist a reviewer can scan: "Before approving, verify:" with 15-20 \
 concrete items grouped by theme. Every item must be language-agnostic.]
 
-Keep the total output between 6000-9000 words. Every section must have real quotes from \
-the data. Do not invent quotes — only use what is provided. If you need more examples \
-for a theme, use the quotes you have and note the pattern.
+Keep the total output between 4000-7000 words. Be concise — every section must have real \
+quotes from the data, but do not pad. Do not invent quotes — only use what is provided. \
+If you need more examples for a theme, use the quotes you have and note the pattern. \
+Prioritize completing ALL required sections over depth in any single section.
 
 REMEMBER: The final test is simple — if a reviewer reading this skill could NOT tell \
 whether it was distilled from C kernel reviews, Python web framework reviews, or Rust \
@@ -321,6 +346,36 @@ def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt
             time.sleep(config.RETRY_DELAY * (attempt + 1))
 
     raise RuntimeError(f"LLM distill failed after {retries} retries: {last_err}")
+
+
+def _format_calibration_for_prompt(calibration: dict) -> str:
+    """Format calibration.json into a prompt section grounding severity in real stats."""
+    lines = []
+    lines.append("=== SEVERITY CALIBRATION DATA (derived from the full corpus) ===")
+    lines.append("Use these EXACT numbers in the Severity Calibration and Severity Decision Tree sections.")
+    lines.append("Do NOT invent statistics — cite the figures below.")
+    lines.append("")
+
+    stats = calibration.get("corpus_stats", {})
+    lines.append(f"Total moves in corpus: {stats.get('total_moves', 0)}")
+    lines.append("")
+    lines.append("Corpus-wide severity distribution:")
+    for sev, d in stats.get("severity_distribution", {}).items():
+        lines.append(f"  {sev}: {d['count']} ({d['percentage']}%)")
+    lines.append("")
+
+    lines.append("Severity distribution by category (P(severity | category)):")
+    for cat, c in calibration.get("severity_by_category", {}).items():
+        lines.append(f"  {cat} (n={c['total']}):")
+        lines.append(f"    reject: {c['reject_rate']}%")
+        lines.append(f"    request-changes: {c['request_changes_rate']}%")
+        lines.append(f"    nitpick: {c['nitpick_rate']}%")
+        lines.append(f"    dominant: {c['dominant_severity']}")
+    lines.append("")
+    lines.append("")
+    lines.append("=== END CALIBRATION DATA ===")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _format_moves_for_prompt(data: dict) -> str:
@@ -410,11 +465,24 @@ def sanitize_skill(text: str) -> str:
     return ''.join(out)
 
 
-def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model: str = None):
-    """Read patterns.json, call LLM, sanitize, write skill markdown."""
+def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model: str = None,
+                  calibration_path: Path = None):
+    """Read patterns.json, call LLM, sanitize, write skill markdown.
+
+    If calibration_path is provided and exists, the calibration data is appended
+    to the prompt so the LLM grounds severity assignments in real corpus stats.
+    """
     data = json.loads(patterns_path.read_text(encoding="utf-8"))
 
     prompt = _format_moves_for_prompt(data)
+
+    if calibration_path and calibration_path.exists():
+        calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+        prompt = prompt + "\n" + _format_calibration_for_prompt(calibration)
+        print(f"loaded calibration from {calibration_path}")
+    else:
+        print("warning: no calibration data — skill will lack severity grounding")
+
     print(f"calling LLM with {len(prompt)} chars of move data...")
     print(f"  ({sum(len(v) for v in data.get('samples_by_category', {}).values())} sampled moves)")
     if model:

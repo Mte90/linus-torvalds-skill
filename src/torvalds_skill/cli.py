@@ -33,6 +33,7 @@ CORPUS = DATA / "corpus.jsonl"
 REVIEWS = DATA / "reviews.jsonl"
 MOVES = DATA / "moves.jsonl"
 PATTERNS = DATA / "patterns.json"
+CALIBRATION = DATA / "calibration.json"
 SKILL = SKILL_DIR / "SKILL.md"
 SKIP_LIST = DATA / "skip_list.json"
 CHECKPOINT = DATA / "checkpoint.jsonl"
@@ -236,7 +237,8 @@ def stage_distill(top_n: int, model: str = None, out: str = None):
         print(f"error: {PATTERNS} not found. Run cluster first.")
         sys.exit(1)
     target = Path(out) if out else SKILL
-    distill_skill(PATTERNS, target, top_n=top_n, model=model)
+    distill_skill(PATTERNS, target, top_n=top_n, model=model,
+                  calibration_path=CALIBRATION)
 
 
 def stage_run(sample_size: int, workers: int):
