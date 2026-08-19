@@ -25,6 +25,10 @@ from .classify import is_review
 from .extract import extract_moves
 from .cluster import cluster_moves
 from .distill import distill_skill
+from .classify_interviews import classify_interviews
+from .extract_interviews import extract_interviews
+from .cluster_interviews import cluster_interviews
+from .validate import validate_all
 
 DATA = Path("data")
 SKILL_DIR = Path("linus-torvalds-skill")
@@ -249,6 +253,103 @@ def stage_run(sample_size: int, workers: int):
     stage_distill(top_n=40)
 
 
+def stage_interviews_pipeline(model: str, resume: bool):
+    """Run the full interview pipeline: classify → extract → cluster → calibrate."""
+    # Step 1: Classify interviews
+    print("Step 1/4: Classifying interviews...")
+    classified_count = classify_interviews("data/interviews/", "data/interviews_classified.jsonl")
+    print(f"  Classified {classified_count} passages")
+
+    # Step 2: Extract moves from interviews
+    print("Step 2/4: Extracting interview moves...")
+    extracted_count = extract_interviews(
+        "data/interviews_classified.jsonl",
+        "data/interview_moves.jsonl",
+        model=model,
+        resume=resume
+    )
+    print(f"  Extracted {extracted_count} moves")
+
+    # Step 3: Cluster interviews with email moves
+    print("Step 3/4: Clustering interviews...")
+    pattern_count = cluster_interviews(
+        "data/moves.jsonl",
+        "data/interview_moves.jsonl",
+        "data/patterns.json"
+    )
+    print(f"  Generated {pattern_count} patterns")
+
+    # Step 4: Calibrate interviews
+    print("Step 4/4: Calibrating interviews...")
+    # Import calibrate_interviews from scripts (needs sys.path manipulation)
+    import sys
+    from pathlib import Path
+    scripts_dir = Path(__file__).parent.parent.parent / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from calibrate_interviews import calibrate_interviews
+    calibrate_interviews(
+        "data/moves.jsonl",
+        "data/interview_moves.jsonl",
+        "data/calibration.json"
+    )
+    print("  Calibration complete")
+
+
+def stage_classify_interviews():
+    """Run classify_interviews stage."""
+    count = classify_interviews("data/interviews/", "data/interviews_classified.jsonl")
+    print(f"Classified {count} passages")
+
+
+def stage_extract_interviews(model: str, resume: bool):
+    """Run extract_interviews stage."""
+    count = extract_interviews(
+        "data/interviews_classified.jsonl",
+        "data/interview_moves.jsonl",
+        model=model,
+        resume=resume
+    )
+    print(f"Extracted {count} moves")
+
+
+def stage_cluster_interviews():
+    """Run cluster_interviews stage."""
+    count = cluster_interviews(
+        "data/moves.jsonl",
+        "data/interview_moves.jsonl",
+        "data/patterns.json"
+    )
+    print(f"Generated {count} patterns")
+
+
+def stage_calibrate_interviews():
+    """Run calibrate_interviews stage."""
+    import sys
+    from pathlib import Path
+    scripts_dir = Path(__file__).parent.parent.parent / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from calibrate_interviews import calibrate_interviews
+    calibrate_interviews(
+        "data/moves.jsonl",
+        "data/interview_moves.jsonl",
+        "data/calibration.json"
+    )
+
+
+def stage_validate():
+    """Run validate_all()."""
+    is_valid, errors = validate_all("data")
+    if is_valid:
+        print("All validation checks passed.")
+    else:
+        print(f"Validation failed with {len(errors)} error(s):")
+        for error in errors:
+            print(f"  - {error}")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="torvalds_skill",
@@ -290,6 +391,28 @@ def main():
 
     sub.add_parser("interviews", help="fetch interview transcripts from configured sources")
 
+    # Interview pipeline subcommand
+    p_interviews_pipeline = sub.add_parser("interviews-pipeline", help="run full interview pipeline")
+    p_interviews_pipeline.add_argument("--model", type=str, default="gpt-oss-120b",
+                                       help="LLM model for extraction (default: gpt-oss-120b)")
+    p_interviews_pipeline.add_argument("--resume", action="store_true",
+                                       help="resume from checkpoint")
+
+    # Individual interview stage subcommands
+    sub.add_parser("classify-interviews", help="classify interview transcripts")
+
+    p_extract_interviews = sub.add_parser("extract-interviews", help="extract moves from interviews")
+    p_extract_interviews.add_argument("--model", type=str, default="gpt-oss-120b",
+                                      help="LLM model (default: gpt-oss-120b)")
+    p_extract_interviews.add_argument("--resume", action="store_true",
+                                      help="resume from checkpoint")
+
+    sub.add_parser("cluster-interviews", help="cluster interview moves with email moves")
+
+    sub.add_parser("calibrate-interviews", help="compute severity calibration")
+
+    sub.add_parser("validate", help="validate data files")
+
     args = parser.parse_args()
 
     print(f"config: model={config.MODEL}, host={config.HOST}")
@@ -315,6 +438,38 @@ def main():
     elif args.stage == "interviews":
         from .interviews import fetch_interviews
         fetch_interviews()
+    elif args.stage == "interviews-pipeline":
+        try:
+            stage_interviews_pipeline(model=args.model, resume=args.resume)
+        except Exception as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+    elif args.stage == "classify-interviews":
+        try:
+            stage_classify_interviews()
+        except Exception as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+    elif args.stage == "extract-interviews":
+        try:
+            stage_extract_interviews(model=args.model, resume=args.resume)
+        except Exception as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+    elif args.stage == "cluster-interviews":
+        try:
+            stage_cluster_interviews()
+        except Exception as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+    elif args.stage == "calibrate-interviews":
+        try:
+            stage_calibrate_interviews()
+        except Exception as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+    elif args.stage == "validate":
+        stage_validate()
 
 
 if __name__ == "__main__":

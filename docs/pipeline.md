@@ -18,11 +18,11 @@ Five stages, each with a single responsibility:
 
 | Stage | Input | Output | LLM? | Time |
 |---|---|---|---|---|
-| 1. Classify | `corpus.jsonl` (19,802 emails) | review/non-review flag | No (regex) | seconds |
+| 1. Classify | `corpus.jsonl` (30,033 emails) | review/non-review flag | No (regex) | seconds |
 | 2. Extract | review emails | `moves.jsonl` (38,293 moves) | Yes (1 call/email) | ~2 hours |
 | 3. Cluster | `moves.jsonl` | `patterns.json` (325 samples) | No (stratified) | seconds |
 | 3b. Calibrate | `moves.jsonl` | `calibration.json` (severity stats) | No (rule-based) | seconds |
-| 4. Distill | `patterns.json` + `calibration.json` | `SKILL.md` (7,000+ words) | Yes (1 call) | ~2 min |
+| 4. Distill | `patterns.json` + `calibration.json` | `SKILL.md` (5,000-9,000 words depending on model) | Yes (1 call) | ~2 min |
 
 ## Usage
 
@@ -92,7 +92,7 @@ The gpt-oss-120b model suffers attention drift after the second email in a
 batch, silently dropping moves. Sequential extraction is mandatory.
 
 **Concurrency:** 16 parallel workers, each making one sequential call. Jittered
-retries (0.5-2s) and batched future submission prevent thundering-herd 429s.
+retries (0.5-2s) and batched future submission prevent thundering-herd 429s. Uses `concurrent.futures.ThreadPoolExecutor` for parallel extraction.
 
 **Checkpointing:** every 1,000 emails, progress is written to
 `data/checkpoint.jsonl`. On crash:
@@ -122,7 +122,7 @@ resumes from the last checkpoint, skipping both done IDs and the skip list.
 
 ## Stage 3: Cluster (`cluster.py`)
 
-**Purpose:** reduce 24,790 moves to 325 representative samples for the LLM.
+**Purpose:** reduce 38,303 moves to 325 representative samples for the LLM.
 
 **Why not cluster semantically?** Lexical Jaccard was tried first — it
 fragmented badly (7,434 clusters at threshold 0.35, mostly singletons).
@@ -137,17 +137,20 @@ pre-clustering step.
   avoid recency bias
 - This guarantees the LLM sees the full range of Torvalds' review style
 
-**Output:** `data/patterns.json`:
+**Output:** `data/patterns.json` — a list of 325 entries (315 from emails, 10 from interviews):
 
 ```json
-{
-  "total_moves": 24790,
-  "samples_by_category": {
-    "correctness": [25 moves...],
-    "performance": [25 moves...],
-    ...
-  }
-}
+[
+  {
+    "category": "correctness",
+    "severity": "reject",
+    "trigger": "...",
+    "principle": "...",
+    "quote": "...",
+    "source": "email"
+  },
+  ...
+]
 ```
 
 ## Stage 3b: Calibrate (`scripts/calibrate.py`)
@@ -162,10 +165,8 @@ Rule-based, no LLM. Reads `data/moves.jsonl` and produces
   - Security: 59% rejected (highest reject rate)
   - Style: 36% nitpicked, only 13% rejected
   - Error-handling: 58% request-changes
-- **Keyword decision rules** — 159 rules mapping keyword presence to likely
-  severity shifts (e.g., keywords like "race", "deadlock", "corrupt" shift
-  severity toward reject)
 - **Category distribution** — move counts per category
+- **Temporal trends** — severity distribution over time (2002-2026)
 
 **Output:** `data/calibration.json`, loaded by `distill.py` and injected into
 the LLM prompt as "Severity Calibration" and "Severity Decision Tree" sections.
@@ -173,6 +174,23 @@ the LLM prompt as "Severity Calibration" and "Severity Decision Tree" sections.
 ```bash
 python3 scripts/calibrate.py
 ```
+
+## Interview pipeline
+
+Interview transcripts (TED talks, conference Q&As, magazine interviews) are processed through the same stages as emails:
+
+1. **Fetch** — `interviews` command downloads transcripts from configured URLs in `data/interview_sources.json` (67 sources)
+2. **Classify** — `classify-interviews` filters transcripts by relevance
+3. **Extract** — `extract-interviews` extracts review moves via LLM (one call per transcript)
+4. **Cluster** — `cluster-interviews` merges interview moves with email moves in `patterns.json`
+5. **Calibrate** — `calibrate-interviews` merges interview severity stats into `calibration.json`
+
+```bash
+python3 -m torvalds_skill interviews              # fetch transcripts
+python3 -m torvalds_skill interviews-pipeline      # full pipeline
+```
+
+Interview-derived moves (10) are merged with email moves (38,293) in `patterns.json` (325 samples: 315 email + 10 interview). Both skill and soul generation consume the merged patterns.
 
 ## Stage 4: Distill (`distill.py`)
 
@@ -226,9 +244,9 @@ Three variants generated from the same `patterns.json` + `calibration.json`:
 
 | File | Model | Words | Notes |
 |---|---|---|---|
-| `SKILL.md` | gpt-oss-120b | ~7,050 | Default. Best balance. |
-| `SKILL-GLM.md` | glm5.2 | ~10,200 | Reasoning model. Most thorough. Needs streaming + 600s timeout + max_tokens ≤ 16000. |
-| `SKILL-Mistral.md` | mistral-small-4-119b | ~7,540 | Fastest. |
+| `SKILL.md` | gpt-oss-120b | ~5,660 | Default. Best balance. |
+| `SKILL-GLM.md` | glm5.2 | ~8,560 | Reasoning model. Most thorough. Needs streaming + 600s timeout + max_tokens ≤ 16000. |
+| `SKILL-Mistral.md` | mistral-small-4-119b | ~5,510 | Fastest. |
 
 ```bash
 # Generate a variant
@@ -245,9 +263,9 @@ Three variants generated from the same `patterns.json`:
 
 | File | Model | Words | Notes |
 |---|---|---|---|
-| `soul.md` | gpt-oss-120b | ~1,345 | Default. |
-| `soul-glm.md` | glm5.2 | ~2,372 | Reasoning model. Needs streaming + 600s timeout. |
-| `soul-mistral.md` | mistral-small-4-119b | ~2,552 | Most verbose. |
+| `soul.md` | gpt-oss-120b | ~1,215 | Default. |
+| `soul-glm.md` | glm5.2 | ~3,495 | Reasoning model. Needs streaming + 600s timeout. |
+| `soul-mistral.md` | mistral-small-4-119b | ~1,705 | Most verbose. |
 
 ```bash
 python -m torvalds_skill soul
@@ -276,24 +294,38 @@ Checks:
 python scripts/verify_skill.py linus-torvalds-skill/SKILL.md
 ```
 
+## Validation (`validate.py`)
+
+Validates data integrity at each pipeline stage:
+
+```bash
+python3 -m torvalds_skill validate
+```
+
+Checks:
+- `moves.jsonl` — schema conformance (required fields, valid categories, valid severities)
+- `patterns.json` — sample count, category coverage
+- `calibration.json` — category statistics present
+- `skip_list.json` — format validity
+
 ## Data flow
 
 ```
 data/lkml.mbox          192 MB, 31,397 emails (NNTP fetch)
     ↓ convert
-data/corpus.jsonl        61 MB, 19,802 review emails (after classify)
+data/corpus.jsonl        30,033 review emails (after classify)
     ↓ extract
-data/moves.jsonl          ~12 MB, 38,293 review moves
+data/moves.jsonl          ~12 MB, 30,033 emails, 38,293 review moves
     ↓ cluster                        ↓ calibrate
-data/patterns.json       ~1 MB, 325 samples    data/calibration.json  ~50 KB
+data/patterns.json       325 samples (315 email + 10 interview)    data/calibration.json
     ↓ distill ←──────────────────────┘
-linus-torvalds-skill/SKILL.md         ~47 KB, 7,051 words
-linus-torvalds-skill/SKILL-GLM.md    ~68 KB, 10,208 words
-linus-torvalds-skill/SKILL-Mistral.md ~50 KB, 7,542 words
+linus-torvalds-skill/SKILL.md         ~37 KB, 5,661 words
+linus-torvalds-skill/SKILL-GLM.md    ~57 KB, 8,561 words
+linus-torvalds-skill/SKILL-Mistral.md ~36 KB, 5,505 words
     ↓ soul
-soul/soul.md             ~9 KB, 1,345 words
-soul/soul-glm.md         ~16 KB, 2,372 words
-soul/soul-mistral.md     ~17 KB, 2,552 words
+soul/soul.md             ~8 KB, 1,215 words
+soul/soul-glm.md         ~23 KB, 3,494 words
+soul/soul-mistral.md     ~11 KB, 1,705 words
 ```
 
 ## Configuration
@@ -317,6 +349,7 @@ python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistr
 | Stage | Resume | Command |
 |---|---|---|
 | Extract | Yes | `python -m torvalds_skill extract --resume` |
+| Interview extract | Yes | `python -m torvalds_skill extract-interviews --resume` |
 | Cluster | No (idempotent) | re-run `python -m torvalds_skill cluster` |
 | Calibrate | No (idempotent) | re-run `python3 scripts/calibrate.py` |
 | Distill | No (one call) | re-run `python -m torvalds_skill distill` |

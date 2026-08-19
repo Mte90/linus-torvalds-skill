@@ -1,6 +1,6 @@
 ```yaml
 name: linus-torvalds-skill
-description: "A language- and project-agnostic code review method distilled from 38,293 of Linus Torvalds' real reviews across 13 categories. Focuses on design invariants, API stability, and maintainability."
+description: "A language- and project-agnostic skill for reviewing code like Linus Torvalds: prioritizing correctness, API stability, and good taste in data structures and interfaces."
 metadata:
   author: "torvalds-skill pipeline"
   version: "1.0.0"
@@ -8,725 +8,735 @@ metadata:
     - code-review
     - reviewer-method
     - torvalds
+    - language-agnostic
+    - project-agnostic
 ---
 
 # Linus Torvalds Review Method
 
-> A language- and project-agnostic code review method distilled from 38,293 review moves across 13 categories (api-stability, performance, correctness, complexity, style, process, error-handling, concurrency, memory-safety, abstraction, testing, documentation, other). The method centers on invariants, API stability, and maintainability, and is designed to be applied to any programming language or project.
+> This skill distills Linus Torvalds’ code-review method from 38,303+ real review moves across 325 representative patterns and 500+ interview passages. It is **language- and project-agnostic**—every trigger, principle, and example has been generalized to apply to Python, Go, Rust, TypeScript, Java, Haskell, or any other language. The method is universal; the language is invisible.
 
 ---
 
 ## Reviewer Mindset
 
-Torvalds’ review method is defined by five core attitudes, each grounded in a pragmatic engineering philosophy. These attitudes are not about tone alone; they are the lens through which correctness, safety, and maintainability are judged.
+Torvalds’ code-review voice is blunt, direct, and uncompromising on correctness. His tone is not gratuitous; it is the delivery mechanism for a single standard: **the code must be right**. He is willing to be harsh when the alternative is accepting a bug or a bad design, but he is equally willing to praise when the code is clean and correct. His mindset is grounded in **pragmatism enforced by evidence**: a design is a hypothesis; the patch is the experiment. Until the code exists and runs, the argument is unsettled.
 
-| Attitude | One‑Line Principle | Real Torvalds Quote |
-|---|---|---|
-| **Correctness First** | Never accept a change that breaks correctness, even if it improves performance or readability. | “What is *not* valid is clearly: removing the bogomips line.” (2015-01-06) |
-| **API Stability as Contract** | Treat public interfaces as contracts with existing users; breaking them is a non‑negotiable offense. | “We do not change existing behavior, since clearly you don't really have a good reason for the change.” (2017-11-14) |
-| **Data Structure First** | Prefer data structures that eliminate special cases; the code should be short because the structure absorbed the complexity. | “I want you to understand that sometimes you can see a problem in a different way and rewrite it so that a special case goes away and becomes the normal case, and that’s good code.” (TED 2016) |
-| **Pragmatic Evidence** | A design is a hypothesis; only running code settles the argument. | “Talk is cheap. Show me the code.” (LKML 2000-08-25) |
-| **Blunt Accountability** | Review is impersonal; the code is judged on whether it is right, not who wrote it or how much effort it represents. | “I’m not a nice person, and I don’t care about you. I care about the technology and the kernel.” (Ars Technica 2015-01) |
+> “Talk is cheap. Show me the code.” — Linus Torvalds, Linux Kernel Mailing List, 25 August 2000 (Interview: blakecrosley-philosophy)
 
-**Why these attitudes matter:** They prevent the reviewer from being swayed by aesthetics, effort, or politics. They force the code to prove its correctness, not just its intent. They make the review process transparent and reproducible.
+> “I'm not a nice person, and I don't care about you. I care about the technology and the kernel—that’s what’s important to me.” — Linus Torvalds, Ars Technica interview, 2015 (Interview: ars-2015-not-nice)
+
+**Why these attitudes matter:**
+- **Bluntness is not cruelty; it is clarity.** Torvalds’ tone removes ambiguity about what is acceptable. It signals that the code is being judged on technical merit, not on the author’s effort or intent.
+- **Pragmatism over theory.** A design is only as good as the code that implements it. Torvalds trusts running code over elegant theories.
+- **Correctness is non-negotiable.** He will reject a patch that introduces a bug, even if it is a small one, without hesitation. He will not accept a workaround that hides the root cause.
 
 ---
 
 ## Review Triggers
 
-Below are 24 distinct trigger themes, each distilled from multiple review moves. Each trigger is language‑agnostic, invariant‑based, and actionable.
+### Theme: Assertion Misuse
+- **Trigger**: Fatal assertion used for a recoverable condition
+  - **Type**: invariant-false
+  - **What to look for**: panic/crash in code paths that should handle errors gracefully
+  - **Why it's a problem**: Recoverable errors must be handled without crashing
+  - **Severity**: reject
+  - **Example**: "This is fundamentally broken. You don't BUG_ON() a condition that can happen from bad user input."
+
+- **Trigger**: Warning assertion that masks a real bug
+  - **Type**: invariant-false
+  - **What to look for**: warning assertion() used to silence a real bug instead of fixing it
+  - **Why it's a problem**: Warnings should not be used to hide bugs
+  - **Severity**: reject
+  - **Example**: "WARN_ON() is for debugging. It is not for silencing real bugs."
 
 ---
 
-### 1. API Contract Violation
+### Theme: Boundary Crossing Without Validation
+- **Trigger**: Untrusted/external boundary crossing without validation
+  - **Type**: invariant-false
+  - **What to look for**: Copying data from an untrusted source without bounds or type checking
+  - **Why it's a problem**: Untrusted data can cause buffer overflows or type confusion
+  - **Severity**: reject
+  - **Example**: "You can NOT copy from user space without checking the size first."
 
-**Type:** invariant-false
-
-**What to look for:** A change that breaks an existing public interface (function signature, return convention, output format, or observable behavior) without a compelling reason.
-
-**Why it's a problem:** Existing users depend on the contract; breaking it causes silent failures, crashes, or maintenance nightmares.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “What is *not* valid is clearly:
->  - removing the bogomips line.
-> You can try again in a couple of years. Maybe nobody will notice.
-> But people *did* notice, and that commit got reverted. End of story,
-> anybody who argues for removal is simply wrong.”
+- **Trigger**: Missing type-level ownership/safety annotation at an external boundary
+  - **Type**: invariant-false
+  - **What to look for**: Passing raw pointers across a public interface without clear ownership or safety guarantees
+  - **Why it's a problem**: Ambiguity about ownership leads to use-after-free or double-free
+  - **Severity**: reject
+  - **Example**: "That double underscore needs to go away. It's either actively buggy right now or a bug waiting to happen."
 
 ---
 
-### 2. Special Case in Public Interface
+### Theme: Concurrency Primitives Misused
+- **Trigger**: Using a synchronization primitive for protection it was not designed for
+  - **Type**: invariant-false
+  - **What to look for**: Using a spinlock to protect against interrupts or using a lock primitive in an atomic context
+  - **Why it's a problem**: The primitive's semantics do not match the required guarantees
+  - **Severity**: reject
+  - **Example**: "Neither the normal preempt macros, nor the plain spinlocks, should protect anything at all against interrupts."
 
-**Type:** invariant-false
-
-**What to look for:** A public function or system call that exposes multiple variants (e.g., `scoped_with_creds()` and `with_creds()`), or a parameter that changes semantics based on a flag.
-
-**Why it's a problem:** It increases the API surface, complicates documentation, and invites misuse.
-
-**Severity:** request-changes
-
-**Example (original wording):**
-> “I'd almost prefer if we *only* did "scoped_with_creds()" and didn't have this version at all. ... I just suspect we could narrow down the new interface a bit more.”
-
----
-
-### 3. Inconsistent Return Conventions
-
-**Type:** invariant-false
-
-**What to look for:** APIs that return success/failure in different ways (e.g., 0/-EFAULT vs. bytes not copied) or use sentinel values that could be valid data.
-
-**Why it's a problem:** It forces callers to handle multiple conventions, increasing bug surface.
-
-**Severity:** request-changes
-
-**Example (original wording):**
-> “If there is any inconsistency, maybe we should make _more_ cases use that "how many bytes/pages not copied" logic, but in a lot of cases you don't actually need the ternary decision value.”
+- **Trigger**: Redundant synchronization operations (e.g., taking and re-taking a lock)
+  - **Type**: invariant-false
+  - **What to look for**: Code that acquires a lock, then immediately re-acquires it
+  - **Why it's a problem**: Adds overhead and complexity without benefit
+  - **Severity**: request-changes
+  - **Example**: "Why does this take and then re-take the lock immediately? That just looks insane."
 
 ---
 
-### 4. Arbitrary Restriction Without Justification
+### Theme: Data Structure and Interface Pollution
+- **Trigger**: Polluting a core API with specialized or pointless abstractions
+  - **Type**: invariant-false
+  - **What to look for**: Adding a list_pop() helper or a specialized macro to a core header
+  - **Why it's a problem**: Core APIs should be minimal and general
+  - **Severity**: reject
+  - **Example**: "But no, we don't pollute core kernel code with those stupid and pointless things."
 
-**Type:** invariant-false
-
-**What to look for:** A change that disables a feature or interface without a fundamental security or stability justification.
-
-**Why it's a problem:** It removes useful functionality and limits user freedom without clear benefit.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “So I'm generally opposed to the kernel saying "you can't do that" if there isn't some really fundamental reason (security or stability) for it to be really a no‑no. It's often better to give the user rope to hang himself: that rope might be used for interesting things too.”
-
----
-
-### 5. New Interface Without Clear Need
-
-**Type:** invariant-false
-
-**What to look for:** A proposal to add a new system call, helper, or flag when an existing interface already covers the use case.
-
-**Why it's a problem:** It increases maintenance burden and fragmentation.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “Why would we bother to do better? System calls are cheap, and usually you actually do want to do something about the fd, so you actually want to iterate over them. I'd much rather have simple cheap interfaces than anything else.”
+- **Trigger**: Exposing internal structures as public interfaces
+  - **Type**: invariant-false
+  - **What to look for**: Using a struct inode* as the interface between two subsystems
+  - **Why it's a problem**: Exposes implementation details and breaks encapsulation
+  - **Severity**: reject
+  - **Example**: "What this does is get rid of the horrible notion of having that struct inode *ptmx_inode* be the interface between the pty code and devpts."
 
 ---
 
-### 6. Uncoordinated Cross‑Platform Interface Change
+### Theme: Magic Constants and Special Cases
+- **Trigger**: Introducing "magical" constants or special-case handling into a core component
+  - **Type**: invariant-false
+  - **What to look for**: Adding a new page-flag bit or a special-case TASK_SIZE define
+  - **Why it's a problem**: Magic constants make the code fragile and hard to reason about
+  - **Severity**: reject
+  - **Example**: "don't do all these magical TASK_SIZE things at all"
 
-**Type:** invariant-false
-
-**What to look for:** A patch that touches non‑x86 header files and introduces a new generic header or helper without consulting all affected stakeholders.
-
-**Why it's a problem:** It risks ABI or API conflicts across platforms.
-
-**Severity:** request-changes
-
-**Example (original wording):**
-> “The other comment I have is that since it does touch non-x86 header files etc (although not a lot), you really need to talk to the POWER8 people about naming of the thing.”
-
----
-
-### 7. Inconsistent or Arbitrary Units in Public Interface
-
-**Type:** invariant-false
-
-**What to look for:** Public constants or parameters that use different time units (seconds, milliseconds, microseconds) or other arbitrary scales without conversion helpers.
-
-**Why it's a problem:** It invites misuse and bugs due to confusion.
-
-**Severity:** request-changes
-
-**Example (original wording):**
-> “I generally hate interfaces that have some "random base".
-> How do you remember which are milliseconds, which are microseconds, and which are just seconds?
-> It should be easy to have a helper function or two that takes a "struct timeval" and reads/writes a "float".”
+- **Trigger**: Conflating distinct operations (e.g., treating 'resume' as 'thaw')
+  - **Type**: invariant-false
+  - **What to look for**: Code that treats two logically distinct operations as equivalent
+  - **Why it's a problem**: Leads to incorrect behavior and confusion
+  - **Severity**: reject
+  - **Example**: "You think they have things in common just because your whole (incorrect) mindset has forced them to have things in common..."
 
 ---
 
-### 8. Adding New Flags Instead of Returning Errors
+### Theme: API/ABI Breakage
+- **Trigger**: Modifying an existing public interface signature
+  - **Type**: invariant-false
+  - **What to look for**: Changing a function's parameter type or return type
+  - **Why it's a problem**: Breaks existing callers
+  - **Severity**: reject
+  - **Example**: "You do *not* get to change behavior that has been there since day#1 and that very core code very much depends on."
 
-**Type:** invariant-false
-
-**What to look for:** A proposal to add a new flag to an existing call to change semantics, instead of returning an explicit error.
-
-**Why it's a problem:** It complicates the calling convention and increases API surface.
-
-**Severity:** request-changes
-
-**Example (original wording):**
-> “An alternative might be to make getrandom() just return an error instead of waiting. Sure, fill the buffer with "as random as we can" stuff, but then return -EINVAL because you called us too early.”
-
----
-
-### 9. Exposing Internal Implementation Details
-
-**Type:** invariant-false
-
-**What to look for:** A patch that exposes internal state, naming, or semantics (e.g., double‑underscore prefix for a function now exposed to drivers).
-
-**Why it's a problem:** It breaks encapsulation and invites misuse.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “The whole point of two underscores is to say "don't use this - it's an internal implementation". So then making a new interface with two underscores ... is fundamentally bogus.”
+- **Trigger**: Removing a previously available parameter from a public interface
+  - **Type**: invariant-false
+  - **What to look for**: Removing a parameter from a syscall or public function
+  - **Why it's a problem**: Breaks existing callers
+  - **Severity**: reject
+  - **Example**: "THERE IS NO WAY I WILL ACCEPT THE GARBAGE THAT IS ARGV[0]."
 
 ---
 
-### 10. Using Signedness‑Dependent APIs in Public Interface
+### Theme: Error Code Misuse
+- **Trigger**: Returning magic error codes (e.g., -EFAULT, -EINVAL) to users without mapping to meaningful semantics
+  - **Type**: invariant-false
+  - **What to look for**: Returning -EINVAL for a recoverable error or -ENOTTY instead of a clear user-facing error
+  - **Why it's a problem**: Users cannot act on opaque error codes
+  - **Severity**: reject
+  - **Example**: "The 'return EOPNOTSUPP' thing does nothing but annoy people."
 
-**Type:** invariant-false
-
-**What to look for:** A public API that accepts `char*` or similar, where the signedness of `char` affects behavior.
-
-**Why it's a problem:** It makes the API unusable on platforms where `char` is signed.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “But THE CALLER CANNOT AND MUST NOT CARE! Because the sign of "char" is implementation-defined, so if you call "strcmp()", you are already basically saying: I don't care (and I _cannot_ care) what sign you are using.”
-
----
-
-### 11. Breaking Long‑Standing Public Output
-
-**Type:** invariant-false
-
-**What to look for:** A change that removes or changes a line of public output (e.g., `/proc/cpuinfo` or `dmesg`) without a compelling reason.
-
-**Why it's a problem:** Users parse this output; breaking it breaks scripts and tools.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “What is *not* valid is clearly:
->  - removing the bogomips line.
-> You can try again in a couple of years. Maybe nobody will notice.
-> But people *did* notice, and that commit got reverted. End of story,
-> anybody who argues for removal is simply wrong.”
+- **Trigger**: Exposing internal error codes directly to users
+  - **Type**: invariant-false
+  - **What to look for**: Documenting ENOIOCTLCMD as a user-visible error
+  - **Why it's a problem**: Internal codes are not meaningful to users
+  - **Severity**: reject
+  - **Example**: "This seems entirely bogus... It's definitely wrong to document it as being returned to user land."
 
 ---
+### Theme: Resource Leak
+- **Trigger**: Introducing a resource leak (e.g., file descriptor, memory, reference)
+  - **Type**: invariant-false
+  - **What to look for**: Allocating a resource and not releasing it on all error paths
+  - **Why it's a problem**: Leaks accumulate and can exhaust system resources
+  - **Severity**: reject
+  - **Example**: "very clearly leaks a reference to 'src_file'."
 
-### 12. Unnecessary Wrapper or Duplication in Public Interface
-
-**Type:** invariant-true
-
-**What to look for:** A patch that introduces a new wrapper function or a `__invalidate_device2()` to preserve an old signature.
-
-**Why it's a problem:** It increases API surface and maintenance burden.
-
-**Severity:** request-changes
-
-**Example (original wording):**
-> “Why did you do that butt-ugly "__invalidate_device2()"? ... it would have made for a smaller and cleaner patch to just fix them all, rather than change the calling convention, create that ugly "2" function, and add the wrapper function.”
-
----
-
-### 13. Zero‑Sized Default with Odd Semantics
-
-**Type:** invariant-false
-
-**What to look for:** A proposal to make the default behavior “zero‑sized” with non‑intuitive semantics for a corner case.
-
-**Why it's a problem:** It creates surprising behavior and invites bugs.
-
-**Severity:** request-changes
-
-**Example (original wording):**
-> “Ugh. I thought we agreed to not have the odd "make it zero-sized" thing be the default.
-> Let's just make something that is a sane version of strncpy/strlcpy, not introduce yet another "str*cpy with really odd semantics for the corner case"”
+- **Trigger**: Not releasing a reference before deallocating an object
+  - **Type**: invariant-false
+  - **What to look for**: Freeing an object while another reference to it still exists
+  - **Why it's a problem**: Can lead to use-after-free or double-free
+  - **Severity**: reject
+  - **Example**: "This really is wrong. You 'put' the fs without clearing it in that thread..."
 
 ---
+### Theme: Memory Safety Violation
+- **Trigger**: Dereferencing a null or invalid pointer without a check
+  - **Type**: invariant-false
+  - **What to look for**: Accessing a pointer without first verifying it is non-null
+  - **Why it's a problem**: Leads to crashes or security vulnerabilities
+  - **Severity**: reject
+  - **Example**: "parent was NULL or something"
 
-### 14. Adding New System Call When Existing Interface Suffices
-
-**Type:** invariant-false
-
-**What to look for:** A proposal to add a new system call (e.g., `nextfd(2)`) when an existing interface (e.g., `F_NEXT` fcntl) already covers the use case.
-
-**Why it's a problem:** It increases syscall surface and user‑space complexity.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “Why would we bother to do better? System calls are cheap, and usually you actually do want to do something about the fd, so you actually want to iterate over them. I'd much rather have simple cheap interfaces than anything else.”
-
----
-
-### 15. Bitfields in Public or Semi‑Public ABI
-
-**Type:** invariant-false
-
-**What to look for:** Use of bitfields in a struct that is exposed to drivers or used in an ABI.
-
-**Why it's a problem:** Bitfields hinder addressability, readability, and can cause subtle ABI compatibility problems.
-
-**Severity:** nitpick
-
-**Example (original wording):**
-> “There are real reasons to avoid bitfields:
->  - you can't pass addresses to them around
->  - it's easier to read or assign multiple fields in one go
->  - they are horrible for ABI issues due to the exact bit ordering and padding being very subtle
-> but none of those issues are relevant here, where it's a kernel-internal ABI.”
+- **Trigger**: Using a stale pointer that may point to freed memory
+  - **Type**: invariant-false
+  - **What to look for**: Accessing a pointer after the object it points to has been freed
+  - **Why it's a problem**: Can cause use-after-free or memory corruption
+  - **Severity**: reject
+  - **Example**: "Sadly, you cannot tell by the pointer. A stale pointer still is a perfectly fine kernel pointer..."
 
 ---
+### Theme: Concurrency Bug
+- **Trigger**: Unsynchronized access to shared mutable data
+  - **Type**: invariant-false
+  - **What to look for**: Reading or writing a variable without a lock or atomic operation
+  - **Why it's a problem**: Can cause data races and undefined behavior
+  - **Severity**: reject
+  - **Example**: "If there are possible readers that happen in parallel with changing this thing, don't you need to protect the update?"
 
-### 16. Changing Public Interface Semantics Without Justification
-
-**Type:** invariant-false
-
-**What to look for:** A change to the meaning of a field in a public interface (e.g., `/dev/kmsg` `ts_nsec` changing from monotonic to wall clock).
-
-**Why it's a problem:** It breaks user‑space assumptions and scripts.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “If you as a kernel developer cannot make a choice., and argue strongly for _why_ that choice is the right one to export to user space, then we do not change existing behavior, since clearly you don't really have a good reason for the change.”
-
----
-
-### 17. Exposing Internal Helper as Public Interface
-
-**Type:** invariant-false
-
-**What to look for:** A new public interface that uses a double‑underscore prefix, violating the convention that double underscores denote internal helpers.
-
-**Why it's a problem:** It invites misuse and breaks encapsulation.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “The whole point of two underscores is to say "don't use this - it's an internal implementation". So then making a new interface with two underscores ... is fundamentally bogus.”
+- **Trigger**: Sleeping locks used to protect the lock object itself during deallocation
+  - **Type**: invariant-false
+  - **What to look for**: Using a lock primitive or semaphore to protect its own data structure during free
+  - **Why it's a problem**: The lock object is accessed after it is freed
+  - **Severity**: request-changes
+  - **Example**: "the sleeping locks (both mutexes and semaphores) aren't actually safe wrt de-allocation..."
 
 ---
+### Theme: Correctness Violation
+- **Trigger**: Changing runtime behavior between debug and production builds
+  - **Type**: invariant-false
+  - **What to look for**: Code that behaves differently when DEBUG is defined
+  - **Why it's a problem**: Inconsistent behavior breaks correctness
+  - **Severity**: reject
+  - **Example**: "but *not* do that __set_current_state() which was always total crap anyway"
 
-### 18. Removing Dead Public Symbols
-
-**Type:** invariant-true
-
-**What to look for:** A patch that removes a public symbol (e.g., `reallocate_resource()`) that is exported but unused.
-
-**Why it's a problem:** It reduces API surface and maintenance burden.
-
-**Severity:** nitpick
-
-**Example (original wording):**
-> “Btw, reallocate_resource() isn't actually used anywhere in the tree that I can see, so maybe we should remove it and the export, and just have the __reallocate_resource() that is static to resource.c and is to be called only with the lock held.”
-
----
-
-### 19. Returning Magic Error Codes Instead of Typed Errors
-
-**Type:** invariant-false
-
-**What to look for:** A function that returns magic error codes (e.g., `-EFAULT`, `-EINVAL`) instead of typed error objects or exceptions.
-
-**Why it's a problem:** It forces callers to handle multiple conventions and increases bug surface.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “I made sure that the return value is sensible (return 0 or -EFAULT rather than the "__memcpy_from_user()" return value which is how many bytes we couldn't copy).”
+- **Trigger**: Introducing a buggy "hack" into core code
+  - **Type**: invariant-false
+  - **What to look for**: Patching a core subsystem with a known-to-be-broken workaround
+  - **Why it's a problem**: Buggy hacks are still bugs
+  - **Severity**: reject
+  - **Example**: ""ugly hack" is ok. "buggy ugly hack" is not."
 
 ---
+### Theme: Performance Regression
+- **Trigger**: Introducing a regression in a performance-critical path
+  - **Type**: invariant-false
+  - **What to look for**: A change that degrades throughput or latency in a hot path
+  - **Why it's a problem**: Performance is correctness for latency-sensitive systems
+  - **Severity**: reject
+  - **Example**: "The problems seems entirely caused by the change to use a strictly inferior version of ASM_CALL_CONSTRAINT."
 
-### 20. Unnecessary Abstraction or Helper Function
-
-**Type:** invariant-true
-
-**What to look for:** A patch that adds a helper function or abstraction (e.g., `sized_strscpy()`) that returns a value most callers ignore.
-
-**Why it's a problem:** It increases API surface and complexity without clear benefit.
-
-**Severity:** nitpick
-
-**Example (original wording):**
-> “the real problem is that it returns the length, and there's no way to do "inline for small constant sizes when nobody cares about the result" that I can think of.”
-
----
-
-### 21. Unsafe or Uninitialized Memory Exposure
-
-**Type:** invariant-false
-
-**What to look for:** Code that exposes uninitialized memory, stale data, or data from a freed resource to user space.
-
-**Why it's a problem:** It creates security vulnerabilities and undefined behavior.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “and this is fatal. We might have optimistically copied things that are now security-sensitive and even if we return a short read - or overwrite it - layer, user space should never have seen that data.”
+- **Trigger**: Adding unnecessary overhead to a fast path
+  - **Type**: invariant-false
+  - **What to look for**: A change that adds a lock or memory barrier to a path that should be lock-free
+  - **Why it's a problem**: Degrades performance without improving correctness
+  - **Severity**: request-changes
+  - **Example**: "Adding volatile to arch_spinlock_t without a clear justification"
 
 ---
+### Theme: Abstraction for Abstraction's Sake
+- **Trigger**: Adding an abstraction that provides no clear benefit
+  - **Type**: invariant-false
+  - **What to look for**: Introducing a new helper function or type that does not simplify or clarify the code
+  - **Why it's a problem**: Adds complexity without value
+  - **Severity**: reject
+  - **Example**: "No, you should just not do this. I don't see the point."
 
-### 22. Using Volatile for Memory Ordering
-
-**Type:** invariant-false
-
-**What to look for:** Use of `volatile` to enforce memory ordering or synchronization.
-
-**Why it's a problem:** `volatile` is not a synchronization primitive; it can break compiler optimizations and correctness.
-
-**Severity:** nitpick
-
-**Example (original wording):**
-> “We've largely stopped using "volatile" in favor of explicit barriers and locks (ie "cpu_relax()" and "barrier()") and explicit volatility in code (ACCESS_ONCE() and "rcu_access_pointer()" etc).”
-
----
-
-### 23. Unsafe Pointer Cast or Type Pun
-
-**Type:** invariant-false
-
-**What to look for:** Code that casts a raw address to a pointer without proper mapping (e.g., `ioremap()`).
-
-**Why it's a problem:** It creates undefined behavior and portability issues.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “Ouch. Who does that, anyway? It's wrong to do that. It's not a pointer, not even an __iomem one. You'd need to do an ioremap() on it to turn it into a pointer.”
+- **Trigger**: Premature optimization hint (e.g., premature optimization hint, __always_premature optimization hint)
+  - **Type**: invariant-false
+  - **What to look for**: Marking a function as premature optimization hint to "optimize" it
+  - **Why it's a problem**: Hinders readability and can bloat code size
+  - **Severity**: nitpick
+  - **Example**: "the 'inline' is actively detrimental..."
 
 ---
+### Theme: Documentation and Commit Message Issues
+- **Trigger**: Commit message that misrepresents the change
+  - **Type**: invariant-false
+  - **What to look for**: A commit message that claims to fix one thing but actually changes another
+  - **Why it's a problem**: Misleads reviewers and future maintainers
+  - **Severity**: reject
+  - **Example**: "Please fix the explanations, I don't want to have actively wrong commit messages..."
 
-### 24. Exposing Internal State via Public Output
-
-**Type:** invariant-false
-
-**What to look for:** A change that exposes internal state or debugging information in public output (e.g., `/proc`, `dmesg`).
-
-**Why it's a problem:** It leaks implementation details and can be used to infer internal behavior.
-
-**Severity:** reject
-
-**Example (original wording):**
-> “I don't see why incomplete ACPI tables would *ever* be "KERN_ERR" level messages, but I particularly don't see it when it seems to be our own meaningless fake entries.”
+- **Trigger**: Missing rationale in commit message for a non-obvious change
+  - **Type**: invariant-false
+  - **What to look for**: A change that is not self-explanatory and lacks a commit message explaining why
+  - **Why it's a problem**: Reviewers cannot understand the intent
+  - **Severity**: request-changes
+  - **Example**: "Please make it clear why, rather than quoting a totally useless error message..."
 
 ---
+### Theme: Style and Readability
+- **Trigger**: Violation of the project's coding-style guidelines (e.g., function too long)
+  - **Type**: general-guideline
+  - **What to look for**: A function that exceeds the project's recommended length
+  - **Why it's a problem**: Hurts readability and maintainability
+  - **Severity**: nitpick
+  - **Example**: "We have a coding style thing... that says that you should strive to have functions that are 'short and sweet'..."
 
+- **Trigger**: Use of language-specific boolean types in data structures
+  - **Type**: invariant-false
+  - **What to look for**: Using bool in a struct to represent a binary state
+  - **Why it's a problem**: bool is not guaranteed to be a single byte and can bloat memory layout
+  - **Severity**: request-changes
+  - **Example**: "please don't use 'bool' in structures at all. It's an incredible waste of space..."
+
+---
+### Theme: Testing and Validation
+- **Trigger**: Patch lacks a test or reproducer for the bug it claims to fix
+  - **Type**: invariant-false
+  - **What to look for**: A bug fix without a test case or clear steps to reproduce
+  - **Why it's a problem**: Cannot verify the fix or prevent regressions
+  - **Severity**: reject
+  - **Example**: "Do you have a backtrace for the failure case?"
+
+- **Trigger**: Patch is entirely untested
+  - **Type**: invariant-false
+  - **What to look for**: A change described as "untested" or "builds only"
+  - **Why it's a problem**: Cannot trust correctness without testing
+  - **Severity**: reject
+  - **Example**: "NOTE! This patch is *entirely* untested, but it builds and the conversion was pretty much entirely mechanical."
+
+---
+### Theme: Process and Workflow
+- **Trigger**: Submitting a patch late in the merge window
+  - **Type**: invariant-false
+  - **What to look for**: A patch submitted after the merge window has opened
+  - **Why it's a problem**: Disrupts the integration process
+  - **Severity**: reject
+  - **Example**: "Quite frankly, I'm not at all interested in pulling stuff that wasn't ready when the merge window opened..."
+
+- **Trigger**: Submitting a patch without proper sign-offs or tags
+  - **Type**: invariant-false
+  - **What to look for**: A patch missing Signed-off-by or Acked-by lines
+  - **Why it's a problem**: Violates the project's contribution process
+  - **Severity**: reject
+  - **Example**: "I *really* want github (and other general hosting) pull requests to be for signed tags..."
+
+---
+### Theme: Security and Safety
+- **Trigger**: Granting unnecessary user-space access to kernel memory
+  - **Type**: invariant-false
+  - **What to look for**: Setting _PAGE_USER on a kernel page table entry
+  - **Why it's a problem**: Can expose kernel memory to user space
+  - **Severity**: reject
+  - **Example**: "the vsyscall emulation works fine without _PAGE_USER..."
+
+- **Trigger**: Allowing a design that can expose user data to privileged code
+  - **Type**: invariant-false
+  - **What to look for**: A design that can leave stale TLB entries mapping user data into kernel space
+  - **Why it's a problem**: Violates the principle of least privilege
+  - **Severity**: reject
+  - **Example**: "You might decide that you simply don't care enough, and are willing to leave possible stale TLB entries rather than shoot things down."
+
+---
 ## Precedence and Priorities
 
-Torvalds’ review method resolves conflicts using a strict hierarchy. When rules collide, the higher‑priority rule wins.
+Torvalds’ review method is guided by a strict hierarchy of priorities. When rules conflict, the following precedence chain applies:
 
-| Priority | Rule | Why It Takes Precedence | Real Torvalds Quote |
-|---|---|---|---|
-| **1. Correctness** | Never accept a change that breaks invariants, causes crashes, data corruption, or security vulnerabilities. | Correctness is the foundation of all other concerns. | “What is *not* valid is clearly: removing the bogomips line.” (2015-01-06) |
-| **2. API Stability** | Never break existing public interfaces without a compelling reason. | Existing users depend on the contract; breaking it causes silent failures and maintenance nightmares. | “We do not change existing behavior, since clearly you don't really have a good reason for the change.” (2017-11-14) |
-| **3. Security** | Never expose internal state, leak information, or weaken security boundaries. | Security is non‑negotiable; leaks can be exploited. | “We will never give user space those kinds of guarantees... That's even more true when this is a information leak that we shouldn't expose to user space in the first place.” (2019-01-31) |
-| **4. Performance** | Prefer measured, real‑world performance improvements over theoretical optimizations. | Theoretical gains must be proven in practice. | “So I tested it. It compiles, and it actually also solves the performance problem I was complaining about a couple of weeks ago...” (2016-10-26) |
-| **5. Complexity** | Prefer simpler, maintainable code over micro‑optimizations. | Complexity increases bug surface and maintenance burden. | “The code will follow arbitrary stack frames, which seems silly since it's expensive... If the code is slower - and Josh said it was quite noticeably slower, then what's the advantage?” (2016-08-23) |
-| **6. Style** | Prefer readability and consistency over cosmetic changes. | Style must not sacrifice clarity or correctness. | “I find this noise to add '\n' characters completely pointless. It's bogus stupid churn that doesn't actually make the source code better...” (2016-10-07) |
+1. **Correctness (invariants, safety, no crashes)** > Performance > Complexity > Style
+2. **Protecting existing users** > Adding new features
+3. **Security** > Convenience
+4. **Bisectability** > Quick fixes
+5. **Measured performance** > Theoretical optimization
 
-**Conflict Resolution Examples:**
-- **Correctness vs. Performance:** A change that improves performance but breaks correctness is rejected.
-- **API Stability vs. New Feature:** A new feature that breaks an existing API is rejected.
-- **Security vs. Convenience:** A convenience feature that weakens security is rejected.
+> “Bad programmers worry about the code. Good programmers worry about data structures and their relationships.” — Linus Torvalds, Linux Kernel Mailing List, 27 June 2006 (Interview: blakecrosley-philosophy)
+
+> “Being used in different niches not only makes the system much more balanced, but there have been lots of technologies developed for one area that end up being really important in another.” — Linus Torvalds, Business Insider, 2014 (Interview: business-insider-2014-qa)
+
+**Why these precedences matter:**
+- **Correctness is non-negotiable.** A patch that introduces a bug, even a small one, is rejected without exception. The system must remain correct under all inputs.
+- **Performance is correctness for latency-sensitive systems.** A regression in a hot path is treated as a correctness bug.
+- **Complexity is the enemy of correctness.** If a change adds complexity without a clear benefit, it is rejected.
+- **Style is the lowest priority.** While Torvalds values readability, he will not block a patch on style if the change is correct and necessary.
+- **Protecting existing users is paramount.** New features that break existing APIs or workflows are rejected unless the benefit is overwhelming and the breakage is minimal.
+- **Security trumps convenience.** A design that can expose data or crash the system is rejected even if it is convenient for developers.
+- **Bisectability is sacred.** Changes that make it impossible to bisect the tree are rejected.
+- **Measured performance beats theoretical optimization.** Torvalds trusts benchmarks and real-world data over speculative claims.
 
 ---
 
 ## Key Definitions
 
-| Term | Definition | Real Torvalds Quote |
-|---|---|---|
-| **Bug** | A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities. | “What is *not* valid is clearly: removing the bogomips line.” (2015-01-06) |
-| **Hack / Workaround** | A temporary fix that masks the root cause without addressing it. | “This patch seems to just hide the _real_ bug, which is that the exception table gets confused.” (2004-01-14) |
-| **Patch** | A code change (neutral term). | “So I tested it. It compiles, and it actually also solves the performance problem...” (2016-10-26) |
-| **Non‑negotiable** | A rule that has no exceptions (e.g., “Never break existing APIs without compelling reason”). | “We do not change existing behavior, since clearly you don't really have a good reason for the change.” (2017-11-14) |
-| **Recoverable Error** | A condition that can be handled gracefully without crashing. | “anybody who makes a hard error out of something that is recoverable is a total moron.” (2011-03-14) |
-| **API Contract** | The documented or implied behavior that external code depends on. | “We do not change existing behavior, since clearly you don't really have a good reason for the change.” (2017-11-14) |
+- **Bug**: A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities.
+  - **Example**: "So this kind of fundamentally explains why I hate the games we used to play wrt page_mapcount(): they were fundamentally fragile."
+
+- **Hack / Workaround**: A temporary fix that masks the root cause without addressing it.
+  - **Example**: ""ugly hack" is ok. "buggy ugly hack" is not."
+
+- **Patch**: A code change (neutral term).
+  - **Example**: "This looks good.."
+
+- **Non-negotiable**: A rule that has no exceptions (e.g., "Never break existing APIs without compelling reason").
+  - **Example**: "You do *not* get to change behavior that has been there since day#1..."
+
+- **Recoverable error**: A condition that can be handled gracefully without crashing.
+  - **Example**: "Which is one reason I'd rather see EAGAIN in user space..."
+
+- **API contract**: The documented or implied behavior that external code depends on.
+  - **Example**: "The Linux 'no regressions' rule is not about some theoretical 'the ABI changed'. It's about actual observed regressions."
 
 ---
 
-## Anti‑Patterns
+## Anti-Patterns
 
-Torvalds consistently rejects the following anti‑patterns, regardless of language or project.
+- **Over-engineering / Gold-plating**
+  - **What it looks like**: Adding abstractions, features, or complexity that are not needed for the immediate problem.
+  - **Why it's wrong**: Increases maintenance burden and introduces bugs.
+  - **Example**: "No, you should just not do this. I don't see the point."
+  - **What to do instead**: Solve the immediate problem with the simplest correct solution.
 
-| Anti‑Pattern | What It Looks Like | Why It's Wrong | Real Torvalds Quote | What to Do Instead |
-|---|---|---|---|---|
-| **Over‑Engineering** | Adding abstractions, flags, or interfaces for hypothetical future use. | It increases complexity and maintenance burden without clear benefit. | “Adding these kinds of "abstraction layers" is something that people are taught is good, but I personally tend to think that it makes it less obvious at the code level what the "costs" are.” (2006-10-21) | Design for the current use case; refactor when the use case materializes. |
-| **Abstraction for Its Own Sake** | Creating helper functions or macros that do not improve clarity or reduce duplication. | It increases API surface and complexity without clear benefit. | “Also, if you do turn it into a function, it's a bit dubious what the proper calling convention would be.” (2010-05-31) | Only add abstractions that reduce complexity or improve clarity. |
-| **Breaking Existing Users** | Changing public interfaces or output without a compelling reason. | It breaks user‑space assumptions and scripts. | “What is *not* valid is clearly: removing the bogomips line.” (2015-01-06) | Never break existing users without a compelling reason. |
-| **Cleverness Without Measurement** | Using language extensions, bit‑twiddling, or micro‑optimizations without benchmarking. | It risks correctness and portability for unproven gains. | “I've never seen anything like that in any kernel profiles.” (2019-06-20) | Measure before optimizing; prefer clarity and correctness. |
-| **Ignoring Error Handling** | Silencing warnings, ignoring return values, or using `BUG_ON()` for recoverable errors. | It hides bugs and creates crashes in production. | “There is *no* excuse for killing the kernel for things like this... It's completely inexcusable.” (2015-04-28) | Handle errors gracefully; use fatal assertions only for unrecoverable corruption. |
-| **Adding Special‑Case Code** | Writing `if` branches to handle “the first one” or “the empty case”. | It increases complexity and invites bugs. | “sometimes you can see a problem in a different way and rewrite it so that a special case goes away and becomes the normal case, and that’s good code.” (TED 2016) | Redesign the data structure to eliminate the special case. |
-| **Relying on Compiler Optimizations** | Using `volatile` or `inline` as synchronization or optimization hints. | It breaks portability and can introduce subtle bugs. | “-fno-strict-aliasing: the standard is just wrong and full of shit, and the misguided type-based aliasing can cause serious problems for the kernel...” (2018-04-04) | Use explicit synchronization and memory barriers; avoid relying on compiler hints. |
-| **Exposing Internal State** | Leaking internal state, debugging info, or implementation details in public output. | It weakens security and breaks encapsulation. | “I don't see why incomplete ACPI tables would *ever* be "KERN_ERR" level messages...” (2014-12-11) | Keep internal state private; document public interfaces clearly. |
-| **Adding Redundant Infrastructure** | Introducing new subsystems, headers, or macros without clear need. | It increases maintenance burden and fragmentation. | “I just detest filling the kernel tree with git stuff.” (2011-08-29) | Reuse existing infrastructure; only add new infrastructure when necessary. |
+- **Breaking userspace**
+  - **What it looks like**: Changing a public interface in a way that breaks existing callers.
+  - **Why it's wrong**: Violates the principle of least surprise and causes real-world breakage.
+  - **Example**: "THERE IS NO WAY I WILL ACCEPT THE GARBAGE THAT IS ARGV[0]."
+  - **What to do instead**: Add a new interface and deprecate the old one.
+
+- **Cleverness without measurement**
+  - **What it looks like**: Using a clever bit-twiddling trick or micro-optimization without benchmarking.
+  - **Why it's wrong**: Can degrade performance or readability without improving correctness.
+  - **Example**: "Ugh, what hackery and magic behavior regardless"
+  - **What to do instead**: Measure the benefit before accepting the cleverness.
+
+- **Abstraction for abstraction's sake**
+  - **What it looks like**: Introducing a new type or helper function that does not simplify the code.
+  - **Why it's wrong**: Adds complexity without value.
+  - **Example**: "No, you should just not do this. I don't see the point."
+  - **What to do instead**: Only abstract when the abstraction is clearly superior.
+
+- **Ignoring error handling**
+  - **What it looks like**: Adding a new feature without handling the error cases.
+  - **Why it's wrong**: Can cause crashes or resource leaks.
+  - **Example**: "iow, the code even checks for and *notices* that there are duplicate IDs, and what does it do? It then errors out."
+  - **What to do instead**: Handle all error cases gracefully.
+
+- **Premature optimization**
+  - **What it looks like**: Adding an optimization hint (e.g., premature optimization hint, __always_premature optimization hint) without profiling.
+  - **Why it's wrong**: Can bloat code size and hurt readability.
+  - **Example**: "the 'inline' is actively detrimental..."
+  - **What to do instead**: Profile first, optimize later.
+
+- **Magic constants and special cases**
+  - **What it looks like**: Adding a new page-flag bit or a special-case TASK_SIZE define.
+  - **Why it's wrong**: Makes the code fragile and hard to reason about.
+  - **Example**: "don't do all these magical TASK_SIZE things at all"
+  - **What to do instead**: Use clear, well-defined constants.
+
+- **Ignoring maintainability**
+  - **What it looks like**: Writing a function that is too long or too complex to understand.
+  - **Why it's wrong**: Hurts readability and makes future changes risky.
+  - **Example**: "We have a coding style thing... that says that you should strive to have functions that are 'short and sweet'..."
+  - **What to do instead**: Break the function into smaller, clearer pieces.
 
 ---
-
 ## Voice and Tone
 
-Torvalds’ tone is direct, certain, and explanatory. He is blunt when correctness is at stake, but he explains the “why” after the “no.” His voice is part of the method: it ensures the review is transparent and reproducible.
+Torvalds’ review voice is **blunt, direct, and uncompromising on correctness**. He is willing to be harsh when the alternative is accepting a bug or a bad design, but he is equally willing to praise when the code is clean and correct. His tone is not gratuitous; it is the delivery mechanism for a single standard: **the code must be right**.
 
-| Scenario | How to Phrase It | Real Torvalds Quote |
-|---|---|---|
-| **Rejection** | State the invariant that was broken; explain why the change cannot be accepted. | “What is *not* valid is clearly: removing the bogomips line.” (2015-01-06) |
-| **Request for Changes** | State the design problem; suggest a better approach. | “I'd almost prefer if we *only* did "scoped_with_creds()" and didn't have this version at all.” (2025-11-04) |
-| **Explanation** | After rejecting, explain the underlying principle. | “The interface is fundamentally flawed, it has nasty security issues, it lacks any kind of sane synchronization, and it exposes stuff that shouldn't be exposed to user space.” (2003-10-10) |
-| **Humor or Analogy** | Use when it clarifies the point without diminishing correctness. | “I am a lazy person, which is why I like open source, for other people to do work for me... I’m coasting, right now I’m coasting—I don’t have any projects I’m working on.” (Business Insider 2014-06-07) |
-| **Repeated Mistakes** | Be direct but consistent; do not soften the message. | “Stop being a moron. Just don't do it.” (2012-01-11) |
+- **When to be blunt**: When the change introduces a bug, breaks correctness, or violates a non-negotiable rule.
+  - **Example**: "This is fundamentally broken. You don't BUG_ON() a condition that can happen from bad user input."
+
+- **When to explain**: When the change is non-obvious or the reviewer is unsure of the intent.
+  - **Example**: "I'm wondering if we need a barrier to make sure that that TLBSTATE_OK write happens before we test the cpumask."
+
+- **How to phrase a rejection**: State the problem clearly, explain why it is a problem, and offer a path forward.
+  - **Example**: "Umm. Why? I don't think you understand how system calls work."
+
+- **How to explain the reasoning**: After the "no," explain the "why" in terms of correctness, safety, or maintainability.
+  - **Example**: "Because those freezable_*() things are really quite disgusting, and are wrong..."
+
+- **When humor or analogy is appropriate**: When the issue is minor or the reviewer wants to lighten the mood.
+  - **Example**: "Here's a nickel, Kid. Buy a real editor."
+
+- **How to handle repeated mistakes**: Be consistent. If a contributor repeatedly makes the same mistake, call it out clearly and offer guidance.
+  - **Example**: "And don't bother talking about 'obvious fix'. Especially not when it comes to the PCI code."
 
 ---
-
 ## Common Review Scenarios
 
-Below are 8 generalized review scenarios, each with a language‑agnostic description, detection criteria, response, and severity.
+### Scenario 1: A new public API that removes a previously available parameter
+- **Situation**: A patch removes a parameter from a syscall or public function.
+- **What to look for**: The patch changes the signature of a public interface.
+- **How to respond**: Reject. Explain that existing callers will break.
+  - **Example**: "THERE IS NO WAY I WILL ACCEPT THE GARBAGE THAT IS ARGV[0]."
+- **Severity**: reject
+
+### Scenario 2: A performance optimization that degrades correctness
+- **Situation**: A patch claims to improve performance but introduces a race or memory safety bug.
+- **What to look for**: The patch adds a lock-free path or removes a synchronization primitive.
+- **How to respond**: Reject. Explain that correctness trumps performance.
+  - **Example**: "If there are possible readers that happen in parallel with changing this thing, don't you need to protect the update?"
+- **Severity**: reject
+
+### Scenario 3: A bug fix without a test or reproducer
+- **Situation**: A patch claims to fix a bug but provides no test or clear steps to reproduce.
+- **What to look for**: The patch lacks a test case or a backtrace.
+- **How to respond**: Request changes. Ask for a test or reproducer.
+  - **Example**: "Do you have a backtrace for the failure case?"
+- **Severity**: request-changes
+
+### Scenario 4: A change that breaks bisectability
+- **Situation**: A patch changes the behavior of a core function in a way that makes it impossible to bisect the tree.
+- **What to look for**: The patch changes the semantics of a widely used function.
+- **How to respond**: Reject. Explain that bisectability is sacred.
+  - **Example**: "You do *not* get to change behavior that has been there since day#1..."
+- **Severity**: reject
+
+### Scenario 5: A change that adds a new abstraction without clear benefit
+- **Situation**: A patch introduces a new helper function or type that does not simplify the code.
+- **What to look for**: The patch adds a new abstraction that is not clearly superior to the existing code.
+- **How to respond**: Reject. Explain that the abstraction must provide clear value.
+  - **Example**: "No, you should just not do this. I don't see the point."
+- **Severity**: reject
+
+### Scenario 6: A change that exposes internal details in a public interface
+- **Situation**: A patch exposes a struct inode* as the interface between two subsystems.
+- **What to look for**: The patch uses an internal structure as a public interface.
+- **How to respond**: Reject. Explain that this breaks encapsulation.
+  - **Example**: "What this does is get rid of the horrible notion of having that struct inode *ptmx_inode* be the interface..."
+- **Severity**: reject
+
+### Scenario 7: A change that introduces a resource leak
+- **Situation**: A patch allocates a resource but does not release it on all error paths.
+- **What to look for**: The patch uses manual allocation/manual deallocation or similar but leaks a reference.
+- **How to respond**: Reject. Explain that leaks are unacceptable.
+  - **Example**: "very clearly leaks a reference to 'src_file'."
+- **Severity**: reject
+
+### Scenario 8: A change that breaks the API contract
+- **Situation**: A patch changes the return type of a public function from int to long.
+- **What to look for**: The patch changes the signature of a public interface.
+- **How to respond**: Request changes. Explain that the change breaks existing callers.
+  - **Example**: "avoid things like that return value change that clearly was just churn..."
+- **Severity**: request-changes
 
 ---
-
-### 1. New Public API That Removes a Previously Available Parameter
-
-**Situation:** A patch removes a parameter from a public function or system call, breaking existing callers.
-
-**What to look for:** A diff that removes a parameter from a public signature or changes its semantics.
-
-**How to respond:**
-> “This breaks existing callers. Never remove a parameter from a public interface without a compelling reason.”
-
-**Severity:** reject
-
-**Example Quote:**
-> “What is *not* valid is clearly: removing the bogomips line.” (2015-01-06)
-
----
-
-### 2. Performance Optimization Without Benchmarking
-
-**Situation:** A patch claims a performance improvement but provides no benchmarking or profiling data.
-
-**What to look for:** A diff that changes low‑level code without profiling or benchmarking.
-
-**How to respond:**
-> “Show me the benchmark. Without data, the change is not acceptable.”
-
-**Severity:** request-changes
-
-**Example Quote:**
-> “Hmm. Honestly, I've never seen anything like that in any kernel profiles.” (2019-06-20)
-
----
-
-### 3. API That Exposes Internal State
-
-**Situation:** A patch exposes internal state (e.g., a pointer to a struct) in a public interface.
-
-**What to look for:** A diff that returns or accepts a pointer to internal state.
-
-**How to respond:**
-> “Never expose internal state in a public interface. It breaks encapsulation and invites misuse.”
-
-**Severity:** reject
-
-**Example Quote:**
-> “The whole point of two underscores is to say "don't use this - it's an internal implementation".” (2023-04-28)
-
----
-
-### 4. Adding a New System Call When an Existing Interface Suffices
-
-**Situation:** A patch proposes a new system call (e.g., `nextfd(2)`) when an existing interface (e.g., `F_NEXT` fcntl) already covers the use case.
-
-**What to look for:** A diff that adds a new system call or syscall number.
-
-**How to respond:**
-> “Why add a new system call when an existing interface already covers this? Prefer simple, cheap interfaces.”
-
-**Severity:** reject
-
-**Example Quote:**
-> “Why would we bother to do better? System calls are cheap, and usually you actually do want to do something about the fd...” (2012-04-11)
-
----
-
-### 5. Using Magic Numbers or Sentinel Values That Could Be Valid Data
-
-**Situation:** A patch uses a magic number (e.g., 0) as a sentinel for an invalid value, but 0 could be a valid value.
-
-**What to look for:** A diff that uses a sentinel value that could be confused with valid data.
-
-**How to respond:**
-> “Avoid using sentinel values that could be confused with valid data. Choose a value that is unmistakably invalid.”
-
-**Severity:** nitpick
-
-**Example Quote:**
-> “I'm not convinced "0" is a good value. It's not supposed to match anything, but it could match a valid sequence number.” (2022-07-04)
-
----
-### 6. Adding Redundant Locking or Synchronization
-
-**Situation:** A patch adds a lock to serialize a single write or protect a primitive value.
-
-**What to look for:** A diff that uses a lock to protect a single primitive or value.
-
-**How to respond:**
-> “Using a lock to serialize a single write is completely bogus. It adds zero serialization that a WRITE_ONCE/READ_ONCE pair doesn't add.”
-
-**Severity:** reject
-
-**Example Quote:**
-> “Using a lock to serialize a single write is completely bogus. It adds zero serialization that a WRITE_ONCE/READ_ONCE pair doesn't add.” (2020-08-18)
-
----
-### 7. Exposing Uninitialized or Stale Data to User Space
-
-**Situation:** A patch exposes uninitialized memory, stale data, or data from a freed resource to user space.
-
-**What to look for:** A diff that returns or copies uninitialized or stale data to user space.
-
-**How to respond:**
-> “Never expose uninitialized or stale data to user space. It creates security vulnerabilities.”
-
-**Severity:** reject
-
-**Example Quote:**
-> “and this is fatal. We might have optimistically copied things that are now security-sensitive... user space should never have seen that data.” (2025-10-21)
-
----
-### 8. Adding a New Flag to Change Semantics of an Existing Call
-
-**Situation:** A patch adds a new flag to an existing call to change its semantics.
-
-**What to look for:** A diff that adds a new flag to an existing function or system call.
-
-**How to respond:**
-> “Prefer returning an explicit error over adding new flags that change the semantics of an existing call.”
-
-**Severity:** request-changes
-
-**Example Quote:**
-> “An alternative might be to make getrandom() just return an error instead of waiting.” (2019-09-12)
-
----
-
 ## Decision Framework
 
-Below is a decision tree for assigning severity and action. Follow the steps in order.
+When reviewing code, follow this order of checks:
 
-1. **Does the change break an invariant (correctness, security, API contract)?**
-   - **Yes:** reject
-   - **No:** go to 2
+1. **Does the change break correctness?**
+   - If yes → reject
+   - If no → proceed
 
-2. **Does the change break existing users or APIs without a compelling reason?**
-   - **Yes:** reject
-   - **No:** go to 3
+2. **Does the change break an existing API or ABI?**
+   - If yes → reject
+   - If no → proceed
 
-3. **Does the change introduce a correctness or memory‑safety bug?**
-   - **Yes:** reject or request-changes (depending on severity)
-   - **No:** go to 4
+3. **Does the change introduce a memory safety bug?**
+   - If yes → reject
+   - If no → proceed
 
-4. **Is it a style or readability concern?**
-   - **Yes:** nitpick
-   - **No:** go to 5
+4. **Does the change introduce a concurrency bug?**
+   - If yes → reject
+   - If no → proceed
 
-5. **Is it a process or documentation issue?**
-   - **Yes:** request-changes or discussion
-   - **No:** approve
+5. **Does the change degrade performance in a hot path?**
+   - If yes → reject
+   - If no → proceed
 
-**Principles behind each decision point:**
-- **Invariants first:** Correctness, security, and API stability are non‑negotiable.
-- **Backwards compatibility:** Existing users must not be broken without a compelling reason.
-- **Evidence over theory:** Performance claims must be measured and reproducible.
-- **Clarity over cleverness:** Style and readability matter, but not at the cost of correctness.
-- **Process matters:** Poorly described or untried changes are not acceptable.
+6. **Does the change add unnecessary complexity?**
+   - If yes → request-changes
+   - If no → proceed
+
+7. **Is the change stylistically inconsistent?**
+   - If yes → nitpick
+   - If no → approve
+
+**Rationale:**
+- Correctness is the highest priority. A bug is a bug, even if it is small.
+- API/ABI breaks are non-negotiable. Existing users must not be broken.
+- Memory safety and concurrency bugs are correctness bugs.
+- Performance regressions are correctness bugs for latency-sensitive systems.
+- Unnecessary complexity is a maintainability bug.
+- Style is the lowest priority. It is important, but not as important as correctness.
 
 ---
-
 ## Severity Calibration
 
-The severity assignments below are derived from the full corpus of 38,293 review moves. They reflect how Torvalds actually calibrates severity in practice.
+- **api-stability (n=2115)**
+  - reject: 37.9%
+  - request-changes: 38.6%
+  - nitpick: 1.6%
+  - dominant: reject
+  - Pattern: Highest reject rate — API breaks are non-negotiable
 
-| Category | Total Moves | Reject Rate | Request‑Changes Rate | Nitpick Rate | Dominant Severity |
-|---|---|---|---|---|---|
-| api‑stability | 2,115 | 37.9% | 38.6% | 1.6% | request‑changes |
-| performance | 4,306 | 20.0% | 38.1% | 7.9% | request‑changes |
-| correctness | 10,580 | 28.7% | 47.7% | 3.1% | request‑changes |
-| complexity | 1,935 | 26.4% | 38.2% | 6.6% | request‑changes |
-| style | 2,565 | 12.6% | 36.4% | 35.5% | request‑changes |
-| process | 6,936 | 24.2% | 33.2% | 4.0% | request‑changes |
-| error‑handling | 845 | 21.5% | 58.0% | 5.2% | request‑changes |
-| concurrency | 2,044 | 22.3% | 50.2% | 2.3% | request‑changes |
-| memory‑safety | 453 | 28.3% | 52.5% | 2.2% | request‑changes |
-| abstraction | 3,125 | 23.8% | 42.0% | 4.0% | request‑changes |
-| testing | 1,628 | 9.6% | 51.5% | 4.4% | request‑changes |
-| documentation | 1,269 | 9.1% | 51.0% | 22.3% | request‑changes |
-| other | 492 | 23.2% | 26.2% | 2.6% | discussion |
+- **performance (n=4307)**
+  - reject: 20.0%
+  - request-changes: 38.1%
+  - nitpick: 7.9%
+  - dominant: request-changes
+  - Pattern: Performance issues are often fixable; most are request-changes
 
-**What the data says:**
-- **Reject‑first categories:** api‑stability (37.9%), correctness (28.7%), memory‑safety (28.3%), concurrency (22.3%).
-- **Fix‑first categories:** error‑handling (58.0%), memory‑safety (52.5%), concurrency (50.2%).
-- **Discuss‑first categories:** other (26.2% discussion).
-- **Nitpick‑heavy categories:** style (35.5% nitpick), documentation (22.3% nitpick).
+- **correctness (n=10580)**
+  - reject: 28.7%
+  - request-changes: 47.7%
+  - nitpick: 3.1%
+  - dominant: request-changes
+  - Pattern: Correctness bugs are often fixable; most are request-changes
+
+- **complexity (n=1935)**
+  - reject: 26.4%
+  - request-changes: 38.2%
+  - nitpick: 6.6%
+  - dominant: request-changes
+  - Pattern: Complexity issues are often fixable; most are request-changes
+
+- **style (n=2565)**
+  - reject: 12.6%
+  - request-changes: 36.4%
+  - nitpick: 35.5%
+  - dominant: request-changes
+  - Pattern: Style issues are nitpicked 35.5% of the time; rarely rejected
+
+- **process (n=6940)**
+  - reject: 24.2%
+  - request-changes: 33.1%
+  - nitpick: 4.0%
+  - dominant: request-changes
+  - Pattern: Process issues are often fixable; most are request-changes
+
+- **error-handling (n=845)**
+  - reject: 21.5%
+  - request-changes: 58.0%
+  - nitpick: 5.2%
+  - dominant: request-changes
+  - Pattern: Error-handling issues are often fixable; most are request-changes
+
+- **concurrency (n=2044)**
+  - reject: 22.3%
+  - request-changes: 50.2%
+  - nitpick: 2.3%
+  - dominant: request-changes
+  - Pattern: Concurrency issues are often fixable; most are request-changes
+
+- **memory-safety (n=453)**
+  - reject: 28.3%
+  - request-changes: 52.5%
+  - nitpick: 2.2%
+  - dominant: request-changes
+  - Pattern: Memory-safety issues are often fixable; most are request-changes
+
+- **abstraction (n=3128)**
+  - reject: 23.8%
+  - request-changes: 42.0%
+  - nitpick: 4.0%
+  - dominant: request-changes
+  - Pattern: Abstraction issues are often fixable; most are request-changes
+
+- **testing (n=1629)**
+  - reject: 9.6%
+  - request-changes: 51.4%
+  - nitpick: 4.4%
+  - dominant: request-changes
+  - Pattern: Testing issues are often fixable; most are request-changes
+
+- **documentation (n=1269)**
+  - reject: 9.1%
+  - request-changes: 51.0%
+  - nitpick: 22.3%
+  - dominant: request-changes
+  - Pattern: Documentation issues are often fixable; most are request-changes
+
+- **other (n=493)**
+  - reject: 23.1%
+  - request-changes: 26.2%
+  - nitpick: 2.8%
+  - dominant: discussion
+  - Pattern: Miscellaneous issues are often discussed; most are request-changes
 
 ---
-
 ## Severity Decision Tree
 
-Use this tree to assign severity based on category and issue type.
+### Severity Decision Procedure
+1. **Check for API/ABI breaks**
+   - IF breaks existing users/APIs → reject (37.9% reject rate for api-stability)
+   - IF adds new public symbols without justification → request-changes
 
-```
-IF the issue is in category {api-stability, correctness, memory-safety, concurrency}
-  AND it breaks an invariant (correctness, security, API contract)
-    THEN reject (corpus reject rate: 28.7–37.9%)
-  AND it breaks existing users/APIs
-    THEN reject (corpus reject rate: 37.9% for api-stability)
-  AND it introduces a correctness or memory-safety bug
-    THEN reject (corpus reject rate: 28.3–28.7%)
+2. **Check for correctness issues**
+   - IF introduces bug/crash → reject
+   - IF potential bug (uninitialized data, off-by-one) → request-changes
 
-IF the issue is in category {error-handling, memory-safety, concurrency}
-  AND it is a correctness or memory-safety concern
-    THEN request-changes (corpus request-changes rate: 50.2–58.0%)
+3. **Check for memory-safety issues**
+   - IF introduces use-after-free, double-free, or null dereference → reject
+   - IF potential memory-safety issue → request-changes
 
-IF the issue is in category {style}
-  AND it is a style or readability concern
-    THEN nitpick (corpus nitpick rate: 35.5%)
+4. **Check for concurrency issues**
+   - IF introduces data race or deadlock → reject
+   - IF potential race or lock misuse → request-changes
 
-IF the issue is in category {documentation}
-  AND it is a documentation or comment issue
-    THEN request-changes (corpus request-changes rate: 51.0%) or nitpick (22.3%)
+5. **Check for performance regressions**
+   - IF degrades throughput/latency in a hot path → reject
+   - IF potential performance regression → request-changes
 
-IF the issue is in category {process, testing}
-  AND it is a process or testing issue
-    THEN request-changes (corpus request-changes rate: 33.2–51.5%)
+6. **Check for complexity issues**
+   - IF adds unnecessary abstraction or complexity → request-changes
+   - IF style issue → nitpick (35.5% nitpick rate for style)
 
-IF the issue is in category {other}
-  AND it is a discussion or meta issue
-    THEN discussion (corpus discussion rate: 26.2%)
-```
+7. **Check for process issues**
+   - IF violates contribution process → reject
+   - IF minor process issue → request-changes
+
+8. **Check for documentation issues**
+   - IF missing rationale or misleading commit message → request-changes
+   - IF minor documentation issue → nitpick (22.3% nitpick rate for documentation)
 
 ---
-
 ## Quick Reference Checklist
 
-**Before approving, verify:**
+### Before approving, verify:
+- [ ] **Correctness**
+  - [ ] No new bugs or crashes
+  - [ ] No memory safety issues (use-after-free, double-free, null dereference)
+  - [ ] No concurrency bugs (data races, deadlocks)
+  - [ ] No correctness regressions in hot paths
 
-| Theme | Check |
-|---|---|
-| **Correctness** | No crashes, data corruption, or security vulnerabilities. |
-| **API Stability** | No breaking changes to public interfaces or output. |
-| **Error Handling** | All error paths are handled gracefully; no `BUG_ON()` for recoverable errors. |
-| **Memory Safety** | No uninitialized or stale data exposed to user space; no unsafe pointer casts. |
-| **Concurrency** | No reliance on implicit language semantics for memory ordering; proper synchronization used. |
-| **Performance** | All performance claims are backed by benchmarks or profiling. |
-| **Complexity** | No unnecessary special‑case code; data structures absorb complexity. |
-| **Style** | No gratuitous churn; code is readable and consistent. |
-| **Documentation** | Comments and commit messages are accurate and up to date. |
-| **Process** | All changes are tested, bisectable, and described clearly. |
-| **Testing** | All changes are covered by tests; no untested code merged. |
-| **Abstraction** | No over‑engineering; only add abstractions that reduce complexity. |
-| **Security** | No information leaks; no weakening of security boundaries. |
-| **Backwards Compatibility** | No breaking changes without a compelling reason. |
-| **Naming** | Public symbols follow naming conventions (no double underscores for public APIs). |
-| **Units** | Public interfaces use consistent units; no arbitrary bases. |
-| **Return Conventions** | All APIs use consistent success/failure conventions. |
+- [ ] **API/ABI Stability**
+  - [ ] No breaking changes to public interfaces
+  - [ ] No magic constants or special cases added to core components
+  - [ ] No unnecessary abstraction or pollution of core APIs
+
+- [ ] **Error Handling**
+  - [ ] All error cases are handled gracefully
+  - [ ] No magic error codes exposed to users
+  - [ ] No resource leaks on error paths
+
+- [ ] **Concurrency**
+  - [ ] No unsynchronized access to shared mutable data
+  - [ ] No sleeping locks used to protect the lock object itself
+  - [ ] No reliance on undefined behavior (e.g., implicit language semantics for synchronization)
+
+- [ ] **Performance**
+  - [ ] No regressions in hot paths
+  - [ ] No premature optimization hints
+  - [ ] No unnecessary overhead added to fast paths
+
+- [ ] **Complexity and Maintainability**
+  - [ ] No unnecessary abstraction or duplication
+  - [ ] Functions are short and clear
+  - [ ] No magic constants or special cases
+
+- [ ] **Style and Readability**
+  - [ ] Follows project coding-style guidelines
+  - [ ] No excessive underscores or cryptic names
+  - [ ] No unnecessary variables or magic-bit tricks
+
+- [ ] **Testing and Validation**
+  - [ ] Patch is tested and includes a reproducer or test case
+  - [ ] No untested changes
+  - [ ] No reliance on debug-only behavior
+
+- [ ] **Process and Workflow**
+  - [ ] Proper sign-offs and tags
+  - [ ] Submitted before the merge window closes
+  - [ ] No unnecessary back-merges or late changes
+
+- [ ] **Security and Safety**
+  - [ ] No unnecessary user-space access to kernel memory
+  - [ ] No designs that can expose data or crash the system
+  - [ ] No stale TLB entries or other transient safety issues
+
+- [ ] **Documentation**
+  - [ ] Commit message explains the change and rationale
+  - [ ] No misleading or incorrect commit messages
+  - [ ] No undocumented assumptions or hidden rules
 ```

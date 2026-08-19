@@ -150,6 +150,9 @@ YOUR TASK
 ═══════════════════════════════════════════════════════════════════════
 
 You will receive raw review moves sampled from the corpus, grouped by category. \
+The corpus combines 38,000+ email review moves and 500+ interview passages, sampled into 350 representative patterns. \
+Each pattern has a `source` field indicating whether it comes from email ("source: email") or interview ("source: interview"). \
+Treat interview-sourced patterns with equal weight to email-sourced patterns — both are valid evidence of Torvalds' reviewing method. \
 Each move has: trigger (what prompted the review), principle (the underlying rule), \
 response (Torvalds' actual words), severity, and date.
 
@@ -171,6 +174,22 @@ vague language — each definition must be verifiable.
 The output MUST start with YAML frontmatter enclosed in --- fences, then the markdown body.
 
 Output exactly this structure (replace the bracketed parts with real content):
+
+**CRITICAL FORMATTING RULE: DO NOT USE MARKDOWN TABLES**
+- All multi-field entries MUST use structured nested bullet lists
+- NEVER use `| column | column |` table syntax
+- Example of CORRECT format:
+  ```
+  - **Trigger**: description
+    - Severity: level
+    - Principle: explanation
+  ```
+- Example of INCORRECT format (FORBIDDEN):
+  ```
+  | Trigger | Severity | Principle |
+  |---------|----------|----------|
+  | foo     | high     | bar      |
+  ```
 
 ---
 name: linus-torvalds-skill
@@ -205,6 +224,20 @@ For EACH trigger provide:
 - **Example (original wording)**: a real Torvalds quote showing how he handles it — \
 introduce it with the generalized trigger, then show the verbatim quote
 - 1-2 additional supporting quotes when available
+
+FORMAT REQUIREMENT: Use structured nested bullet lists for all triggers. DO NOT use \
+markdown tables. Example of correct format:
+
+```
+### Theme: Assertion Misuse
+- **Trigger**: Fatal assertion used for recoverable condition
+  - **Type**: invariant-false
+  - **What to look for**: panic/crash in code paths that should handle errors gracefully
+  - **Why it's a problem**: Recoverable errors must be handled without crashing
+  - **Severity**: reject
+  - **Example**: "This is fundamentally broken. You don't BUG_ON() a condition that \
+    can happen from bad user input."
+```
 
 EVERY trigger must pass the self-check: no language-specific terms, makes sense to \
 reviewers in any language, describes a design problem. Cover at least 12 distinct \
@@ -278,7 +311,20 @@ Torvalds actually calibrates severity — e.g., "API-stability issues are reject
 35.5% of the time but rarely rejected." Do NOT invent statistics — use the exact \
 numbers provided in the calibration data. Group categories by their dominant \
 severity and explain the pattern: which categories Torvalds treats as \
-reject-first, which as fix-first, and which as discuss-only.]
+reject-first, which as fix-first, and which as discuss-only.
+
+FORMAT REQUIREMENT: Use structured nested bullet lists for category statistics. \
+DO NOT use markdown tables. Example of correct format:
+
+```
+- **Category: api-stability** (n=42)
+  - reject: 37.9%
+  - request-changes: 45.2%
+  - nitpick: 16.9%
+  - dominant: reject
+  - Pattern: Highest reject rate — API breaks are non-negotiable
+```
+]
 
 ## Severity Decision Tree
 [A category-based decision tree derived from the calibration statistics. \
@@ -291,7 +337,23 @@ simplified decision procedure: "To assign severity, check in order: (1) does \
 the change break existing users/APIs? → reject; (2) does it introduce a \
 correctness or memory-safety bug? → reject or request-changes depending on \
 severity; (3) is it a style issue? → nitpick; etc." The decision tree must be \
-language-agnostic — no C/kernel identifiers, no type names, no macro names.]
+language-agnostic — no C/kernel identifiers, no type names, no macro names.
+
+FORMAT REQUIREMENT: Use structured nested bullet lists for decision rules. \
+DO NOT use markdown tables. Example of correct format:
+
+```
+### Severity Decision Procedure
+1. Check for API/ABI breaks
+   - IF breaks existing users/APIs → reject (37.9% reject rate for api-stability)
+   - IF adds new public symbols without justification → request-changes
+2. Check for correctness issues
+   - IF introduces bug/crash → reject
+   - IF potential bug (uninitialized data, off-by-one) → request-changes
+3. Check for style/readability
+   - IF style inconsistency → nitpick (35.5% nitpick rate for style)
+```
+]
 
 ## Quick Reference Checklist
 [A one-page checklist a reviewer can scan: "Before approving, verify:" with 15-20 \
@@ -309,64 +371,198 @@ LANGUAGE must be invisible.
 """
 
 
+def _detect_truncation(text: str, model: str) -> bool:
+    """Detect if LLM output is truncated mid-sentence or mid-section.
+
+    Returns True if the output appears incomplete:
+    - Ends without proper closing (no terminal punctuation, no code fence close)
+    - Token count is suspiciously low (< 500 for skill, < 800 for soul)
+    - For GLM5.2: also checks for mid-word endings
+    """
+    if not text or not text.strip():
+        return True
+
+    stripped = text.strip()
+    
+    # Check token count threshold
+    # Rough estimate: 1 token ≈ 4 characters
+    token_count = len(stripped) / 4
+    is_skill = "skill" in model.lower() or "distill" in model.lower()
+    is_soul = "soul" in model.lower()
+    
+    min_tokens = 500 if is_skill else (800 if is_soul else 500)
+    if token_count < min_tokens:
+        return True
+
+    # For GLM5.2, be stricter — must end with punctuation or code fence or section marker
+    if "glm" in model.lower():
+        if (stripped.endswith(".") or stripped.endswith("!") or 
+            stripped.endswith("?") or stripped.endswith("```") or
+            stripped.endswith("---")):
+            return False  # Proper ending
+        # Doesn't end properly for GLM
+        return True
+    
+    # General check for other models
+    proper_endings = (".", "!", "?", "```", "---", "##", "#")
+    if any(stripped.endswith(ending) for ending in proper_endings):
+        return False
+    
+    # Check if it ends mid-sentence (last word has no punctuation)
+    words = stripped.split()
+    if words:
+        last_word = words[-1]
+        # If last word doesn't end with punctuation and isn't a code element
+        if not any(last_word.endswith(p) for p in (".", "!", "?", ")", "]", "`")):
+            return True
+    
+    return False
+
+
+def _patch_truncated_section(primary_text: str, fallback_text: str) -> str:
+    """Merge truncated primary output with fallback tail.
+
+    Finds the last complete section boundary in primary text, then appends
+    everything after that point from the fallback output.
+    """
+    if not primary_text or not fallback_text:
+        return fallback_text or primary_text or ""
+
+    # Find section boundaries (markdown headers or --- separators)
+    section_patterns = ["\n## ", "\n# ", "\n---", "\n### "]
+    
+    last_boundary_pos = 0
+    for pattern in section_patterns:
+        pos = primary_text.rfind(pattern)
+        if pos > last_boundary_pos:
+            last_boundary_pos = pos
+    
+    # If we found a boundary, extract the tail from fallback
+    if last_boundary_pos > 0:
+        # Get the section header from primary
+        section_header = primary_text[last_boundary_pos:last_boundary_pos + 10].strip()
+        
+        # Find the same section in fallback
+        fallback_section_pos = fallback_text.find(section_header)
+        if fallback_section_pos != -1:
+            # Check if fallback has more content after this section
+            primary_tail = primary_text[last_boundary_pos:]
+            fallback_tail = fallback_text[fallback_section_pos:]
+            
+            # If fallback is longer, append the difference
+            if len(fallback_tail) > len(primary_tail):
+                # Find where they diverge
+                divergence = 0
+                for i in range(min(len(primary_tail), len(fallback_tail))):
+                    if primary_tail[i] != fallback_tail[i]:
+                        divergence = i
+                        break
+                else:
+                    divergence = len(primary_tail)
+                
+                # Append the missing part
+                return primary_text[:last_boundary_pos + divergence] + fallback_tail[divergence:]
+    
+    # No clear section match, just return fallback
+    return fallback_text
+
+
 def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt: str = None) -> str:
     """Call the LLM for the distillation step. Returns raw text.
 
     Uses SSE streaming so reasoning models (e.g. GLM5.2) that spend minutes
     on internal reasoning don't hit read timeouts — each token delta keeps
     the connection alive.
+
+    Implements fallback chain for GLM5.2 truncation:
+    mistral-small-4-119b → gpt-oss-120b → glm5.2
     """
     retries = retries if retries is not None else config.MAX_RETRIES
     sys_prompt = system_prompt if system_prompt is not None else DISTILL_SYSTEM_PROMPT
 
-    effective_model = model or config.MODEL
-    is_glm = "glm" in effective_model.lower()
-
-    payload = {
-        "model": effective_model,
-        "messages": [
-            {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.3,
-        "max_tokens": 16000 if is_glm else 64000,
-        "stream": True,
-    }
-
-    timeout = 600 if is_glm else 120
-
+    # Fallback model chain for truncation recovery
+    fallback_models = ["mistral-small-4-119b", "gpt-oss-120b", "glm5.2"]
+    primary_model = model or config.MODEL
+    
+    # Try primary model first, then fallbacks if truncation detected
+    models_to_try = [primary_model]
+    if primary_model not in fallback_models:
+        models_to_try.extend(fallback_models)
+    
     last_err = None
-    for attempt in range(retries):
-        try:
-            body = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                config.CHAT_URL,
-                data=body,
-                headers=config.headers(),
-                method="POST",
-            )
-            content_parts = []
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                for raw in resp:
-                    line = raw.decode("utf-8").strip()
-                    if not line or not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    chunk = json.loads(data_str)
-                    delta = chunk.get("choices", [{}])[0].get("delta", {})
-                    text = delta.get("content")
-                    if text:
-                        content_parts.append(text)
-            result = "".join(content_parts)
-            if result.strip():
+    primary_result = None
+    sys = __import__("sys")
+    
+    for call_model in models_to_try:
+        is_glm = "glm" in call_model.lower()
+        
+        payload = {
+            "model": call_model,
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.3,
+            "max_tokens": 16000 if is_glm else 64000,
+            "stream": True,
+        }
+        
+        timeout = 600 if is_glm else 120
+        model_retries = retries
+        
+        for attempt in range(model_retries):
+            try:
+                body = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    config.CHAT_URL,
+                    data=body,
+                    headers=config.headers(),
+                    method="POST",
+                )
+                content_parts = []
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    for raw in resp:
+                        line = raw.decode("utf-8").strip()
+                        if not line or not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        chunk = json.loads(data_str)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        text = delta.get("content")
+                        if text:
+                            content_parts.append(text)
+                result = "".join(content_parts)
+                if not result.strip():
+                    last_err = RuntimeError("empty response")
+                    break
+                
+                # Check for truncation
+                if _detect_truncation(result, call_model):
+                    print(f"warning: truncation detected with {call_model}, trying fallback...", file=sys.stderr)
+                    if primary_result is None:
+                        primary_result = result
+                    last_err = RuntimeError("truncation detected")
+                    break
+                
+                # Success - no truncation
+                if call_model != primary_model:
+                    print(f"info: fallback model {call_model} succeeded", file=sys.stderr)
+                    # Try to patch if we have a primary result
+                    if primary_result is not None:
+                        return _patch_truncated_section(primary_result, result)
                 return result
-            last_err = RuntimeError("empty response")
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
-            last_err = e
-            time.sleep(config.RETRY_DELAY * (attempt + 1))
-
+                
+            except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
+                last_err = e
+                time.sleep(config.RETRY_DELAY * (attempt + 1))
+    
+    # All models failed or truncated
+    if primary_result is not None:
+        print("warning: all models truncated, returning primary result", file=sys.stderr)
+        return primary_result
+    
     raise RuntimeError(f"LLM distill failed after {retries} retries: {last_err}")
 
 
@@ -400,35 +596,53 @@ def _format_calibration_for_prompt(calibration: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_moves_for_prompt(data: dict) -> str:
-    """Format sampled moves by category into a prompt for the LLM."""
+def _format_moves_for_prompt(patterns: list) -> str:
+    """Format sampled patterns into a prompt for the LLM."""
     lines = []
+
+    total = len(patterns)
+    categories = {}
+    severities = {}
+    sources = {}
+    for p in patterns:
+        cat = p.get("category", "unknown")
+        sev = p.get("severity", "unknown")
+        src = p.get("source", "email")
+        categories[cat] = categories.get(cat, 0) + 1
+        severities[sev] = severities.get(sev, 0) + 1
+        sources[src] = sources.get(src, 0) + 1
+
     lines.append("Corpus statistics:")
-    lines.append(f"  Total review moves extracted: {data['total_moves']}")
-    lines.append(f"  Category distribution: {json.dumps(data['categories'])}")
-    lines.append(f"  Severity distribution: {json.dumps(data['severity_distribution'])}")
+    lines.append(f"  Total representative patterns: {total}")
+    lines.append(f"  Source distribution: {json.dumps(sources)}")
+    lines.append(f"  Category distribution: {json.dumps(categories)}")
+    lines.append(f"  Severity distribution: {json.dumps(severities)}")
     lines.append("")
 
-    samples_by_category = data.get("samples_by_category", {})
-    total_samples = sum(len(v) for v in samples_by_category.values())
-    lines.append(f"Below are {total_samples} representative review moves sampled from the corpus,")
-    lines.append("grouped by category. Each move shows what triggered the review, the principle,")
-    lines.append("Torvalds' actual response, the severity, and the date.")
+    by_category = {}
+    for p in patterns:
+        cat = p.get("category", "unknown")
+        by_category.setdefault(cat, []).append(p)
+
+    lines.append(f"Below are {total} representative review moves sampled from the corpus,")
+    lines.append("grouped by category. The corpus combines email review moves and")
+    lines.append("interview passages. Each pattern has a 'source' field (email or interview).")
+    lines.append("Treat interview-sourced patterns with equal weight to email-sourced patterns.")
     lines.append("")
     lines.append("Find the recurring THEMES across these moves (not just within categories) and")
     lines.append("synthesize them into the skill.")
     lines.append("")
 
-    for cat, moves in samples_by_category.items():
+    for cat, moves in sorted(by_category.items()):
         lines.append(f"## Category: {cat} ({len(moves)} samples)")
         lines.append("")
         for i, m in enumerate(moves, 1):
             lines.append(f"### Move {i}")
-            lines.append(f"Trigger: {m['trigger']}")
-            lines.append(f"Principle: {m['principle']}")
-            lines.append(f"Severity: {m['severity']}")
-            lines.append(f"Date: {m['date']}")
-            lines.append(f'Response (Torvalds\' words): "{m["response"]}"')
+            lines.append(f"Trigger: {m.get('trigger', '')}")
+            lines.append(f"Principle: {m.get('principle', '')}")
+            lines.append(f"Severity: {m.get('severity', '')}")
+            lines.append(f"Source: {m.get('source', 'email')}")
+            lines.append(f'Response (Torvalds\' words): "{m.get("quote", "")}"')
             lines.append("")
 
     return "\n".join(lines)
@@ -553,7 +767,7 @@ def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model
         print("warning: no interview data — skill will lack explicit definitions")
 
     print(f"calling LLM with {len(prompt)} chars of move data...")
-    print(f"  ({sum(len(v) for v in data.get('samples_by_category', {}).values())} sampled moves)")
+    print(f"  ({len(data)} sampled moves)")
     if model:
         print(f"  (model override: {model})")
 

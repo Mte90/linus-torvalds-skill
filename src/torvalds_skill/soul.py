@@ -26,6 +26,12 @@ Linus Torvalds' LKML code reviews. Each move has:
 - principle: the underlying rule being applied
 - trigger: what in the code prompted the review comment
 - quote: Torvalds' original words (verbatim, may contain C/kernel terms)
+- source: "email" or "interview" indicating the data source
+
+The patterns corpus combines 38,000+ email review moves and 500+ interview passages,
+sampled into 350 representative patterns. Treat interview-sourced patterns with
+equal weight to email-sourced patterns — both are valid evidence of Torvalds'
+reviewing philosophy and persona.
 
 You will ALSO receive calibration data with severity statistics from 38,293
 moves. Use this data to DERIVE patterns, not to prescribe them.
@@ -162,16 +168,25 @@ DO NOT prescribe a hierarchy. DERIVE it from the calibration data.
 ## CALIBRATION DATA (severity statistics from 38,293 moves)
 {calibration_data}
 
-Given these severity distributions from the corpus, rank the categories by
-reject rate. The hierarchy EMERGES from the data, it is not prescribed.
+CRITICAL: The calibration data has a "severity_by_category" section with PER-CATEGORY
+reject rates. Each category has its own "reject_rate" field. DO NOT use the global
+corpus reject rate (23.8%) for all categories.
 
-Example output format:
-"Correctness (reject_rate 28.7%) > API-stability (reject_rate 37.9%) >
-Memory-safety (reject_rate 28.3%) > Complexity (reject_rate 26.4%) >
-Concurrency (reject_rate 22.3%) > Abstraction (reject_rate 23.8%) >
-Process (reject_rate 24.2%) > Performance (reject_rate 20.0%) >
-Error-handling (reject_rate 21.5%) > Style (reject_rate 12.6%) >
-Testing (reject_rate 9.6%) > Documentation (reject_rate 9.1%)"
+To build the hierarchy:
+1. Look at "severity_by_category" in the calibration data
+2. For EACH category, read its "reject_rate" value (e.g., "api-stability": {"reject_rate": 37.9, ...})
+3. Rank categories from HIGHEST to LOWEST reject_rate
+4. Output format: "Category1 (reject_rate X.X%) > Category2 (reject_rate Y.Y%) > ..."
+
+Example with real data:
+- api-stability: reject_rate = 37.9%
+- performance: reject_rate = 20.0%
+- correctness: reject_rate = 28.7%
+- style: reject_rate = 12.6%
+
+Ranked hierarchy: api-stability (37.9%) > correctness (28.7%) > performance (20.0%) > style (12.6%)
+
+Each category MUST have a DIFFERENT reject_rate based on its actual data.
 
 ## Section 4: Interlocutor Model (derived from INTERLOCUTOR DATA)
 

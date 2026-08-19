@@ -28,6 +28,7 @@ CATEGORIES = (
     "testing",
     "documentation",
     "other",
+    "security",
 )
 
 

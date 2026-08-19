@@ -27,8 +27,8 @@ from pathlib import Path
 
 from .models import iter_moves, CATEGORIES
 
-# Moves per category in the distill prompt. 25 * 13 categories = 325 moves.
-# At ~400 chars/move that's ~130K chars (~33K tokens) — safe context for gpt-oss-120b.
+# Moves per category in the distill prompt. 25 * 14 categories = 350 moves.
+# At ~400 chars/move that's ~140K chars (~35K tokens) — safe context for gpt-oss-120b.
 SAMPLES_PER_CATEGORY = 25
 
 # Prefer substantive responses — longer responses carry more reviewing signal.
@@ -98,7 +98,7 @@ def cluster_moves(moves_path: Path, output_path: Path, top_n: int = SAMPLES_PER_
         cat_moves.sort(key=lambda m: len(m.response), reverse=True)
         substantive = cat_moves[: max(1, int(len(cat_moves) * SUBSTANTIVE_FRACTION))]
 
-        sampled = _stratified_sample(substantive, top_n)
+        sampled = _stratified_sample(substantive, top_n, seed=42)
 
         samples_by_category[cat] = [
             {

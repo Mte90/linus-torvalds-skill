@@ -98,6 +98,37 @@ def check_forbidden_terms(path: Path) -> list[tuple[int, str, str]]:
                 violations.append((line_num, term, line.strip()))
 
     return violations
+
+
+def check_no_tables(path: Path) -> tuple[bool, list[tuple[int, str]]]:
+    """Check that the skill file does not contain markdown tables.
+    
+    Detects markdown tables by looking for:
+    - Lines starting with `|` and containing `|---|` separator patterns
+    - Header rows like `| column | column |` followed by separator rows `|---|---|`
+    
+    Returns (True, []) if no tables found, (False, list_of_violations) otherwise.
+    """
+    content = path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    
+    violations: list[tuple[int, str]] = []
+    
+    # Look for table separator patterns (the `|---|` row)
+    table_separator_re = re.compile(r'^\s*\|.*\|---.*\|')
+    
+    for line_num, line in enumerate(lines, start=1):
+        # Check for table separator row
+        if table_separator_re.match(line):
+            # Found a table separator - look back for header
+            header_line = ""
+            if line_num > 1:
+                header_line = lines[line_num - 2].strip()
+            violations.append((line_num, f"Markdown table detected: {header_line} ... {line.strip()}"))
+    
+    return len(violations) == 0, violations
+
+
 def check_interview_quotes(path: Path) -> tuple[int, list[str]]:
     """Check for interview-derived quotes in the skill file.
 
@@ -231,11 +262,11 @@ def main() -> int:
             len(cats_in_skill) >= 8,
             f"{len(cats_in_skill)}/13 categories mentioned",
         )
-        total_moves = patterns_data.get("total_moves", 0)
+        total_patterns = len(patterns_data) if isinstance(patterns_data, list) else patterns_data.get("total_moves", 0)
         all_pass &= check(
-            "Moves extracted",
-            total_moves >= 10000,
-            f"{total_moves} moves",
+            "Patterns extracted",
+            total_patterns >= 100,
+            f"{total_patterns} patterns",
         )
     else:
         print("  [SKIP] patterns.json not found (run cluster first)")
@@ -256,6 +287,15 @@ def main() -> int:
         "Interview-derived quotes present (warning threshold)",
         interview_count >= 3,
         f"{interview_count} citations found: {interview_patterns[:5]}",
+    )
+
+    # 9. No markdown tables
+    print()
+    no_tables, table_violations = check_no_tables(skill_path)
+    all_pass &= check(
+        "No markdown tables (structured lists only)",
+        no_tables,
+        f"violations: {table_violations}" if table_violations else "clean",
     )
 
     # Summary

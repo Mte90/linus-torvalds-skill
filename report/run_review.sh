@@ -33,8 +33,8 @@ fi
 # 2. Verify skill + soul assets exist.
 for f in \
   "$SKILL_DIR/SKILL.md" \
-  "$SKILL_DIR/skill-glm.md" \
-  "$SKILL_DIR/skill-mistral.md" \
+  "$SKILL_DIR/SKILL-GLM.md" \
+  "$SKILL_DIR/SKILL-Mistral.md" \
   "$SOUL_DIR/soul.md" \
   "$SOUL_DIR/soul-glm.md" \
   "$SOUL_DIR/soul-mistral.md"; do
@@ -57,6 +57,37 @@ Source files: smallchat-server.c, smallchat-client.c, chatlib.c, chatlib.h, Make
 
 Skill file to apply: $skill_file — read it fully and apply its rules (triggers, precedence, definitions, anti-patterns).
 Soul file for tone: $soul_file — adopt this voice. Profanity is permitted for dangerous/negligent defects; replicate faithfully.
+
+## Persona Narrative (2-3 paragraphs)
+
+Lead with: What does it feel like to interact with an AI using this skill/soul? Does it capture Linus' voice? Is it too harsh, too soft, or about right? Give concrete examples of how the persona comes across.
+
+Specifically:
+- Quote specific lines from the skill/soul file that capture (or miss) Linus' voice
+- Compare the tone to real Linus quotes (directness, impatience with incompetence, passion for correctness)
+- Assess whether the severity calibration feels authentic (does "CRITICAL" feel like something he'd call "garbage" or "horrible"?)
+- Note any sections that feel generic vs. distinctly Linus
+
+## Technical Assessment
+
+Structured assessment of:
+- Coverage: which triggers fired, which didn't, why
+- Accuracy: are the findings legitimate or forced?
+- Language-agnosticism: does the skill work for C code?
+- Severity calibration: are CRITICAL/HIGH/MEDIUM/LOW assignments justified?
+- Precedence adherence: correctness > performance > complexity > style > API stability
+
+## Strengths
+
+3-5 bullet points on what the skill/soul gets right.
+
+## Weaknesses
+
+3-5 bullet points on gaps, misfires, or areas needing refinement.
+
+## Verdict
+
+1-2 sentences: would you use this in production?
 
 Deliverable: a review report with YAML frontmatter, one section per source file, findings in this format:
 
@@ -114,9 +145,9 @@ export -f review_prompt run_review
 echo "Dispatching three parallel reviews..."
 run_review "gpt-oss-120b" "$SKILL_DIR/SKILL.md" "$SOUL_DIR/soul.md" "$REPORT_DIR/review-gpt-oss-120b.md" &
 PID_GPT=$!
-run_review "glm5.2" "$SKILL_DIR/skill-glm.md" "$SOUL_DIR/soul-glm.md" "$REPORT_DIR/review-glm5.2.md" &
+run_review "glm5.2" "$SKILL_DIR/SKILL-GLM.md" "$SOUL_DIR/soul-glm.md" "$REPORT_DIR/review-glm5.2.md" &
 PID_GLM=$!
-run_review "mistral-small-4-119b" "$SKILL_DIR/skill-mistral.md" "$SOUL_DIR/soul-mistral.md" "$REPORT_DIR/review-mistral.md" &
+run_review "mistral-small-4-119b" "$SKILL_DIR/SKILL-Mistral.md" "$SOUL_DIR/soul-mistral.md" "$REPORT_DIR/review-mistral.md" &
 PID_MIS=$!
 
 # 6. Wait for all three.
