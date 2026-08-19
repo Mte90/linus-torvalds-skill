@@ -15,11 +15,15 @@ REPORT_DIR="$ROOT/report"
 count_severity() {
   local file="$1"
   local sev="$2"
-  grep -cE "^### \[?$sev\]|^### $sev —" "$file" 2>/dev/null || echo 0
+  local n
+  n=$(grep -cE "^#+ \[?${sev}\]?[ ]" "$file" 2>/dev/null || true)
+  echo "${n:-0}"
 }
 
 count_total() {
-  grep -cE "^### \[(CRITICAL|HIGH|MEDIUM|LOW)\]|^### (CRITICAL|HIGH|MEDIUM|LOW) —" "$1" 2>/dev/null || echo 0
+  local n
+  n=$(grep -cE "^#+ \[?(CRITICAL|HIGH|MEDIUM|LOW)\]?[ ]" "$1" 2>/dev/null || true)
+  echo "${n:-0}"
 }
 
 word_count() {
@@ -33,6 +37,9 @@ MIS="$REPORT_DIR/review-mistral.md"
 for f in "$GPT" "$GLM" "$MIS"; do
   [ -f "$f" ] || { echo "Missing: $f" >&2; exit 1; }
 done
+
+# Remove any leftover per-review log files before emitting the table.
+rm -f "$REPORT_DIR"/review-*.log
 
 cat <<EOF
 # Headline numbers (regenerated $(date -u +%Y-%m-%dT%H:%M:%SZ))

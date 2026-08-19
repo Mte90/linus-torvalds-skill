@@ -141,6 +141,8 @@ run_review() {
 
 export -f review_prompt run_review
 
+trap 'rm -f "$REPORT_DIR"/review-*.log' EXIT
+
 # 5. Dispatch all three concurrently.
 echo "Dispatching three parallel reviews..."
 run_review "gpt-oss-120b" "$SKILL_DIR/SKILL.md" "$SOUL_DIR/soul.md" "$REPORT_DIR/review-gpt-oss-120b.md" &
@@ -166,9 +168,6 @@ echo "All reviews complete:"
 for f in "$REPORT_DIR"/review-*.md; do
   printf '  %-40s %s words\n' "$(basename "$f")" "$(wc -w < "$f")"
 done
-
-# Clean up per-review log files.
-rm -f "$REPORT_DIR"/review-*.log
 
 echo ""
 echo "Next: generate the comparison with report/build_comparison.sh"
