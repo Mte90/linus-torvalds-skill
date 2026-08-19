@@ -40,6 +40,8 @@ class EmailRecord:
     subject: str
     in_reply_to: str | None
     body: str
+    to: str = ""
+    cc: str = ""
 
     @classmethod
     def from_jsonl_line(cls, line: str) -> EmailRecord:

@@ -288,6 +288,8 @@ def main():
     p_soul.add_argument("--out", type=str, default=None,
                         help="output file path (default: soul/soul.md)")
 
+    sub.add_parser("interviews", help="fetch interview transcripts from configured sources")
+
     args = parser.parse_args()
 
     print(f"config: model={config.MODEL}, host={config.HOST}")
@@ -310,6 +312,9 @@ def main():
             return 1
         output_path = Path(args.out) if args.out else Path(__file__).parent.parent.parent / "soul" / "soul.md"
         generate_soul(patterns_path, output_path, model=args.model)
+    elif args.stage == "interviews":
+        from .interviews import fetch_interviews
+        fetch_interviews()
 
 
 if __name__ == "__main__":

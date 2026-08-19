@@ -9,16 +9,20 @@ emails into a language-agnostic code-review skill.
 Emails (mbox)          →  Moves (JSONL)        →  Samples (JSON)      →  Skill (MD)
        classify              extract                 cluster               distill
   (rule-based)          (LLM per email)         (stratified)           (LLM once)
+                                                                          ↑
+                                              data/calibration.json ───┘
+                                                (calibrate, rule-based)
 ```
 
-Four stages, each with a single responsibility:
+Five stages, each with a single responsibility:
 
 | Stage | Input | Output | LLM? | Time |
 |---|---|---|---|---|
 | 1. Classify | `corpus.jsonl` (19,802 emails) | review/non-review flag | No (regex) | seconds |
-| 2. Extract | review emails | `moves.jsonl` (24,790 moves) | Yes (1 call/email) | ~2 hours |
+| 2. Extract | review emails | `moves.jsonl` (38,293 moves) | Yes (1 call/email) | ~2 hours |
 | 3. Cluster | `moves.jsonl` | `patterns.json` (325 samples) | No (stratified) | seconds |
-| 4. Distill | `patterns.json` | `SKILL.md` (7,000+ words) | Yes (1 call) | ~2 min |
+| 3b. Calibrate | `moves.jsonl` | `calibration.json` (severity stats) | No (rule-based) | seconds |
+| 4. Distill | `patterns.json` + `calibration.json` | `SKILL.md` (7,000+ words) | Yes (1 call) | ~2 min |
 
 ## Usage
 
@@ -30,7 +34,8 @@ python3 -m torvalds_skill run --sample 2000 --workers 16
 python3 -m torvalds_skill classify       # rule-based filter
 python3 -m torvalds_skill extract --resume --workers 16   # LLM extraction
 python3 -m torvalds_skill cluster        # stratified sampling
-python3 -m torvalds_skill distill       # generate SKILL.md
+python3 scripts/calibrate.py             # severity calibration stats
+python3 -m torvalds_skill distill       # generate SKILL.md (loads calibration.json)
 python3 -m torvalds_skill soul          # generate soul.md
 
 # Generate a variant skill with a different model
@@ -145,9 +150,33 @@ pre-clustering step.
 }
 ```
 
+## Stage 3b: Calibrate (`scripts/calibrate.py`)
+
+**Purpose:** compute data-driven severity statistics from the full moves corpus.
+
+Rule-based, no LLM. Reads `data/moves.jsonl` and produces
+`data/calibration.json` containing:
+
+- **P(severity | category)** — probability of each severity level given a
+  category. Key findings from 38,293 moves:
+  - Security: 59% rejected (highest reject rate)
+  - Style: 36% nitpicked, only 13% rejected
+  - Error-handling: 58% request-changes
+- **Keyword decision rules** — 159 rules mapping keyword presence to likely
+  severity shifts (e.g., keywords like "race", "deadlock", "corrupt" shift
+  severity toward reject)
+- **Category distribution** — move counts per category
+
+**Output:** `data/calibration.json`, loaded by `distill.py` and injected into
+the LLM prompt as "Severity Calibration" and "Severity Decision Tree" sections.
+
+```bash
+python3 scripts/calibrate.py
+```
+
 ## Stage 4: Distill (`distill.py`)
 
-**Purpose:** one LLM call turns 325 samples into a SKILL.md.
+**Purpose:** one LLM call turns 325 samples + calibration data into a SKILL.md.
 
 **Prompt structure:**
 
@@ -169,9 +198,15 @@ pre-clustering step.
 5. **Forbidden-terms list** — enforced via post-generation grep. Only verbatim
    quotes may contain language-specific tokens.
 
+6. **Severity calibration** — `calibration.json` is loaded and formatted into
+   "Severity Calibration" and "Severity Decision Tree" sections appended to the
+   prompt. This gives the LLM corpus-derived statistics so generated reviews
+   match Linus' actual severity distribution.
+
 **SSE streaming:** GLM5.2 is a reasoning model that spends minutes on internal
 thought. Streaming keeps the connection alive (one token delta = one heartbeat).
-Request timeout is 600s for GLM5.2, 120s for others.
+Request timeout is 600s for GLM5.2, 120s for others. GLM5.2 also requires
+`max_tokens` ≤ 16000.
 
 **Output:** `linus-torvalds-skill/SKILL.md` with:
 - YAML frontmatter (name, description, metadata)
@@ -181,17 +216,19 @@ Request timeout is 600s for GLM5.2, 120s for others.
 - Key Definitions
 - Anti-Patterns
 - Voice and Tone
+- Severity Calibration
+- Severity Decision Tree
 - Common Review Scenarios
 
 ## Skill variants
 
-Three variants generated from the same `patterns.json`:
+Three variants generated from the same `patterns.json` + `calibration.json`:
 
 | File | Model | Words | Notes |
 |---|---|---|---|
-| `SKILL.md` | gpt-oss-120b | ~7,100 | Default. Best balance. |
-| `SKILL-GLM.md` | glm5.2 | ~11,700 | Reasoning model. Most thorough. Needs streaming + 600s timeout. |
-| `SKILL-Mistral.md` | mistral-small-4-119b | ~5,400 | Fastest. May skip sections. |
+| `SKILL.md` | gpt-oss-120b | ~7,050 | Default. Best balance. |
+| `SKILL-GLM.md` | glm5.2 | ~10,200 | Reasoning model. Most thorough. Needs streaming + 600s timeout + max_tokens ≤ 16000. |
+| `SKILL-Mistral.md` | mistral-small-4-119b | ~7,540 | Fastest. |
 
 ```bash
 # Generate a variant
@@ -208,9 +245,9 @@ Three variants generated from the same `patterns.json`:
 
 | File | Model | Words | Notes |
 |---|---|---|---|
-| `soul.md` | gpt-oss-120b | ~990 | Default. |
-| `soul-glm.md` | glm5.2 | ~1,650 | Reasoning model. Needs streaming + 600s timeout. |
-| `soul-mistral.md` | mistral-small-4-119b | ~1,940 | Most verbose. |
+| `soul.md` | gpt-oss-120b | ~1,345 | Default. |
+| `soul-glm.md` | glm5.2 | ~2,372 | Reasoning model. Needs streaming + 600s timeout. |
+| `soul-mistral.md` | mistral-small-4-119b | ~2,552 | Most verbose. |
 
 ```bash
 python -m torvalds_skill soul
@@ -225,11 +262,14 @@ Torvalds' actual tone, including profanity when warranted.
 
 Checks:
 - File non-empty
-- Word count in range (1,500-15,000)
-- Required sections present
+- Word count in range (1,500-10,000)
+- Required sections present (Reviewer Mindset, Review Triggers, Precedence and
+  Priorities, Key Definitions, Anti-Patterns, Voice and Tone, Severity
+  Calibration, Severity Decision Tree)
 - Real quotes (20+ char quoted strings)
 - No placeholder/TODO/stub text
-- Category coverage (13/13)
+- No forbidden C/kernel terms outside quotes
+- Category coverage (10/13)
 - Severity levels (4/4)
 
 ```bash
@@ -243,17 +283,17 @@ data/lkml.mbox          192 MB, 31,397 emails (NNTP fetch)
     ↓ convert
 data/corpus.jsonl        61 MB, 19,802 review emails (after classify)
     ↓ extract
-data/moves.jsonl          ~8 MB, 24,790 review moves
-    ↓ cluster
-data/patterns.json       ~1 MB, 325 stratified samples
-    ↓ distill
-linus-torvalds-skill/SKILL.md    ~50 KB, 7,000+ words
-linus-torvalds-skill/SKILL-GLM.md    ~67 KB
-linus-torvalds-skill/SKILL-Mistral.md    ~35 KB
+data/moves.jsonl          ~12 MB, 38,293 review moves
+    ↓ cluster                        ↓ calibrate
+data/patterns.json       ~1 MB, 325 samples    data/calibration.json  ~50 KB
+    ↓ distill ←──────────────────────┘
+linus-torvalds-skill/SKILL.md         ~47 KB, 7,051 words
+linus-torvalds-skill/SKILL-GLM.md    ~68 KB, 10,208 words
+linus-torvalds-skill/SKILL-Mistral.md ~50 KB, 7,542 words
     ↓ soul
-soul/soul.md             ~5 KB
-soul/soul-glm.md         ~10 KB
-soul/soul-mistral.md     ~12 KB
+soul/soul.md             ~9 KB, 1,345 words
+soul/soul-glm.md         ~16 KB, 2,372 words
+soul/soul-mistral.md     ~17 KB, 2,552 words
 ```
 
 ## Configuration
@@ -278,6 +318,7 @@ python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistr
 |---|---|---|
 | Extract | Yes | `python -m torvalds_skill extract --resume` |
 | Cluster | No (idempotent) | re-run `python -m torvalds_skill cluster` |
+| Calibrate | No (idempotent) | re-run `python3 scripts/calibrate.py` |
 | Distill | No (one call) | re-run `python -m torvalds_skill distill` |
 
 Extract resume skips:

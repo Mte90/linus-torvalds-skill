@@ -98,7 +98,35 @@ def check_forbidden_terms(path: Path) -> list[tuple[int, str, str]]:
                 violations.append((line_num, term, line.strip()))
 
     return violations
+def check_interview_quotes(path: Path) -> tuple[int, list[str]]:
+    """Check for interview-derived quotes in the skill file.
 
+    Looks for patterns like:
+      - (Interview: filename)
+      - (TED 2016)
+      - (Linux Journal 2021)
+
+    Returns (count, list_of_found_patterns).
+    """
+    content = path.read_text(encoding="utf-8")
+
+    # Patterns for interview citations
+    patterns = [
+        r'\(Interview:\s*[^)]+\)',
+        r'\(TED\s+\d{4}\)',
+        r'\(Linux\s+Journal[^)]*\)',
+        r'\(Hacker\s+News[^)]*\)',
+        r"\(O'Reilly[^)]*\)",
+        r'\(Forbes[^)]*\)',
+        r'\(Wired[^)]*\)',
+    ]
+
+    found = []
+    for pat in patterns:
+        matches = re.findall(pat, content, re.IGNORECASE)
+        found.extend(matches)
+
+    return len(found), found
 
 
 def check(label: str, condition: bool, detail: str = "") -> bool:
@@ -220,6 +248,14 @@ def main() -> int:
         "Severity levels referenced",
         sev_found >= 3,
         f"{sev_found}/4 severity levels found",
+    )
+    # 8. Interview-derived quotes (warning if sparse)
+    print()
+    interview_count, interview_patterns = check_interview_quotes(skill_path)
+    all_pass &= check(
+        "Interview-derived quotes present (warning threshold)",
+        interview_count >= 3,
+        f"{interview_count} citations found: {interview_patterns[:5]}",
     )
 
     # Summary

@@ -33,8 +33,8 @@ fi
 # 2. Verify skill + soul assets exist.
 for f in \
   "$SKILL_DIR/SKILL.md" \
-  "$SKILL_DIR/SKILL-GLM.md" \
-  "$SKILL_DIR/SKILL-Mistral.md" \
+  "$SKILL_DIR/skill-glm.md" \
+  "$SKILL_DIR/skill-mistral.md" \
   "$SOUL_DIR/soul.md" \
   "$SOUL_DIR/soul-glm.md" \
   "$SOUL_DIR/soul-mistral.md"; do
@@ -114,9 +114,9 @@ export -f review_prompt run_review
 echo "Dispatching three parallel reviews..."
 run_review "gpt-oss-120b" "$SKILL_DIR/SKILL.md" "$SOUL_DIR/soul.md" "$REPORT_DIR/review-gpt-oss-120b.md" &
 PID_GPT=$!
-run_review "glm5.2" "$SKILL_DIR/SKILL-GLM.md" "$SOUL_DIR/soul-glm.md" "$REPORT_DIR/review-glm5.2.md" &
+run_review "glm5.2" "$SKILL_DIR/skill-glm.md" "$SOUL_DIR/soul-glm.md" "$REPORT_DIR/review-glm5.2.md" &
 PID_GLM=$!
-run_review "mistral-small-4-119b" "$SKILL_DIR/SKILL-Mistral.md" "$SOUL_DIR/soul-mistral.md" "$REPORT_DIR/review-mistral.md" &
+run_review "mistral-small-4-119b" "$SKILL_DIR/skill-mistral.md" "$SOUL_DIR/soul-mistral.md" "$REPORT_DIR/review-mistral.md" &
 PID_MIS=$!
 
 # 6. Wait for all three.

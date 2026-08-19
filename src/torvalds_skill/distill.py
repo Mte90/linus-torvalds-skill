@@ -28,8 +28,30 @@ DISTILL_SYSTEM_PROMPT = """\
 You are writing a code review skill based on the reviewing patterns of Linus Torvalds, \
 distilled from thousands of his real code reviews on the Linux kernel mailing list.
 
-Your output is a SKILL.md file: actionable instructions that teach another AI agent how to \
-review code the way Torvalds does — in ANY programming language, for ANY project.
+═══════════════════════════════════════════════════════════════════════
+INTERVIEW-DERIVED DEFINITIONS (from INTERVIEW DATA)
+═══════════════════════════════════════════════════════════════════════
+
+The INTERVIEW DATA section contains Linus Torvalds' explicit, reflective
+statements about engineering philosophy — drawn from interviews and talks.
+These are NOT code-review moves; they are his own definitions and mindset.
+
+You MUST use interview quotes in these sections:
+
+1. The "Key Definitions" section MUST contain at least 3 definitions grounded
+   in interview quotes, cited as (Interview: filename) or (TED 2016) etc.
+   Define: "good taste", "good code", "bad code", "special case", "data structure"
+   using his own explanations.
+
+2. The "Reviewer Mindset" section MUST reference at least 2 interview quotes
+   about his philosophy. Explain WHY each attitude matters.
+
+Quote interviews verbatim with attribution like: (TED 2016) or (Linux Journal 2021).
+These quotes are EVIDENCE for definitions, not triggers. They do NOT replace
+the moves-based triggers.
+
+- Distinguish between his code-review voice (moves corpus) and his reflective
+  voice (interviews) — both inform the method
 
 ═══════════════════════════════════════════════════════════════════════
 CRITICAL RULE: TOTAL LANGUAGE AND PROJECT AGNOSTICISM
@@ -465,6 +487,43 @@ def sanitize_skill(text: str) -> str:
     return ''.join(out)
 
 
+def _load_interview_data(project_root: Path) -> str:
+    """Load all interview transcripts from data/interviews/ directory.
+
+    Reads all .md files, concatenates them with headers, and truncates
+    to ~120,000 chars (~13% of corpus) to avoid blowing the context window.
+
+    Returns the concatenated string, or empty string if the directory doesn't exist.
+    """
+    interviews_dir = project_root / "data" / "interviews"
+    if not interviews_dir.exists():
+        return ""
+
+    max_chars = 120000
+    lines = []
+    total_chars = 0
+
+    # Sort files for deterministic ordering
+    for md_file in sorted(interviews_dir.glob("*.md")):
+        content = md_file.read_text(encoding="utf-8")
+        header = f"## Interview: {md_file.name}\n\n"
+        file_content = header + content + "\n\n"
+        file_chars = len(file_content)
+
+        # Stop if adding this file would exceed the limit
+        if total_chars + file_chars > max_chars and total_chars > 0:
+            # Add partial content if we haven't added anything yet
+            if total_chars == 0:
+                lines.append(file_content[:max_chars])
+                total_chars = max_chars
+            break
+
+        lines.append(file_content)
+        total_chars += file_chars
+
+    return "".join(lines)
+
+
 def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model: str = None,
                   calibration_path: Path = None):
     """Read patterns.json, call LLM, sanitize, write skill markdown.
@@ -472,6 +531,9 @@ def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model
     If calibration_path is provided and exists, the calibration data is appended
     to the prompt so the LLM grounds severity assignments in real corpus stats.
     """
+    # Load interview data via the shared helper (eliminates duplication)
+    interview_data = _load_interview_data(patterns_path.parent.parent)
+
     data = json.loads(patterns_path.read_text(encoding="utf-8"))
 
     prompt = _format_moves_for_prompt(data)
@@ -482,6 +544,13 @@ def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model
         print(f"loaded calibration from {calibration_path}")
     else:
         print("warning: no calibration data — skill will lack severity grounding")
+
+    # Load interview transcripts (explicit definitions and mindset statements)
+    if interview_data:
+        prompt = prompt + "\n\n## INTERVIEW DATA (Linus' explicit definitions and mindset)\n" + interview_data
+        print(f"loaded interview data ({len(interview_data)} chars)")
+    else:
+        print("warning: no interview data — skill will lack explicit definitions")
 
     print(f"calling LLM with {len(prompt)} chars of move data...")
     print(f"  ({sum(len(v) for v in data.get('samples_by_category', {}).values())} sampled moves)")

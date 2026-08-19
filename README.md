@@ -10,17 +10,17 @@ Built from **38,293 real review moves** extracted from 19,802 of his emails (200
 
 | File | Model | Words | Notes |
 |---|---|---|---|
-| [`SKILL.md`](linus-torvalds-skill/SKILL.md) | gpt-oss-120b | ~7,100 | Default. Best balance. |
-| [`SKILL-GLM.md`](linus-torvalds-skill/SKILL-GLM.md) | glm5.2 | ~11,700 | Reasoning model. Most thorough. |
-| [`SKILL-Mistral.md`](linus-torvalds-skill/SKILL-Mistral.md) | mistral-small-4-119b | ~5,400 | Fastest. May skip sections. |
+| [`SKILL.md`](linus-torvalds-skill/SKILL.md) | gpt-oss-120b | ~7,050 | Default. Best balance. |
+| [`SKILL-GLM.md`](linus-torvalds-skill/SKILL-GLM.md) | glm5.2 | ~10,200 | Reasoning model. Most thorough. |
+| [`SKILL-Mistral.md`](linus-torvalds-skill/SKILL-Mistral.md) | mistral-small-4-119b | ~7,540 | Fastest. |
 
 **Soul files** (`soul/`) — the *persona*: identity, values, voice. **Includes profanity** — replicates Torvalds' actual tone, swearing only when a defect is dangerous or feedback is ignored.
 
 | File | Model | Words |
 |---|---|---|
-| [`soul.md`](soul/soul.md) | gpt-oss-120b | ~990 |
-| [`soul-glm.md`](soul/soul-glm.md) | glm5.2 | ~1,650 |
-| [`soul-mistral.md`](soul/soul-mistral.md) | mistral-small-4-119b | ~1,940 |
+| [`soul.md`](soul/soul.md) | gpt-oss-120b | ~1,345 |
+| [`soul-glm.md`](soul/soul-glm.md) | glm5.2 | ~2,372 |
+| [`soul-mistral.md`](soul/soul-mistral.md) | mistral-small-4-119b | ~2,552 |
 
 All skills and souls were generated with [regolo.ai](https://regolo.ai) using gpt-oss-120b (default), glm5.2, and mistral-small-4-119b.
 
@@ -29,10 +29,13 @@ All skills and souls were generated with [regolo.ai](https://regolo.ai) using gp
 ```
 Emails → Classify → Extract → Cluster → Distill → Skill
 (mbox)  (regex)    (LLM)     (sample)  (LLM)     (SKILL.md)
+                    ↓             ↓   ↑
+              moves.jsonl   calibrate.json
+              (38,293)     (severity stats)
                                         └→ Soul   (soul.md)
 ```
 
-Four stages, each with a single responsibility. Full architecture in [`docs/pipeline.md`](docs/pipeline.md).
+Five stages, each with a single responsibility. Full architecture in [`docs/pipeline.md`](docs/pipeline.md).
 
 ## Setup
 
@@ -57,7 +60,7 @@ CLI flags override env vars: `--model`, `--out`.
 | Metric | Value |
 |---|---|
 | Extraction rate | ~2.7 emails/s (16 workers) |
-| Full corpus (19,802 emails) | ~127 min, 24,790 moves, 0 errors |
+| Full corpus (19,802 emails) | ~127 min, 38,293 moves, 0 errors |
 | Skip-list savings | ~4,670 emails skipped on reruns |
 
 ## Validation report
@@ -66,12 +69,12 @@ The skill was tested on [antirez/smallchat](https://github.com/antirez/smallchat
 
 | Review | Model | Words | Findings |
 |---|---|---|---|
-| [`review-gpt-oss-120b.md`](report/review-gpt-oss-120b.md) | gpt-oss-120b | ~4,100 | 21 (2 CRIT) |
-| [`review-glm5.2.md`](report/review-glm5.2.md) | glm5.2 | ~3,400 | 15 (2 CRIT) |
-| [`review-mistral.md`](report/review-mistral.md) | mistral-small-4-119b | ~2,400 | 12 (3 CRIT) |
-| [`comparison.md`](report/comparison.md) | — | ~2,100 | synthesis |
+| [`review-gpt-oss-120b.md`](report/review-gpt-oss-120b.md) | gpt-oss-120b | ~940 | 18 (4 CRIT) |
+| [`review-glm5.2.md`](report/review-glm5.2.md) | glm5.2 | ~2,350 | 12 (1 CRIT) |
+| [`review-mistral.md`](report/review-mistral.md) | mistral-small-4-119b | ~1,990 | 15 (1 CRIT) |
+| [`comparison.md`](report/comparison.md) | — | ~2,000 | synthesis |
 
-All three models reached the same verdict (does not pass) and converged on the same core defects. Only mistral caught the un-NUL-terminated nickname — a heap over-read on every connection. Replicate with `bash report/run_review.sh`.
+All three models reached the same verdict (FAIL). glm5.2 found the most consequential bug (`acceptClient(-1)` memory corruption) that no other model caught. Mistral recovered from a previous false-APPROVE after the calibration data was made language-agnostic. Replicate with `bash report/run_review.sh`.
 
 ## Documentation
 
