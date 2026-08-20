@@ -235,14 +235,14 @@ def stage_cluster():
     cluster_moves(MOVES, PATTERNS)
 
 
-def stage_distill(top_n: int, model: str = None, out: str = None):
+def stage_distill(top_n: int, model: str = None, out: str = None, single_call: bool = False):
     """Distill patterns.json → SKILL.md (or custom output path)."""
     if not PATTERNS.exists():
         print(f"error: {PATTERNS} not found. Run cluster first.")
         sys.exit(1)
     target = Path(out) if out else SKILL
     distill_skill(PATTERNS, target, top_n=top_n, model=model,
-                  calibration_path=CALIBRATION)
+                  calibration_path=CALIBRATION, single_call=single_call)
 
 
 def stage_run(sample_size: int, workers: int):
@@ -375,6 +375,8 @@ def main():
                            help="override LLM model (default: from config)")
     p_distill.add_argument("--out", type=str, default=None,
                            help="output file path (default: linus-torvalds-skill/SKILL.md)")
+    p_distill.add_argument("--single-call", action="store_true",
+                           help="bypass per-category distillation (1 LLM call instead of 15, for GLM5.2)")
 
     p_run = sub.add_parser("run", help="run full pipeline")
     p_run.add_argument("--sample", type=int, default=2000,
@@ -423,7 +425,7 @@ def main():
     elif args.stage == "cluster":
         stage_cluster()
     elif args.stage == "distill":
-        stage_distill(args.top_n, model=args.model, out=args.out)
+        stage_distill(args.top_n, model=args.model, out=args.out, single_call=args.single_call)
     elif args.stage == "run":
         stage_run(args.sample, args.workers)
     elif args.stage == "soul":

@@ -257,15 +257,15 @@ showing Torvalds making that tradeoff. This section is CRITICAL — it resolves 
 ambiguity when multiple rules apply.]
 
 ## Key Definitions
-[Define key terms explicitly so there is no ambiguity:
+[Define key terms explicitly so there is no ambiguity. FORMAT: use a structured \
+bullet list (NOT a markdown table). For each term: bold the term name, then give \
+the definition, then a real Torvalds quote showing how he uses it.
 - "Bug": A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities.
 - "Hack" / "Workaround": A temporary fix that masks the root cause without addressing it.
 - "Patch": A code change (neutral term).
 - "Non-negotiable": A rule that has no exceptions (e.g., "Never break existing APIs without compelling reason").
 - "Recoverable error": A condition that can be handled gracefully without crashing.
-- "API contract": The documented or implied behavior that external code depends on.
-
-For each definition, give a real Torvalds quote showing how he uses the term.]
+- "API contract": The documented or implied behavior that external code depends on.]
 
 ## Voice and Tone
 [How Torvalds phrases feedback. The tone IS part of the method — certainty, directness, \
@@ -276,10 +276,13 @@ explaining the "why" after the "no". With real quotes. Cover:
 - When humor or analogy is appropriate
 - How to handle repeated mistakes]
 
-## Decision Framework
-[A decision tree or flowchart in text form: when reviewing code, what order to \
-check things, when to reject vs. request changes, when to defer to maintainers, \
-when to insist. Include the principles behind each decision point.]
+## Anti-Patterns
+[Anti-patterns Torvalds rejects, with the principle each violates. Present as a \
+structured list (NOT a markdown table): pattern name, why it's wrong, the governing \
+principle, and a real quote. Cover: special-case branching, abstraction for its \
+own sake, breaking APIs without reason, silent error swallowing, premature \
+optimization, complexity without justification, ignoring memory safety, \
+undocumented workarounds, and process violations.]
 
 ## Severity Calibration
 [Use the provided calibration statistics to GROUND severity assignments in the \
@@ -486,7 +489,9 @@ def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt
             "stream": True,
         }
         
-        timeout = 600 if is_glm else 120
+        # Large prompts (souls, full-corpus distillation) need long timeouts
+        # even for fast models; streaming keeps the connection alive.
+        timeout = 600 if (is_glm or len(prompt) > 50_000) else 120
         model_retries = retries
         
         for attempt in range(model_retries):
@@ -707,6 +712,31 @@ def sanitize_skill(text: str) -> str:
     return ''.join(out)
 
 
+_TABLE_SEP_RE = re.compile(r'^\s*\|[\s:|-]+\|?\s*$')
+
+
+def _strip_markdown_tables(text: str) -> str:
+    """Convert markdown tables to structured bullet lists."""
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if stripped.startswith('|') and i + 1 < len(lines) and _TABLE_SEP_RE.match(lines[i + 1].strip()):
+            header_cells = [c.strip() for c in stripped.strip('|').split('|')]
+            i += 2
+            while i < len(lines) and lines[i].strip().startswith('|'):
+                row_cells = [c.strip() for c in lines[i].strip().strip('|').split('|')]
+                for h, val in zip(header_cells, row_cells):
+                    out.append(f"- **{h}**: {val}\n")
+                out.append("\n")
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return ''.join(out)
+
+
 def _load_interview_data(project_root: Path) -> str:
     """Load all interview transcripts from data/interviews/ directory.
 
@@ -719,7 +749,7 @@ def _load_interview_data(project_root: Path) -> str:
     if not interviews_dir.exists():
         return ""
 
-    max_chars = 500000
+    max_chars = 200000
     lines = []
     total_chars = 0
 
@@ -984,13 +1014,13 @@ Cover at least 12 distinct themes with 3-6 triggers each.]
 [Explicit hierarchy with explanations and quotes]
 
 ## Key Definitions
-[Define: bug, hack, workaround, patch, non-negotiable, recoverable error, API contract]
+[Define: bug, hack, workaround, patch, non-negotiable, recoverable error, API contract. Structured bullet list, NOT a markdown table.]
 
 ## Voice and Tone
 [How Torvalds phrases feedback with quotes]
 
-## Decision Framework
-[Text-based decision tree]
+## Anti-Patterns
+[Anti-patterns Torvalds rejects, with the principle each violates. Structured list, NOT table.]
 
 ## Severity Calibration
 [Use calibration stats to ground severity assignments. Format as nested bullets, NOT tables.]
@@ -1053,7 +1083,7 @@ Keep output between 6000-9000 words. Complete ALL sections.
     lines.append("2. Identify recurring themes ACROSS categories (not just within)")
     lines.append("3. Synthesize into the unified SKILL.md structure shown above")
     lines.append("4. Group triggers by SEMANTIC THEME, not by category labels")
-    lines.append("5. Use interview quotes for definitions and mindset sections")
+    lines.append("5. Use interview quotes for definitions and mindset sections, citing each as (Interview: filename) or (TED YYYY) or (Linux Journal YYYY) etc.")
     lines.append("6. Use calibration stats for Severity Calibration and Decision Tree sections")
     lines.append("7. Ensure EVERY trigger is language-agnostic (apply translation table)")
     lines.append("8. Label every trigger with its type (invariant-true, invariant-false, etc.)")
@@ -1072,16 +1102,67 @@ Keep output between 6000-9000 words. Complete ALL sections.
     return synthesized
 
 
-def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model: str = None,
-                  calibration_path: Path = None):
-    """Read patterns.json, call LLM (two-stage), sanitize, write skill markdown.
+def _distill_single_call(patterns: list, calibration: dict, interview_data: str,
+                          iv_data: str, model: str = None) -> str:
+    """Generate skill in a single LLM call (pre-T4 behavior).
 
-    Two-stage approach:
+    Used when --single-call flag is set, primarily for GLM5.2 where
+    15 per-category calls are impractical.
+    """
+    # Build user prompt with all patterns + context
+    lines = []
+    lines.append("=" * 80)
+    lines.append("ALL REVIEW PATTERNS FOR SKILL GENERATION")
+    lines.append("=" * 80)
+    lines.append("")
+    lines.append(_format_moves_for_prompt(patterns))
+    lines.append("")
+
+    if calibration:
+        lines.append(_format_calibration_for_prompt(calibration))
+        lines.append("")
+
+    if interview_data:
+        lines.append("## INTERVIEW DATA (Linus' explicit definitions and mindset)")
+        lines.append(interview_data)
+        lines.append("")
+
+    if iv_data:
+        lines.append(iv_data)
+        lines.append("")
+
+    lines.append("=" * 80)
+    lines.append("INSTRUCTIONS")
+    lines.append("=" * 80)
+    lines.append("")
+    lines.append("Generate a complete SKILL.md following the output structure in the system prompt.")
+    lines.append("Use interview quotes for definitions and mindset sections, citing each as (Interview: filename) or (TED YYYY) etc.")
+    lines.append("Ensure EVERY trigger is language-agnostic. Label every trigger with its type.")
+    lines.append("Complete ALL required sections. Target: 6000-9000 words.")
+    lines.append("DO NOT use markdown tables — use nested bullet lists instead.")
+    lines.append("OUTPUT FORMAT: Start with YAML frontmatter (--- fences), then markdown body.")
+
+    user_prompt = "\n".join(lines)
+
+    print(f"  calling LLM (single-call mode, {len(patterns)} patterns)...", flush=True)
+    skill_md = _call_llm(user_prompt, model=model, system_prompt=DISTILL_SYSTEM_PROMPT)
+    return skill_md
+
+
+def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model: str = None,
+                  calibration_path: Path = None, single_call: bool = False):
+    """Read patterns.json, call LLM, sanitize, write skill markdown.
+
+    Two-stage approach (default):
     Stage 1: For each of 14 categories, generate a category-specific fragment (~25 patterns each)
     Stage 2: Synthesize all fragments into final SKILL.md
-    
     Total: 15 LLM calls max (14 categories + 1 synthesis)
-    
+
+    Single-call mode (--single-call):
+    Bypasses per-category distillation. All patterns are formatted into one
+    prompt and the LLM generates the skill in a single call. Use for GLM5.2
+    where 15 calls × 7 min is impractical.
+
     If calibration_path is provided and exists, the calibration data is used
     to ground severity assignments in real corpus stats.
     """
@@ -1112,33 +1193,40 @@ def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model
     categories = sorted(by_category.keys())
     print(f"found {len(categories)} categories: {', '.join(categories)}")
 
-    # Stage 1: Distill each category
-    print(f"\nStage 1: distilling {len(categories)} categories...", flush=True)
-    fragments = {}
-    
-    for i, cat in enumerate(categories, 1):
-        cat_patterns = by_category[cat]
-        if not cat_patterns:
-            print(f"  [{i}/{len(categories)}] {cat}: skipping (0 patterns)", flush=True)
-            fragments[cat] = ""
-            continue
-            
-        print(f"  [{i}/{len(categories)}] {cat} ({len(cat_patterns)} patterns)...", flush=True)
-        fragment = _distill_category(cat, cat_patterns, model=model)
-        fragments[cat] = fragment
+    if single_call:
+        # Single-call mode: format all patterns into one prompt, one LLM call
+        print("\nsingle-call mode: generating skill in one LLM call...", flush=True)
+        skill_md = _distill_single_call(data, calibration, interview_data, iv_data, model=model)
+    else:
+        # Two-stage mode: per-category distillation + synthesis
+        # Stage 1: Distill each category
+        print(f"\nStage 1: distilling {len(categories)} categories...", flush=True)
+        fragments = {}
         
-        if fragment:
-            print(f"    generated {len(fragment)} chars", flush=True)
-        else:
-            print(f"    FAILED (empty fragment)", flush=True)
+        for i, cat in enumerate(categories, 1):
+            cat_patterns = by_category[cat]
+            if not cat_patterns:
+                print(f"  [{i}/{len(categories)}] {cat}: skipping (0 patterns)", flush=True)
+                fragments[cat] = ""
+                continue
+                
+            print(f"  [{i}/{len(categories)}] {cat} ({len(cat_patterns)} patterns)...", flush=True)
+            fragment = _distill_category(cat, cat_patterns, model=model)
+            fragments[cat] = fragment
+            
+            if fragment:
+                print(f"    generated {len(fragment)} chars", flush=True)
+            else:
+                print(f"    FAILED (empty fragment)", flush=True)
 
-    # Stage 2: Synthesize final skill
-    print("\nStage 2: synthesizing final skill...", flush=True)
-    skill_md = _synthesize_skill(fragments, calibration, interview_data, iv_data, model=model)
+        # Stage 2: Synthesize final skill
+        print("\nStage 2: synthesizing final skill...", flush=True)
+        skill_md = _synthesize_skill(fragments, calibration, interview_data, iv_data, model=model)
     
     # Post-process
     print("\npost-processing...")
     skill_md = sanitize_skill(skill_md)
+    skill_md = _strip_markdown_tables(skill_md)
 
     # Write output
     output_path.parent.mkdir(parents=True, exist_ok=True)

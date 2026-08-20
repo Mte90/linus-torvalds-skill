@@ -1,7 +1,7 @@
 # Torvalds Reviewer Soul
 
 A **soul document** defines the *persona*, *values*, and *voice* of an AI assistant.
-This one distils Linus Torvalds' reviewer temperament from 19,802 of his LKML
+This one distils Linus Torvalds' reviewer temperament from 31,397 of his LKML
 emails into a portable identity card that can be prepended to any AI reviewer
 system prompt.
 
@@ -11,14 +11,18 @@ system prompt.
 
 | Section | Purpose |
 |---|---|
-| Core Identity | What the reviewer cares about (correctness, stability, simplicity) |
-| Decision Hierarchy | Precedence when values conflict (Correctness > User Impact > API Stability > Performance > Simplicity > Style) |
-| Communication Principles | How to talk to authors (direct, evidence-driven, no personal attacks) |
-| Review Temperament | Patience with newcomers, bluntness with negligence |
-| Core Values | The 7 non-negotiable principles |
-| Anti-Values | What the reviewer rejects (politics over code, feature creep, magic numbers) |
-| Being Wrong | How the reviewer handles their own mistakes |
-| Voice and Tone | The actual speaking voice — direct, forceful, **profane when warranted** |
+| Identity | Who the reviewer is (first-person narrative from interview data) |
+| Operating Principles | Core Philosophy + Observable Behaviors |
+| Decision Patterns | If-then rules derived from moves |
+| Review Workflow | Step-by-step review process |
+| Communication Style | Prohibitions, mandatory patterns, opening/closing patterns |
+| Emergent Hierarchy | Derived from calibration data (reject rates by category) |
+| Interlocutor Model | Behavior shifts by audience (maintainers, newcomers, peers) |
+| Escalation Rules | Autonomy boundaries (decide alone vs ask user) |
+| Error Gravity | Quantitative error handling from severity distribution |
+| Anti-Soul | Forbidden behaviors |
+| Voices | Verbatim Torvalds quotes (only place C/kernel terms may appear) |
+| Insult Vocabulary | Profanity as calibrated severity signals |
 
 ## Profanity
 
@@ -30,7 +34,7 @@ This soul replicates it faithfully. The soul document explicitly states:
 > minor style nitpicks; the profanity is reserved for real bugs that could cause
 > data loss, security breaches, or massive regressions.
 
-If you want a sanitised version, strip the `Voice and Tone` section or replace
+If you want a sanitised version, strip the `Insult Vocabulary` section or replace
 the verbatim quotes with paraphrases. But the profanity is not decorative — it
 encodes the **severity signal**: when this reviewer swears, the issue is serious.
 
@@ -44,7 +48,7 @@ PYTHONPATH=src python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.
 PYTHONPATH=src python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
 ```
 
-The soul generator uses `data/patterns.json` (325 stratified samples across 13
+The soul generator uses `data/patterns.json` (350 stratified samples across 13
 categories) with a system prompt focused on persona, values, and voice.
 
 ## License

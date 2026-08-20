@@ -20,7 +20,7 @@ Five stages, each with a single responsibility:
 |---|---|---|---|---|
 | 1. Classify | `corpus.jsonl` (30,033 emails) | review/non-review flag | No (regex) | seconds |
 | 2. Extract | review emails | `moves.jsonl` (38,293 moves) | Yes (1 call/email) | ~2 hours |
-| 3. Cluster | `moves.jsonl` | `patterns.json` (325 samples) | No (stratified) | seconds |
+| 3. Cluster | `moves.jsonl` | `patterns.json` (350 samples) | No (stratified) | seconds |
 | 3b. Calibrate | `moves.jsonl` | `calibration.json` (severity stats) | No (rule-based) | seconds |
 | 4. Distill | `patterns.json` + `calibration.json` | `SKILL.md` (5,000-9,000 words depending on model) | Yes (1 call) | ~2 min |
 
@@ -122,7 +122,7 @@ resumes from the last checkpoint, skipping both done IDs and the skip list.
 
 ## Stage 3: Cluster (`cluster.py`)
 
-**Purpose:** reduce 38,303 moves to 325 representative samples for the LLM.
+**Purpose:** reduce 38,293 moves to 350 representative samples for the LLM.
 
 **Why not cluster semantically?** Lexical Jaccard was tried first — it
 fragmented badly (7,434 clusters at threshold 0.35, mostly singletons).
@@ -132,12 +132,12 @@ pre-clustering step.
 
 **Stratified sampling** by `category × severity × year`:
 
-- 13 categories × 25 samples = 325 total
+- 13 categories × ~25 samples = 350 total (297 email + 53 interview)
 - Within each stratum, samples are drawn evenly across years (2002-2026) to
   avoid recency bias
 - This guarantees the LLM sees the full range of Torvalds' review style
 
-**Output:** `data/patterns.json` — a list of 325 entries (315 from emails, 10 from interviews):
+**Output:** `data/patterns.json` — a list of 350 entries (297 from emails, 53 from interviews):
 
 ```json
 [
@@ -190,11 +190,11 @@ python3 -m torvalds_skill interviews              # fetch transcripts
 python3 -m torvalds_skill interviews-pipeline      # full pipeline
 ```
 
-Interview-derived moves (10) are merged with email moves (38,293) in `patterns.json` (325 samples: 315 email + 10 interview). Both skill and soul generation consume the merged patterns.
+Interview-derived moves (53) are merged with email moves (38,293) in `patterns.json` (350 samples: 297 email + 53 interview). Both skill and soul generation consume the merged patterns.
 
 ## Stage 4: Distill (`distill.py`)
 
-**Purpose:** one LLM call turns 325 samples + calibration data into a SKILL.md.
+**Purpose:** one LLM call turns 350 samples + calibration data into a SKILL.md.
 
 **Prompt structure:**
 
@@ -232,11 +232,10 @@ Request timeout is 600s for GLM5.2, 120s for others. GLM5.2 also requires
 - Review Triggers (13 themes, each with typed rules)
 - Precedence and Priorities (with example)
 - Key Definitions
-- Anti-Patterns
 - Voice and Tone
 - Severity Calibration
 - Severity Decision Tree
-- Common Review Scenarios
+- Quick Reference Checklist
 
 ## Skill variants
 
@@ -244,9 +243,9 @@ Three variants generated from the same `patterns.json` + `calibration.json`:
 
 | File | Model | Words | Notes |
 |---|---|---|---|
-| `SKILL.md` | gpt-oss-120b | ~5,660 | Default. Best balance. |
-| `SKILL-GLM.md` | glm5.2 | ~8,560 | Reasoning model. Most thorough. Needs streaming + 600s timeout + max_tokens ≤ 16000. |
-| `SKILL-Mistral.md` | mistral-small-4-119b | ~5,510 | Fastest. |
+| `SKILL.md` | gpt-oss-120b | ~7,474 | Default. Best balance. |
+| `SKILL-GLM.md` | glm5.2 | ~10,103 | Reasoning model. Most thorough. Needs streaming + 600s timeout + max_tokens ≤ 16000. |
+| `SKILL-Mistral.md` | mistral-small-4-119b | ~7,853 | Fastest. |
 
 ```bash
 # Generate a variant
@@ -263,9 +262,9 @@ Three variants generated from the same `patterns.json`:
 
 | File | Model | Words | Notes |
 |---|---|---|---|
-| `soul.md` | gpt-oss-120b | ~1,215 | Default. |
-| `soul-glm.md` | glm5.2 | ~3,495 | Reasoning model. Needs streaming + 600s timeout. |
-| `soul-mistral.md` | mistral-small-4-119b | ~1,705 | Most verbose. |
+| `soul.md` | gpt-oss-120b | ~1,440 | Default. |
+| `soul-glm.md` | glm5.2 | ~4,128 | Reasoning model. Needs streaming + 600s timeout. |
+| `soul-mistral.md` | mistral-small-4-119b | ~1,970 | Most verbose. |
 
 ```bash
 python -m torvalds_skill soul
@@ -273,8 +272,7 @@ python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
 python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
 ```
 
-Output: `soul/soul.md` — includes a Voice and Tone section that replicates
-Torvalds' actual tone, including profanity when warranted.
+Output: `soul/soul.md` — includes Identity, Operating Principles, Decision Patterns, Review Workflow, Communication Style, Emergent Hierarchy, Interlocutor Model, Escalation Rules, Error Gravity, Anti-Soul, Voices, and Insult Vocabulary sections.
 
 ## Verification (`verify_skill.py`)
 
@@ -282,8 +280,8 @@ Checks:
 - File non-empty
 - Word count in range (1,500-10,000)
 - Required sections present (Reviewer Mindset, Review Triggers, Precedence and
-  Priorities, Key Definitions, Anti-Patterns, Voice and Tone, Severity
-  Calibration, Severity Decision Tree)
+  Priorities, Key Definitions, Voice and Tone, Severity Calibration,
+  Severity Decision Tree, Quick Reference Checklist)
 - Real quotes (20+ char quoted strings)
 - No placeholder/TODO/stub text
 - No forbidden C/kernel terms outside quotes
@@ -317,15 +315,15 @@ data/corpus.jsonl        30,033 review emails (after classify)
     ↓ extract
 data/moves.jsonl          ~12 MB, 30,033 emails, 38,293 review moves
     ↓ cluster                        ↓ calibrate
-data/patterns.json       325 samples (315 email + 10 interview)    data/calibration.json
+data/patterns.json       350 samples (297 email + 53 interview)    data/calibration.json
     ↓ distill ←──────────────────────┘
-linus-torvalds-skill/SKILL.md         ~37 KB, 5,661 words
-linus-torvalds-skill/SKILL-GLM.md    ~57 KB, 8,561 words
-linus-torvalds-skill/SKILL-Mistral.md ~36 KB, 5,505 words
+linus-torvalds-skill/SKILL.md         ~37 KB, 7,474 words
+linus-torvalds-skill/SKILL-GLM.md    ~57 KB, 10,103 words
+linus-torvalds-skill/SKILL-Mistral.md ~36 KB, 7,853 words
     ↓ soul
-soul/soul.md             ~8 KB, 1,215 words
-soul/soul-glm.md         ~23 KB, 3,494 words
-soul/soul-mistral.md     ~11 KB, 1,705 words
+soul/soul.md             ~8 KB, 1,440 words
+soul/soul-glm.md         ~23 KB, 4,128 words
+soul/soul-mistral.md     ~11 KB, 1,970 words
 ```
 
 ## Configuration

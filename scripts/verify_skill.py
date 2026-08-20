@@ -230,10 +230,19 @@ def main() -> int:
     )
 
     # 5. No banned patterns (case-sensitive, real stubs only)
+    # Strip quoted spans first so legitimate technical usage like "documented as 'TODO'" is exempt
     print()
+    quote_patterns = [
+        re.compile(r'"[^"]*"'),
+        re.compile(r'\u201c[^\u201d]*\u201d'),
+        re.compile(r'`[^`]*`'),
+    ]
+    text_for_banned = text
+    for pat in quote_patterns:
+        text_for_banned = pat.sub('', text_for_banned)
     banned_found = []
     for pattern in BANNED_PATTERNS:
-        matches = re.findall(pattern, text)
+        matches = re.findall(pattern, text_for_banned)
         if matches:
             banned_found.append((pattern, len(matches)))
     all_pass &= check(
