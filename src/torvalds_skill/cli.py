@@ -307,8 +307,7 @@ def stage_extract_interviews(model: str, resume: bool):
     count = extract_interviews(
         "data/interviews_classified.jsonl",
         "data/interview_moves.jsonl",
-        model=model,
-        resume=resume
+        model=model
     )
     print(f"Extracted {count} moves")
 

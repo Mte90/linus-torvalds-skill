@@ -266,15 +266,6 @@ ambiguity when multiple rules apply.]
 - "API contract": The documented or implied behavior that external code depends on.
 
 For each definition, give a real Torvalds quote showing how he uses the term.]
-## Anti-Patterns
-[What Torvalds consistently rejects: over-engineering, abstraction for its own sake, \
-breaking existing users, cleverness without measurement, etc. For each anti-pattern:
-- What it looks like (language-agnostic)
-- Why it's wrong
-- A real Torvalds quote
-- What to do instead
-
-Cover at least 8 anti-patterns.]
 
 ## Voice and Tone
 [How Torvalds phrases feedback. The tone IS part of the method — certainty, directness, \
@@ -284,18 +275,6 @@ explaining the "why" after the "no". With real quotes. Cover:
 - How to explain the reasoning
 - When humor or analogy is appropriate
 - How to handle repeated mistakes]
-
-## Common Review Scenarios
-[Walk through 5-8 concrete review scenarios showing the method in action. \
-Each scenario should be described in LANGUAGE-AGNOSTIC terms (e.g., "a new public API \
-that removes a previously available parameter" not "a syscall that changes its signature"):
-- The situation (generalized)
-- What to look for
-- How to respond (with real Torvalds quotes as examples)
-- The severity to assign
-
-Scenarios should span different categories: performance, correctness, API design, \
-error handling, concurrency, etc.]
 
 ## Decision Framework
 [A decision tree or flowchart in text form: when reviewing code, what order to \
@@ -566,14 +545,14 @@ def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt
     raise RuntimeError(f"LLM distill failed after {retries} retries: {last_err}")
 
 
-def _format_calibration_for_prompt(calibration: dict) -> str:
-    """Format calibration.json into a prompt section grounding severity in real stats."""
+def _format_calibration_for_prompt(calibration: dict, category: str = None) -> str:
+    """Format calibration.json into a prompt section grounding severity in real stats.
+    
+    If category is provided, filter to show only that category's stats.
+    """
     lines = []
     lines.append("=== SEVERITY CALIBRATION DATA (derived from the full corpus) ===")
-    lines.append("Use these EXACT numbers in the Severity Calibration and Severity Decision Tree sections.")
-    lines.append("Do NOT invent statistics — cite the figures below.")
-    lines.append("")
-
+    
     stats = calibration.get("corpus_stats", {})
     lines.append(f"Total moves in corpus: {stats.get('total_moves', 0)}")
     lines.append("")
@@ -582,14 +561,26 @@ def _format_calibration_for_prompt(calibration: dict) -> str:
         lines.append(f"  {sev}: {d['count']} ({d['percentage']}%)")
     lines.append("")
 
-    lines.append("Severity distribution by category (P(severity | category)):")
-    for cat, c in calibration.get("severity_by_category", {}).items():
-        lines.append(f"  {cat} (n={c['total']}):")
-        lines.append(f"    reject: {c['reject_rate']}%")
-        lines.append(f"    request-changes: {c['request_changes_rate']}%")
-        lines.append(f"    nitpick: {c['nitpick_rate']}%")
-        lines.append(f"    dominant: {c['dominant_severity']}")
-    lines.append("")
+    if category:
+        lines.append(f"Category-specific stats for '{category}':")
+        if category in calibration.get("severity_by_category", {}):
+            c = calibration["severity_by_category"][category]
+            lines.append(f"  {category} (n={c['total']}):")
+            lines.append(f"    reject: {c['reject_rate']}%")
+            lines.append(f"    request-changes: {c['request_changes_rate']}%")
+            lines.append(f"    nitpick: {c['nitpick_rate']}%")
+            lines.append(f"    dominant: {c['dominant_severity']}")
+        else:
+            lines.append("  (no calibration data for this category)")
+    else:
+        lines.append("Severity distribution by category (P(severity | category)):")
+        for cat, c in calibration.get("severity_by_category", {}).items():
+            lines.append(f"  {cat} (n={c['total']}):")
+            lines.append(f"    reject: {c['reject_rate']}%")
+            lines.append(f"    request-changes: {c['request_changes_rate']}%")
+            lines.append(f"    nitpick: {c['nitpick_rate']}%")
+            lines.append(f"    dominant: {c['dominant_severity']}")
+    
     lines.append("")
     lines.append("=== END CALIBRATION DATA ===")
     lines.append("")
@@ -638,7 +629,8 @@ def _format_moves_for_prompt(patterns: list) -> str:
         lines.append("")
         for i, m in enumerate(moves, 1):
             lines.append(f"### Move {i}")
-            lines.append(f"Trigger: {m.get('trigger', '')}")
+            trigger = m.get('trigger', '')
+            lines.append(f"Trigger: {generalize_trigger(trigger)}")
             lines.append(f"Principle: {m.get('principle', '')}")
             lines.append(f"Severity: {m.get('severity', '')}")
             lines.append(f"Source: {m.get('source', 'email')}")
@@ -646,6 +638,20 @@ def _format_moves_for_prompt(patterns: list) -> str:
             lines.append("")
 
     return "\n".join(lines)
+
+
+def generalize_trigger(trigger: str) -> str:
+    """Apply SANITIZE_REPLACEMENTS to generalize C-specific terms in triggers.
+    
+    This pre-generalizes triggers before they're formatted into the prompt,
+    ensuring C-specific terms are removed at the source.
+    """
+    if not trigger:
+        return trigger
+    result = trigger
+    for term, replacement in SANITIZE_REPLACEMENTS.items():
+        result = result.replace(term, replacement)
+    return result
 
 
 SANITIZE_REPLACEMENTS = {
@@ -713,7 +719,7 @@ def _load_interview_data(project_root: Path) -> str:
     if not interviews_dir.exists():
         return ""
 
-    max_chars = 120000
+    max_chars = 500000
     lines = []
     total_chars = 0
 
@@ -738,42 +744,403 @@ def _load_interview_data(project_root: Path) -> str:
     return "".join(lines)
 
 
+def _load_interlocutor_variation_data(project_root: Path) -> str:
+    """Load interlocutor and variation data from JSONL files.
+    
+    Reads data/interlocutor.jsonl (recipient classification) and
+    data/variation.jsonl (tone variation) and formats them into a prompt section.
+    
+    Returns the concatenated string, or empty string if files don't exist.
+    """
+    data_dir = project_root / "data"
+    interlocutor_path = data_dir / "interlocutor.jsonl"
+    variation_path = data_dir / "variation.jsonl"
+    
+    lines = []
+    
+    # Load interlocutor data
+    if interlocutor_path.exists():
+        lines.append("### Interlocutor Data (recipient classification)")
+        with open(interlocutor_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        record = json.loads(line)
+                        lines.append(f"- {record.get('description', '')}: {record.get('classification', '')}")
+                    except json.JSONDecodeError:
+                        continue
+        lines.append("")
+    
+    # Load variation data
+    if variation_path.exists():
+        lines.append("### Variation Data (tone adaptation)")
+        with open(variation_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        record = json.loads(line)
+                        lines.append(f"- {record.get('scenario', '')}: {record.get('tone', '')}")
+                    except json.JSONDecodeError:
+                        continue
+        lines.append("")
+    
+    if not lines:
+        return ""
+    
+    return "## INTERLOCUTOR AND VARIATION DATA\n\n" + "\n".join(lines)
+
+
+def _distill_category(category: str, patterns: list, model: str = None) -> str:
+    """Generate a skill fragment for a single category.
+    
+    Stage 1 of two-stage distillation: focuses the LLM's attention on
+    patterns within one category (~25 patterns) rather than all 350.
+    
+    Returns the generated fragment (markdown string) or empty string on error.
+    """
+    if not patterns:
+        return ""
+    
+    # Build category-specific system prompt (subset of full prompt)
+    category_system_prompt = f"""\nYou are writing a section of a code review skill document, focusing on ONE category of review patterns.
+
+═══════════════════════════════════════════════════════════════════════
+CRITICAL RULE: TOTAL LANGUAGE AND PROJECT AGNOSTICISM
+═══════════════════════════════════════════════════════════════════════
+
+The skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell, 
+or any other language. Torvalds reviews C kernel code, but his REVIEWING METHOD is 
+universal. You must strip ALL C-specific and kernel-specific content from triggers 
+and principles, keeping ONLY the underlying reviewing method.
+
+TRIGGERS and PRINCIPLES must NEVER contain:
+  - C types or keywords: int, char, void, struct, union, enum, typedef, const, volatile, static, inline
+  - C macros or functions: BUG_ON, WARN_ON, READ_ONCE, WRITE_ONCE, copy_to_user, kmalloc, kfree
+  - Kernel concepts: syscall, inode, dentry, superblock, sk_buff, task_struct
+  - Linux-specific APIs: procfs, sysfs, debugfs, ioctl
+  - Architecture-specific terms: x86, ARM, riscv, SMP, RCU
+
+QUOTES (the "Response" field) are Torvalds' VERBATIM words and MUST be preserved 
+exactly as written, including any C-specific terms they contain. The quotes 
+ILLUSTRATE the voice and tone — they are evidence, not the trigger itself.
+
+TRANSLATION TABLE — when you encounter these in the data, generalize as shown:
+
+  C/Kernel specific                           → Language-agnostic trigger
+  ──────────────────────────────────────────────→────────────────────────────────────
+  BUG_ON() / BUG()                            → Fatal assertion/panic used for a recoverable condition
+  WARN_ON()                                   → Warning assertion that masks a real bug
+  READ_ONCE / WRITE_ONCE                      → Unsynchronized access to shared mutable data
+  volatile                                     → Relying on language semantics instead of explicit sync
+  copy_to_user / copy_from_user               → Untrusted/external boundary crossing without validation
+  spin_lock / mutex                            → Lock-based concurrency primitive
+  rcu_dereference                              → Lock-free data access without memory ordering
+  kmalloc / kfree                             → Manual memory allocation/deallocation
+  strlcpy / strscpy                            → String/buffer copy without bounds safety
+  __user annotation                            → Missing type-level ownership/safety annotation
+  returning -EFAULT / -EINVAL                  → Returning magic error codes instead of typed errors
+  #ifdef CONFIG_X                              → Compile-time conditional logic instead of runtime config
+  goto cleanup                                 → Manual resource cleanup instead of RAII/defer/using
+  struct file_operations                       → Interface/API contract change
+  syscall ABI change                            → Public API/ABI breakage
+  inline function                              → Premature optimization hint
+  typedef struct                                → Type aliasing that hides the real type
+
+═══════════════════════════════════════════════════════════════════════
+YOUR TASK
+═══════════════════════════════════════════════════════════════════════
+
+You will receive review moves from the category: {category}
+
+Generate a skill fragment that:
+1. Identifies the recurring themes within this category
+2. For each theme, provides:
+   - A clear trigger (language-agnostic)
+   - The underlying principle
+   - Severity level (reject / request-changes / nitpick)
+   - A representative Torvalds quote (verbatim)
+3. Labels each trigger with its type: invariant-true, invariant-false, precedence-rule, or general-guideline
+
+Output format (markdown):
+
+## Category: {category}
+
+### Theme 1: [Theme Name]
+- **Trigger**: [language-agnostic description]
+  - **Type**: [invariant-true / invariant-false / precedence-rule / general-guideline]
+  - **Why it's a problem**: [underlying design principle]
+  - **Severity**: [reject / request-changes / nitpick]
+  - **Example**: "[Torvalds quote]"
+
+[Continue with 3-6 triggers for this category]
+
+Remember: Every trigger must be language-agnostic. If it mentions C keywords or kernel
+concepts, generalize it to the underlying design problem.
+"""
+
+    # Format patterns for this category
+    lines = []
+    lines.append(f"Review moves from category: {category}")
+    lines.append(f"Total patterns: {len(patterns)}")
+    lines.append("")
+    
+    for i, p in enumerate(patterns, 1):
+        trigger = p.get('trigger', '')
+        lines.append(f"### Pattern {i}")
+        lines.append(f"Trigger: {generalize_trigger(trigger)}")
+        lines.append(f"Principle: {p.get('principle', '')}")
+        lines.append(f"Severity: {p.get('severity', '')}")
+        lines.append(f"Source: {p.get('source', 'email')}")
+        lines.append(f'Response (Torvalds\' words): "{p.get("quote", "")}"')
+        lines.append("")
+    
+    user_prompt = "\n".join(lines)
+    
+    try:
+        print(f"  calling LLM for category: {category} ({len(patterns)} patterns)", flush=True)
+        fragment = _call_llm(user_prompt, model=model, system_prompt=category_system_prompt)
+        return fragment
+    except Exception as e:
+        print(f"  error distilling category {category}: {e}", flush=True)
+        return ""
+
+
+def _synthesize_skill(fragments: dict, calibration: dict, interview_data: str, 
+                      iv_data: str, model: str = None) -> str:
+    """Synthesize category fragments into final SKILL.md.
+    
+    Stage 2 of two-stage distillation: takes all 14 category fragments and
+    synthesizes them into a coherent, unified skill document.
+    
+    Returns the synthesized SKILL.md content.
+    """
+    # Build synthesis system prompt
+    synthesis_system_prompt = """\nYou are synthesizing category-specific skill fragments into a unified SKILL.md document.
+
+═══════════════════════════════════════════════════════════════════════
+CRITICAL RULE: TOTAL LANGUAGE AND PROJECT AGNOSTICISM
+═══════════════════════════════════════════════════════════════════════
+
+The final skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell, 
+or any other language. All C-specific and kernel-specific content must be generalized.
+
+═══════════════════════════════════════════════════════════════════════
+SKILL QUALITIES
+═══════════════════════════════════════════════════════════════════════
+
+1. Language-agnostic — triggers must work for any language
+2. Four qualities of review rules — every trigger must be ONE of these:
+   a) Invariant TRUE: A condition that MUST always be true
+   b) Invariant FALSE: A condition that MUST NEVER be true
+   c) Precedence rule: An explicit ordering when rules conflict
+   d) General guideline: A concrete pattern with clear detection criteria
+3. Explicit precedence chain: Correctness > Performance > Complexity > Style
+4. Concrete definitions — define key terms explicitly
+5. Actionable — tell the reviewer WHAT to do and WHEN
+6. Grounded in real examples — use the provided quotes
+7. Comprehensive — aim for 6000-9000 words
+
+═══════════════════════════════════════════════════════════════════════
+OUTPUT STRUCTURE
+═══════════════════════════════════════════════════════════════════════
+
+Output exactly this structure (replace bracketed parts with real content):
+
+**CRITICAL FORMATTING RULE: DO NOT USE MARKDOWN TABLES**
+- Use structured nested bullet lists, NOT `| column | column |` tables
+
+---
+name: linus-torvalds-skill
+description: "[1-2 sentence description]"
+metadata:
+  author: "torvalds-skill pipeline"
+  version: "1.0.0"
+  tags:
+    - code-review
+    - reviewer-method
+    - torvalds
+---
+
+# Linus Torvalds Review Method
+
+> [2-3 sentence intro: what this skill is, corpus size, language-agnostic method]
+
+## Reviewer Mindset
+[5-7 core attitudes with principles and quotes]
+
+## Review Triggers
+[Comprehensive catalog grouped by semantic theme, NOT by category labels.
+Each trigger must have:
+- Type: invariant-true / invariant-false / precedence-rule / general-guideline
+- What to look for: language-agnostic description
+- Why it's a problem: underlying design principle
+- Severity: reject / request-changes / nitpick
+- Example: verbatim Torvalds quote
+Cover at least 12 distinct themes with 3-6 triggers each.]
+
+## Precedence and Priorities
+[Explicit hierarchy with explanations and quotes]
+
+## Key Definitions
+[Define: bug, hack, workaround, patch, non-negotiable, recoverable error, API contract]
+
+## Voice and Tone
+[How Torvalds phrases feedback with quotes]
+
+## Decision Framework
+[Text-based decision tree]
+
+## Severity Calibration
+[Use calibration stats to ground severity assignments. Format as nested bullets, NOT tables.]
+
+## Severity Decision Tree
+[Category-based decision procedure. Format as nested bullets, NOT tables.]
+
+## Quick Reference Checklist
+[15-20 concrete items grouped by theme]
+
+Keep output between 6000-9000 words. Complete ALL sections.
+"""
+
+    # Build user prompt with all fragments and context
+    lines = []
+    
+    # Header
+    lines.append("=" * 80)
+    lines.append("CATEGORY FRAGMENTS FOR SYNTHESIS")
+    lines.append("=" * 80)
+    lines.append("")
+    
+    # Add each category fragment
+    for category, fragment in fragments.items():
+        if fragment.strip():
+            lines.append(f"{'=' * 80}")
+            lines.append(f"CATEGORY: {category}")
+            lines.append(f"{'=' * 80}")
+            lines.append(fragment)
+            lines.append("")
+    
+    lines.append("=" * 80)
+    lines.append("ADDITIONAL CONTEXT")
+    lines.append("=" * 80)
+    lines.append("")
+    
+    # Add calibration data
+    if calibration:
+        lines.append(_format_calibration_for_prompt(calibration))
+        lines.append("")
+    
+    # Add interview data
+    if interview_data:
+        lines.append("## INTERVIEW DATA (Linus' explicit definitions and mindset)")
+        lines.append(interview_data)
+        lines.append("")
+    
+    # Add interlocutor/variation data
+    if iv_data:
+        lines.append(iv_data)
+        lines.append("")
+    
+    # Instructions for synthesis
+    lines.append("=" * 80)
+    lines.append("SYNTHESIS INSTRUCTIONS")
+    lines.append("=" * 80)
+    lines.append("")
+    lines.append("Your task:")
+    lines.append("1. Read all category fragments above")
+    lines.append("2. Identify recurring themes ACROSS categories (not just within)")
+    lines.append("3. Synthesize into the unified SKILL.md structure shown above")
+    lines.append("4. Group triggers by SEMANTIC THEME, not by category labels")
+    lines.append("5. Use interview quotes for definitions and mindset sections")
+    lines.append("6. Use calibration stats for Severity Calibration and Decision Tree sections")
+    lines.append("7. Ensure EVERY trigger is language-agnostic (apply translation table)")
+    lines.append("8. Label every trigger with its type (invariant-true, invariant-false, etc.)")
+    lines.append("9. Include at least 12 distinct trigger themes with 3-6 triggers each")
+    lines.append("10. Complete ALL required sections in the output structure")
+    lines.append("")
+    lines.append("OUTPUT FORMAT: Start with YAML frontmatter (--- fences), then markdown body.")
+    lines.append("DO NOT use markdown tables — use nested bullet lists instead.")
+    lines.append("Target: 6000-9000 words, comprehensive coverage of all sections.")
+    
+    user_prompt = "\n".join(lines)
+    
+    print("  synthesizing final skill from fragments...", flush=True)
+    synthesized = _call_llm(user_prompt, model=model, system_prompt=synthesis_system_prompt)
+    
+    return synthesized
+
+
 def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model: str = None,
                   calibration_path: Path = None):
-    """Read patterns.json, call LLM, sanitize, write skill markdown.
+    """Read patterns.json, call LLM (two-stage), sanitize, write skill markdown.
 
-    If calibration_path is provided and exists, the calibration data is appended
-    to the prompt so the LLM grounds severity assignments in real corpus stats.
+    Two-stage approach:
+    Stage 1: For each of 14 categories, generate a category-specific fragment (~25 patterns each)
+    Stage 2: Synthesize all fragments into final SKILL.md
+    
+    Total: 15 LLM calls max (14 categories + 1 synthesis)
+    
+    If calibration_path is provided and exists, the calibration data is used
+    to ground severity assignments in real corpus stats.
     """
     # Load interview data via the shared helper (eliminates duplication)
     interview_data = _load_interview_data(patterns_path.parent.parent)
 
-    data = json.loads(patterns_path.read_text(encoding="utf-8"))
+    # Load interlocutor and variation data
+    iv_data = _load_interlocutor_variation_data(patterns_path.parent.parent)
 
-    prompt = _format_moves_for_prompt(data)
-
+    # Load calibration data if available
+    calibration = None
     if calibration_path and calibration_path.exists():
         calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
-        prompt = prompt + "\n" + _format_calibration_for_prompt(calibration)
         print(f"loaded calibration from {calibration_path}")
     else:
         print("warning: no calibration data — skill will lack severity grounding")
 
-    # Load interview transcripts (explicit definitions and mindset statements)
-    if interview_data:
-        prompt = prompt + "\n\n## INTERVIEW DATA (Linus' explicit definitions and mindset)\n" + interview_data
-        print(f"loaded interview data ({len(interview_data)} chars)")
-    else:
-        print("warning: no interview data — skill will lack explicit definitions")
+    # Load patterns
+    data = json.loads(patterns_path.read_text(encoding="utf-8"))
+    print(f"loaded {len(data)} patterns from {patterns_path}")
 
-    print(f"calling LLM with {len(prompt)} chars of move data...")
-    print(f"  ({len(data)} sampled moves)")
-    if model:
-        print(f"  (model override: {model})")
+    # Group patterns by category
+    by_category = {}
+    for p in data:
+        cat = p.get("category", "unknown")
+        by_category.setdefault(cat, []).append(p)
+    
+    categories = sorted(by_category.keys())
+    print(f"found {len(categories)} categories: {', '.join(categories)}")
 
-    skill_md = _call_llm(prompt, model=model)
+    # Stage 1: Distill each category
+    print(f"\nStage 1: distilling {len(categories)} categories...", flush=True)
+    fragments = {}
+    
+    for i, cat in enumerate(categories, 1):
+        cat_patterns = by_category[cat]
+        if not cat_patterns:
+            print(f"  [{i}/{len(categories)}] {cat}: skipping (0 patterns)", flush=True)
+            fragments[cat] = ""
+            continue
+            
+        print(f"  [{i}/{len(categories)}] {cat} ({len(cat_patterns)} patterns)...", flush=True)
+        fragment = _distill_category(cat, cat_patterns, model=model)
+        fragments[cat] = fragment
+        
+        if fragment:
+            print(f"    generated {len(fragment)} chars", flush=True)
+        else:
+            print(f"    FAILED (empty fragment)", flush=True)
+
+    # Stage 2: Synthesize final skill
+    print("\nStage 2: synthesizing final skill...", flush=True)
+    skill_md = _synthesize_skill(fragments, calibration, interview_data, iv_data, model=model)
+    
+    # Post-process
+    print("\npost-processing...")
     skill_md = sanitize_skill(skill_md)
 
+    # Write output
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(skill_md, encoding="utf-8")
 

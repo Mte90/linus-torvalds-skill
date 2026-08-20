@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Replicate the three-model Torvalds review of antirez/smallchat.
+# Replicate the three-model Torvalds review of antirez/smallchat + baseline comparison.
 #
 # Produces, in report/:
-#   review-gpt-oss-120b.md
-#   review-glm5.2.md
-#   review-mistral.md
+#   With-skill reviews:
+#     review-gpt-oss-120b.md
+#     review-glm5.2.md
+#     review-mistral.md
+#   Baseline reviews (no skill/soul):
+#     review-baseline-gpt-oss-120b.md
+#     review-baseline-glm5.2.md
+#     review-baseline-mistral.md
 #
 # Prerequisites:
 #   - opencode agent CLI available as `opencode` on PATH
@@ -139,24 +144,97 @@ run_review() {
   echo "[$(date +%H:%M:%S)] $model_label review done: $(wc -w < "$out_file" 2>/dev/null || echo '?') words"
 }
 
+# Baseline review prompt (no skill/soul). Neutral code reviewer.
+baseline_prompt() {
+  local out_file="$1"
+  cat <<EOF
+You are a code reviewer. Review the codebase at /tmp/smallchat/ — antirez/smallchat (minimal TCP chat server, ~706 LOC).
+
+Source files: smallchat-server.c, smallchat-client.c, chatlib.c, chatlib.h, Makefile.
+
+Conduct a thorough code review finding:
+- Bugs and logic errors
+- Security vulnerabilities (buffer overflows, use-after-free, injection, etc.)
+- Memory leaks and resource management issues
+- Race conditions and concurrency problems
+- Performance issues
+- Code quality and maintainability concerns
+
+Deliverable: a review report with YAML frontmatter, one section per source file, findings in this format:
+
+### [SEVERITY] Finding title
+- **Type:** bug | security | memory | concurrency | performance | code-quality
+- **Location:** file:line
+- **Issue:** what's wrong
+- **Fix:** concrete action
+
+Severity levels: CRITICAL | HIGH | MEDIUM | LOW
+
+End with a Summary: overall assessment, findings by severity, whether the code is production-ready.
+
+Rules:
+- Cover ALL source files.
+- Be concrete: cite line numbers, name functions, quote code.
+- Don't invent problems. If clean in an area, say so.
+- Use your own judgment and expertise — no external skill file to follow.
+- English.
+
+Read all source files carefully, then write the report.
+Write the final report to: $out_file
+EOF
+}
+
+# Run baseline review (no skill/soul).
+run_baseline_review() {
+  local model_label="$1"
+  local out_file="$2"
+  local prompt
+
+  prompt="$(baseline_prompt "$out_file")"
+
+  echo "[$(date +%H:%M:%S)] Starting baseline $model_label review -> $(basename "$out_file")"
+  local start_ts
+  start_ts=$(date +%s)
+  opencode run -m "regolo-ai/$model_label" "$prompt" > "$REPORT_DIR/review-baseline-$model_label.log" 2>&1 || {
+    echo "[$(date +%H:%M:%S)] baseline $model_label review FAILED" >&2
+    return 1
+  }
+  # Extract report from log if agent didn't write the file.
+  if [ ! -s "$out_file" ] || [ "$(stat -c %Y "$out_file" 2>/dev/null || echo 0)" -lt "$start_ts" ]; then
+    awk '/^---$/{found=1} found{print}' "$REPORT_DIR/review-baseline-$model_label.log" > "$out_file"
+  fi
+  echo "[$(date +%H:%M:%S)] baseline $model_label review done: $(wc -w < "$out_file" 2>/dev/null || echo '?') words"
+}
+
 export -f review_prompt run_review
 
 trap 'rm -f "$REPORT_DIR"/review-*.log' EXIT
 
-# 5. Dispatch all three concurrently.
-echo "Dispatching three parallel reviews..."
+# 5. Dispatch all six reviews concurrently (3 with-skill + 3 baseline).
+echo "Dispatching six parallel reviews (3 with-skill, 3 baseline)..."
+# With-skill reviews
 run_review "gpt-oss-120b" "$SKILL_DIR/SKILL.md" "$SOUL_DIR/soul.md" "$REPORT_DIR/review-gpt-oss-120b.md" &
 PID_GPT=$!
 run_review "glm5.2" "$SKILL_DIR/SKILL-GLM.md" "$SOUL_DIR/soul-glm.md" "$REPORT_DIR/review-glm5.2.md" &
 PID_GLM=$!
 run_review "mistral-small-4-119b" "$SKILL_DIR/SKILL-Mistral.md" "$SOUL_DIR/soul-mistral.md" "$REPORT_DIR/review-mistral.md" &
 PID_MIS=$!
+# Baseline reviews (no skill/soul)
+run_baseline_review "gpt-oss-120b" "$REPORT_DIR/review-baseline-gpt-oss-120b.md" &
+PID_GPT_BASE=$!
+run_baseline_review "glm5.2" "$REPORT_DIR/review-baseline-glm5.2.md" &
+PID_GLM_BASE=$!
+run_baseline_review "mistral-small-4-119b" "$REPORT_DIR/review-baseline-mistral.md" &
+PID_MIS_BASE=$!
 
-# 6. Wait for all three.
+# 6. Wait for all six.
 FAIL=0
 wait "$PID_GPT" || FAIL=1
 wait "$PID_GLM" || FAIL=1
 wait "$PID_MIS" || FAIL=1
+wait "$PID_GPT_BASE" || FAIL=1
+wait "$PID_GLM_BASE" || FAIL=1
+wait "$PID_MIS_BASE" || FAIL=1
 
 if [ "$FAIL" -ne 0 ]; then
   echo "One or more reviews failed. See output above." >&2
@@ -165,8 +243,13 @@ fi
 
 echo ""
 echo "All reviews complete:"
-for f in "$REPORT_DIR"/review-*.md; do
-  printf '  %-40s %s words\n' "$(basename "$f")" "$(wc -w < "$f")"
+echo "  With-skill reviews:"
+for f in "$REPORT_DIR"/review-{gpt-oss-120b,glm5.2,mistral}.md; do
+  [ -f "$f" ] && printf '    %-40s %s words\n' "$(basename "$f")" "$(wc -w < "$f")"
+done
+echo "  Baseline reviews (no skill/soul):"
+for f in "$REPORT_DIR"/review-baseline-{gpt-oss-120b,glm5.2,mistral}.md; do
+  [ -f "$f" ] && printf '    %-40s %s words\n' "$(basename "$f")" "$(wc -w < "$f")"
 done
 
 echo ""
