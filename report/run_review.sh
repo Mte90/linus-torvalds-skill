@@ -60,25 +60,21 @@ if [ ! -d "$TARGET" ]; then
   git clone --depth 1 https://github.com/antirez/smallchat "$TARGET"
 fi
 
-# 2. Verify skill + soul assets exist.
+# 2. Verify skill assets exist.
 for f in \
   "$SKILL_DIR/SKILL.md" \
   "$SKILL_DIR/SKILL-GLM.md" \
-  "$SKILL_DIR/SKILL-Mistral.md" \
-  "$SOUL_DIR/soul.md" \
-  "$SOUL_DIR/soul-glm.md" \
-  "$SOUL_DIR/soul-mistral.md"; do
+  "$SKILL_DIR/SKILL-Mistral.md"; do
   if [ ! -f "$f" ]; then
     echo "Missing asset: $f" >&2
     exit 1
   fi
 done
 
-# 3. Shared review prompt body. Each model gets its own skill + soul + output.
+# 3. Shared review prompt body. Each model gets its own skill + output.
 review_prompt() {
   local skill_file="$1"
-  local soul_file="$2"
-  local out_file="$3"
+  local out_file="$2"
   cat <<EOF
 You are a code reviewer applying the Linus Torvalds reviewer skill to a real codebase.
 
@@ -86,14 +82,13 @@ Codebase to review: /tmp/smallchat/ — antirez/smallchat (minimal TCP chat serv
 Source files: smallchat-server.c, smallchat-client.c, chatlib.c, chatlib.h, Makefile.
 
 Skill file to apply: $skill_file — read it fully and apply its rules (triggers, precedence, definitions, anti-patterns).
-Soul file for tone: $soul_file — adopt this voice. Profanity is permitted for dangerous/negligent defects; replicate faithfully.
 
 ## Persona Narrative (2-3 paragraphs)
 
-Lead with: What does it feel like to interact with an AI using this skill/soul? Does it capture Linus' voice? Is it too harsh, too soft, or about right? Give concrete examples of how the persona comes across.
+Lead with: What does it feel like to interact with an AI using this skill? Does it capture Linus' voice? Is it too harsh, too soft, or about right? Give concrete examples of how the persona comes across.
 
 Specifically:
-- Quote specific lines from the skill/soul file that capture (or miss) Linus' voice
+- Quote specific lines from the skill file that capture (or miss) Linus' voice
 - Compare the tone to real Linus quotes (directness, impatience with incompetence, passion for correctness)
 - Assess whether the severity calibration feels authentic (does "CRITICAL" feel like something he'd call "garbage" or "horrible"?)
 - Note any sections that feel generic vs. distinctly Linus
@@ -109,7 +104,7 @@ Structured assessment of:
 
 ## Strengths
 
-3-5 bullet points on what the skill/soul gets right.
+3-5 bullet points on what the skill gets right.
 
 ## Weaknesses
 
@@ -137,19 +132,298 @@ Rules:
 - Precedence: correctness > performance > complexity > style > API stability.
 - Be concrete: cite line numbers, name functions, quote code.
 - Don't invent problems. If clean on a trigger, say so.
-- English. Torvalds' voice from the soul.
+- English.
 
-Read all source files first, then the skill, then the soul, then write the report.
+Read all source files first, then the skill, then write the report.
 Write the final report to: $out_file
 EOF
 }
 
 # 4. Run a single with-skill review with timeout + retry.
+
+# Source files to review
+SOURCE_FILES=("smallchat-server.c" "smallchat-client.c" "chatlib.c" "chatlib.h" "Makefile")
+
+# Run a single chunk review (one file) with timeout + retry.
+run_chunk_review() {
+  local model_label="$1"
+  local skill_file="$2"
+  local source_file="$3"
+  local chunk_file="$4"
+  local timeout_sec="$5"
+
+  if [ -s "$chunk_file" ]; then
+    echo "[$(date +%H:%M:%S)] $model_label chunk $(basename "$source_file") already exists ($(wc -w < "$chunk_file") words), skipping"
+    return 0
+  fi
+
+  local prompt
+  prompt=$(cat <<EOF
+You are a code reviewer applying the Linus Torvalds reviewer skill.
+
+Skill file: $skill_file — read it fully and apply its rules.
+
+Review ONLY this file: $source_file from /tmp/smallchat/
+
+For each finding use:
+### [SEVERITY] Finding title
+- **Type:** invariant-true | invariant-false | precedence | guideline
+- **Trigger:** (the trigger from the skill that fired)
+- **Location:** file:line
+- **Issue:** what's wrong
+- **Fix:** concrete action
+
+Severity: CRITICAL | HIGH | MEDIUM | LOW
+If clean, say "No findings." Don't invent problems.
+English.
+Read the skill and the source file, then write findings.
+Write findings to: $chunk_file
+EOF
+)
+
+  echo "[$(date +%H:%M:%S)] Starting $model_label chunk $(basename "$source_file") (timeout ${timeout_sec}s)"
+
+  local attempt
+  for attempt in 1 2; do
+    if [ "$attempt" -gt 1 ]; then
+      echo "[$(date +%H:%M:%S)] $model_label chunk $(basename "$source_file"): retrying (attempt 2)"
+      rm -f "$chunk_file"
+    fi
+
+    local start_ts
+    start_ts=$(date +%s)
+
+    if timeout "${timeout_sec}" opencode run -m "regolo-ai/$model_label" "$prompt" > "$chunk_file.log" 2>&1; then
+      if [ ! -s "$chunk_file" ] || [ "$(stat -c %Y "$chunk_file" 2>/dev/null || echo 0)" -lt "$start_ts" ]; then
+        awk '/^---$/{found=1} found{print}' "$chunk_file.log" > "$chunk_file"
+      fi
+
+      if [ -s "$chunk_file" ]; then
+        echo "[$(date +%H:%M:%S)] $model_label chunk $(basename "$source_file") done: $(wc -w < "$chunk_file") words"
+        rm -f "$chunk_file.log"
+        return 0
+      fi
+      echo "[$(date +%H:%M:%S)] $model_label chunk $(basename "$source_file"): opencode exited OK but output empty" >&2
+    else
+      local exit_code=$?
+      if [ "$exit_code" -eq 124 ]; then
+        echo "[$(date +%H:%M:%S)] $model_label chunk $(basename "$source_file") TIMED OUT after ${timeout_sec}s" >&2
+      else
+        echo "[$(date +%H:%M:%S)] $model_label chunk $(basename "$source_file") FAILED (exit $exit_code)" >&2
+      fi
+    fi
+  done
+
+  echo "[$(date +%H:%M:%S)] $model_label chunk $(basename "$source_file") FAILED after 2 attempts" >&2
+  return 1
+}
+
+# Generate summary from all chunk findings.
+run_summary_review() {
+  local model_label="$1"
+  local skill_file="$2"
+  local chunk_dir="$3"
+  local summary_file="$4"
+  local timeout_sec="$5"
+
+  if [ -s "$summary_file" ]; then
+    echo "[$(date +%H:%M:%S)] $model_label summary already exists ($(wc -w < "$summary_file") words), skipping"
+    return 0
+  fi
+
+  # Gather chunk contents
+  local chunks_content=""
+  for src in "${SOURCE_FILES[@]}"; do
+    local chunk="$chunk_dir/${src}.md"
+    if [ -f "$chunk" ]; then
+      chunks_content+="\n--- Content of $src ---\n"
+      chunks_content+="$(cat "$chunk")"
+    fi
+  done
+
+  local prompt
+  prompt=$(cat <<EOF
+You are a code reviewer applying the Linus Torvalds reviewer skill.
+
+Skill file: $skill_file — read it fully and apply its rules.
+
+Below are the per-file findings from reviewing /tmp/smallchat/. Synthesize them into a cohesive summary.
+
+$chunks_content
+
+Produce a summary with:
+1. YAML frontmatter (title, date, model, files_reviewed, findings_count, verdict)
+2. Persona Narrative (2-3 paragraphs: how does the skill feel in practice?)
+3. Technical Assessment (coverage, accuracy, severity calibration, precedence adherence)
+4. Strengths (3-5 bullets)
+5. Weaknesses (3-5 bullets)
+6. Verdict (1-2 sentences: production-ready?)
+
+English.
+Write the summary to: $summary_file
+EOF
+)
+
+  echo "[$(date +%H:%M:%S)] Starting $model_label summary (timeout ${timeout_sec}s)"
+
+  local attempt
+  for attempt in 1 2; do
+    if [ "$attempt" -gt 1 ]; then
+      echo "[$(date +%H:%M:%S)] $model_label summary: retrying (attempt 2)"
+      rm -f "$summary_file"
+    fi
+
+    local start_ts
+    start_ts=$(date +%s)
+
+    if timeout "${timeout_sec}" opencode run -m "regolo-ai/$model_label" "$prompt" > "$summary_file.log" 2>&1; then
+      if [ ! -s "$summary_file" ] || [ "$(stat -c %Y "$summary_file" 2>/dev/null || echo 0)" -lt "$start_ts" ]; then
+        awk '/^---$/{found=1} found{print}' "$summary_file.log" > "$summary_file"
+      fi
+
+      if [ -s "$summary_file" ]; then
+        echo "[$(date +%H:%M:%S)] $model_label summary done: $(wc -w < "$summary_file") words"
+        rm -f "$summary_file.log"
+        return 0
+      fi
+      echo "[$(date +%H:%M:%S)] $model_label summary: opencode exited OK but output empty" >&2
+    else
+      local exit_code=$?
+      if [ "$exit_code" -eq 124 ]; then
+        echo "[$(date +%H:%M:%S)] $model_label summary TIMED OUT after ${timeout_sec}s" >&2
+      else
+        echo "[$(date +%H:%M:%S)] $model_label summary FAILED (exit $exit_code)" >&2
+      fi
+    fi
+  done
+
+  echo "[$(date +%H:%M:%S)] $model_label summary FAILED after 2 attempts" >&2
+  return 1
+}
+
+# Merge chunks + summary into final review file.
+merge_chunks() {
+  local model_label="$1"
+  local chunk_dir="$2"
+  local final_file="$3"
+
+  local summary="$chunk_dir/_summary.md"
+  if [ ! -s "$summary" ]; then
+    echo "[$(date +%H:%M:%S)] Merge failed: summary missing or empty" >&2
+    return 1
+  fi
+
+  # Extract frontmatter and narrative sections from summary (up to ## Findings or end)
+  local in_findings=0
+  local summary_body=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^##\ Findings ]]; then
+      in_findings=1
+      continue
+    fi
+    if [ "$in_findings" -eq 0 ]; then
+      summary_body+="$line\n"
+    fi
+  done < "$summary"
+
+  # Write final file: summary body + findings section
+  {
+    printf '%b' "$summary_body"
+    printf '\n## Findings\n\n'
+    for src in "${SOURCE_FILES[@]}"; do
+      local chunk="$chunk_dir/${src}.md"
+      if [ -f "$chunk" ] && [ -s "$chunk" ]; then
+        printf '### %s\n\n' "$src"
+        cat "$chunk"
+        printf '\n'
+      fi
+    done
+  } > "$final_file"
+
+  if [ -s "$final_file" ]; then
+    echo "[$(date +%H:%M:%S)] Merge complete: $(wc -w < "$final_file") words in $(basename "$final_file")"
+    rm -rf "$chunk_dir"
+    return 0
+  else
+    echo "[$(date +%H:%M:%S)] Merge failed: output empty" >&2
+    return 1
+  fi
+}
+
+# Run a single with-skill review with chunked pipeline + resume support.
+run_review_chunked() {
+  local model_label="$1"
+  local skill_file="$2"
+  local out_file="$3"
+
+  # Skip if final output already exists (unless --force).
+  if [ "$FORCE" -eq 0 ] && [ -s "$out_file" ]; then
+    echo "[$(date +%H:%M:%S)] $model_label review already exists ($(wc -w < "$out_file") words), skipping"
+    return 0
+  fi
+
+  # Handle interrupted merge: final file exists but chunks dir also exists
+  if [ -s "$out_file" ] && [ -d "$REPORT_DIR/chunks/$model_label" ]; then
+    echo "[$(date +%H:%M:%S)] $model_label: stale chunks dir found, cleaning up"
+    rm -rf "$REPORT_DIR/chunks/$model_label"
+    return 0
+  fi
+
+  local chunk_dir="$REPORT_DIR/chunks/$model_label"
+  mkdir -p "$chunk_dir"
+
+  # Timeout per chunk: 900s for GLM5.2, 600s for others
+  local chunk_timeout=600
+  if [ "$model_label" = "glm5.2" ]; then
+    chunk_timeout=900
+  fi
+
+  # Check if chunks dir exists (resume from interrupted run)
+  if [ -d "$chunk_dir" ]; then
+    echo "[$(date +%H:%M:%S)] $model_label: resuming from existing chunks dir"
+  fi
+
+  # Process each source file chunk
+  local failed_chunks=0
+  for src in "${SOURCE_FILES[@]}"; do
+    local chunk_file="$chunk_dir/${src}.md"
+
+    # Skip if chunk already exists and non-empty
+    if [ -s "$chunk_file" ]; then
+      echo "[$(date +%H:%M:%S)] $model_label chunk $(basename "$src") already done, skipping"
+      continue
+    fi
+
+    if ! run_chunk_review "$model_label" "$skill_file" "$src" "$chunk_file" "$chunk_timeout"; then
+      failed_chunks=$((failed_chunks+1))
+    fi
+  done
+
+  if [ "$failed_chunks" -gt 0 ]; then
+    echo "[$(date +%H:%M:%S)] $model_label: $failed_chunks chunk(s) failed, keeping chunks for retry"
+    return 1
+  fi
+
+  # Generate summary
+  local summary_file="$chunk_dir/_summary.md"
+  if ! run_summary_review "$model_label" "$skill_file" "$chunk_dir" "$summary_file" "$chunk_timeout"; then
+    echo "[$(date +%H:%M:%S)] $model_label: summary failed, keeping chunks for retry"
+    return 1
+  fi
+
+  # Merge chunks into final output
+  if ! merge_chunks "$model_label" "$chunk_dir" "$out_file"; then
+    echo "[$(date +%H:%M:%S)] $model_label: merge failed, keeping chunks for manual recovery"
+    return 1
+  fi
+
+  return 0
+}
+
 run_review() {
   local model_label="$1"
   local skill_file="$2"
-  local soul_file="$3"
-  local out_file="$4"
+  local out_file="$3"
 
   # Skip if already done (unless --force).
   if [ "$FORCE" -eq 0 ] && [ -s "$out_file" ]; then
@@ -158,7 +432,7 @@ run_review() {
   fi
 
   local prompt
-  prompt="$(review_prompt "$skill_file" "$soul_file" "$out_file")"
+  prompt="$(review_prompt "$skill_file" "$out_file")"
 
   # Timeout: 40 min for GLM5.2 (long reasoning latency), 15 min for others.
   local timeout_sec=900
@@ -300,7 +574,7 @@ run_baseline_review() {
   return 1
 }
 
-export -f review_prompt run_review baseline_prompt run_baseline_review
+export -f review_prompt run_review baseline_prompt run_baseline_review run_chunk_review run_summary_review merge_chunks run_review_chunked
 
 # 5. Dispatch all six reviews concurrently (3 with-skill + 3 baseline).
 echo "Dispatching six parallel reviews (3 with-skill, 3 baseline)..."
@@ -308,11 +582,11 @@ echo "  Force mode: $FORCE (0=skip existing, 1=regenerate all)"
 echo ""
 
 # With-skill reviews
-run_review "gpt-oss-120b" "$SKILL_DIR/SKILL.md" "$SOUL_DIR/soul.md" "$REPORT_DIR/review-gpt-oss-120b.md" &
+run_review_chunked "gpt-oss-120b" "$SKILL_DIR/SKILL.md" "$REPORT_DIR/review-gpt-oss-120b.md" &
 PID_GPT=$!
-run_review "glm5.2" "$SKILL_DIR/SKILL-GLM.md" "$SOUL_DIR/soul-glm.md" "$REPORT_DIR/review-glm5.2.md" &
+run_review_chunked "glm5.2" "$SKILL_DIR/SKILL-GLM.md" "$REPORT_DIR/review-glm5.2.md" &
 PID_GLM=$!
-run_review "mistral-small-4-119b" "$SKILL_DIR/SKILL-Mistral.md" "$SOUL_DIR/soul-mistral.md" "$REPORT_DIR/review-mistral.md" &
+run_review_chunked "mistral-small-4-119b" "$SKILL_DIR/SKILL-Mistral.md" "$REPORT_DIR/review-mistral.md" &
 PID_MIS=$!
 # Baseline reviews (no skill/soul)
 run_baseline_review "gpt-oss-120b" "$REPORT_DIR/review-baseline-gpt-oss-120b.md" &
@@ -354,7 +628,37 @@ done
 echo ""
 if [ "$FAILURES" -le 1 ]; then
   echo "Success: $((6-FAILURES))/6 reviews produced."
-  echo "Next: generate the comparison with report/build_comparison.sh"
+
+  # Generate the comparison report from the six reviews.
+  echo ""
+  echo "[$(date +%H:%M:%S)] Generating comparison report..."
+  if python3 report/build_comparison.py; then
+    echo "[$(date +%H:%M:%S)] Comparison written to report/comparison.md"
+  else
+    echo "[$(date +%H:%M:%S)] WARNING: comparison generation failed" >&2
+  fi
+
+  # Baseline reviews are intermediate artifacts. Remove them now that
+  # the comparison has been generated. build_comparison.py tolerates their
+  # absence on future runs (shows "N/A" for baseline stats).
+  echo ""
+  echo "[$(date +%H:%M:%S)] Cleaning up intermediate baseline review files..."
+  for f in "$REPORT_DIR"/review-baseline-{gpt-oss-120b,glm5.2,mistral}.md; do
+    if [ -f "$f" ]; then
+      rm -f "$f"
+      echo "  removed $(basename "$f")"
+    fi
+  done
+  for f in "$REPORT_DIR"/review-baseline-{gpt-oss-120b,glm5.2,mistral}.log; do
+    [ -f "$f" ] && rm -f "$f"
+  done
+
+  echo ""
+  echo "Done. Final artifacts:"
+  echo "  report/comparison.md"
+  echo "  report/review-gpt-oss-120b.md"
+  echo "  report/review-glm5.2.md"
+  echo "  report/review-mistral.md"
   exit 0
 else
   echo "WARNING: $FAILURES reviews failed. Check .log files in report/ for details." >&2

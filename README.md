@@ -2,7 +2,7 @@
 
 Distills Linus Torvalds' code-review methodology from his LKML emails into a reusable, language-agnostic skill.
 
-Built from **38,303 real review moves** extracted from 31,397 of his emails (2002–2026) on the Linux kernel mailing list, plus 67 interview transcripts.
+Built from **38,293 real review moves** extracted from 31,397 of his emails (2002–2026) on the Linux kernel mailing list, plus 67 interview transcripts.
 
 ## Quick Start
 
@@ -39,6 +39,21 @@ uv sync
 cp .env.example .env
 # Edit .env: LLM_HOST, LLM_MODEL, LLM_API_KEY
 ```
+
+## Pre-built Data
+
+The `data/` directory (mbox, extracted moves, patterns, calibration data) is not committed — it's large and regenerable. **It is published as a release asset** on the repository's Releases page and updated when the pipeline produces new artifacts.
+
+Download and extract it into the project root instead of running the full pipeline:
+
+```bash
+# From the Releases page, download data.tar.gz and extract:
+tar xzf data.tar.gz
+```
+
+This gives you `data/moves.jsonl`, `data/patterns.json`, `data/calibration.json`, and all other artifacts needed to regenerate skill and soul files without fetching 31,000 emails or spending LLM API calls.
+
+Run the full pipeline only if you want to re-extract from source (costs ~$5–8 in API calls, several hours).
 
 ## Configuration
 

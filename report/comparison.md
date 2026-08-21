@@ -1,207 +1,246 @@
 ---
-title: Skill variant comparison — antirez/smallchat
-date: 2026-08-19
-target: antirez/smallchat (706 LOC, C)
-models: [gpt-oss-120b, glm5.2, mistral-small-4-119b]
-previous_run: 2026-08-12 (keyword calibration)
+title: Model Comparison — SmallChat Review
+date: 2026-08-21
+codebase: antirez/smallchat
+models: gpt-oss-120b, glm5.2, mistral-small-4-119b
+skill: linus-torvalds-skill (language-agnostic)
+method: static review, skill triggers applied per source file
 ---
 
-# Skill Variant Comparison
+# Model Comparison — SmallChat Review
 
-Three LLM models reviewed the same codebase (antirez/smallchat, 706 LOC) using
-three language-agnostic skill variants generated from the same extracted patterns.
-Each model received its matching skill file and soul file. This document
-synthesizes where they agree, where they diverge, and what that says about the
-skill + model combination.
+Three models reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill and soul. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.
 
-This run uses skill and soul files regenerated on 2026-08-19 after expanding the
-interview corpus from 6 to 67 sources and wiring interview data into both the
-soul and skill generation pipelines. The previous run (2026-08-12) used 6
-interview sources feeding only the soul pipeline.
+## Metrics Summary
 
-## Headline numbers
+| Metric | gpt-oss-120b | glm5.2 | mistral |
+|--------|:------------:|:------:|:-------:|
+| Findings | 14 | 24 | 8 |
+| Critical | 2 | 2 | 0 |
+| High | 7 | 7 | 2 |
+| Medium | 4 | 9 | 3 |
+| Low | 1 | 6 | 3 |
+| Words | 1254 | 3989 | 2010 |
 
-| Metric | gpt-oss-120b | glm5.2 | mistral-small-4-119b |
-|--------|-------------|--------|----------------------|
-| Findings (total) | 13 | 18 | 8 |
-| CRITICAL | 2 | 2 | 1 |
-| HIGH | 8 | 5 | 3 |
-| MEDIUM | 0 | 4 | 2 |
-| LOW | 3 | 7 | 2 |
-| Report words | 855 | 3,069 | 1,527 |
-| Verdict | FAIL | FAIL | FAIL |
+**Key insight:** Finding count is a poor quality signal. The consensus matrix below shows which models caught which bugs — and that is where the real signal lives.
 
-All three models agree the code fails. No model approves code with known
-memory-corruption bugs.
+---
 
-### Shift from previous run (Aug 12 → Aug 19)
+## Finding Consensus Matrix
 
-| Metric | gpt-oss-120b | glm5.2 | mistral-small-4-119b |
-|--------|-------------|--------|----------------------|
-| Findings (prev) | 18 | 12 | 15 |
-| Findings (now) | 13 | 18 | 8 |
-| CRITICAL (prev) | 4 | 1 | 1 |
-| CRITICAL (now) | 2 | 2 | 1 |
-| Words (prev) | 936 | 2,350 | 1,993 |
-| Words (now) | 855 | 3,069 | 1,527 |
-| Verdict (prev) | FAIL | FAIL | FAIL |
-| Verdict (now) | FAIL | FAIL | FAIL |
+Every finding from all three reviews, mapped to the underlying issue. ✓ = found, ✗ = missed. Severity shown in parentheses.
 
-The interview corpus expansion (6 → 67 sources) and the wiring of interview data
-into the skill pipeline affected the three models differently:
+### chatlib.c
 
-- **glm5.2 grew**: 12 → 18 findings, 1 → 2 CRITICAL. The expanded interview data
-  gave the reasoning model more material to work with. It now finds both
-  `acceptClient(-1)` memory corruption AND the missing fd bounds check — two
-  distinct CRITICAL bugs on the accept path. Word count grew from 2,350 to 3,069.
+| # | Issue | gpt-oss | glm5.2 | mistral | Consensus |
+|---|-------|:-------:|:------:|:-------:|:---------:|
+| 1 | Allocators abort the process on out-of-memory | ✗ | ✓ (HIGH) | ✗ | glm5.2 only |
+| 2 | TCPConnect leaks addrinfo on non-blocking connect ... | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
 
-- **gpt-oss tightened**: 18 → 13 findings, 4 → 2 CRITICAL. The previous run
-  double-counted the chatMalloc OOM bug across two files; the new run reports
-  each bug once. The two remaining CRITICALs (assert misuse, setRawMode) are
-  both real. Precision improved.
+### chatlib.h
 
-- **mistral narrowed**: 15 → 8 findings. The previous run's 9 HIGH count was
-  inflated by repeating the "ignored error return" pattern across call sites.
-  The new run is more selective but still finds the real bugs. It is the only
-  model that flags the `/nick` embedded-null-byte memory safety issue.
+| # | Issue | gpt-oss | glm5.2 | mistral | Consensus |
+|---|-------|:-------:|:------:|:-------:|:---------:|
+| 3 | Header not self-contained — `size_t` used without ... | ✓ (MEDIUM) | ✓ (MEDIUM) | ✗ | 2/3 |
+| 4 | `TCPConnect` parameter `addr` should be `const cha... | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
+| 5 | `nonblock` boolean flag should be a discriminated ... | ✗ | ✓ (LOW) | ✗ | glm5.2 only |
+| 6 | Inconsistent naming convention across the API surf... | ✗ | ✓ (LOW) | ✗ | glm5.2 only |
+| 7 | Style Issues | ✗ | ✗ | ✓ (LOW) | mistral only |
 
-## Consensus findings
+### smallchat-client.c
 
-All three models agree on the core failure: the code has real bugs that must be
-fixed before merge. Five findings are shared by at least two models:
+| # | Issue | gpt-oss | glm5.2 | mistral | Consensus |
+|---|-------|:-------:|:------:|:-------:|:---------:|
+| 8 | select() exits on EINTR instead of retrying | ✗ | ✓ (HIGH) | ✗ | glm5.2 only |
+| 9 | stdin read() return value unchecked; EOF causes bu... | ✗ | ✓ (HIGH) | ✗ | glm5.2 only |
+| 10 | setRawMode() return value ignored | ✓ (MEDIUM) | ✓ (MEDIUM) | ✗ | 2/3 |
+| 11 | write() to server socket unchecked; user messages ... | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
+| 12 | Dead code after infinite loop | ✗ | ✓ (LOW) | ✓ (LOW) | 2/3 |
+| 13 | Misleading comment contradicts the code | ✗ | ✓ (LOW) | ✓ (MEDIUM) | 2/3 |
+| 14 | errno overwritten with ENOTTY regardless of actual... | ✗ | ✓ (LOW) | ✗ | glm5.2 only |
+| 15 | Missing error handling for write calls | ✓ (MEDIUM) | ✗ | ✗ | gpt-oss only |
+| 16 | Magic Constants and Hardcoded Values | ✗ | ✗ | ✓ (HIGH) | mistral only |
+| 17 | Special Case Handling in inputBufferFeedChar | ✗ | ✗ | ✓ (HIGH) | mistral only |
+| 18 | Fragile Functions Without Input Validation | ✗ | ✗ | ✓ (MEDIUM) | mistral only |
+| 19 | Inconsistent Error Handling | ✗ | ✗ | ✓ (MEDIUM) | mistral only |
+| 20 | Misleading Comments | ✗ | ✗ | ✓ (LOW) | mistral only |
 
-1. **`assert` used for runtime validation** (gpt-oss CRITICAL, glm5.2 HIGH) —
-   `assert(Chat->clients[c->fd] == NULL)` at server.c:85 aborts the server on a
-   recoverable condition. Under `-DNDEBUG` the check vanishes entirely, silently
-   corrupting. gpt-oss rates this CRITICAL; glm5.2 rates it HIGH but notes the
-   debug-crashes/release-corrupts dual failure mode.
+### smallchat-server.c
 
-2. **`write()` return values ignored** (gpt-oss HIGH, glm5.2 HIGH) — every
-   `write()` to a client socket discards the return. Partial writes silently
-   truncate messages; failed writes (EPIPE, ECONNRESET) leave dead clients
-   uncleaned. Both models flag this across server.c:143, 194, 248.
+| # | Issue | gpt-oss | glm5.2 | mistral | Consensus |
+|---|-------|:-------:|:------:|:-------:|:---------:|
+| 21 | No bounds check on file descriptor before array ac... | ✓ (CRITICAL) | ✓ (CRITICAL) | ✗ | 2/3 |
+| 22 | assert() used for runtime condition — disappears i... | ✓ (HIGH) | ✓ (CRITICAL) | ✗ | 2/3 |
+| 23 | read() treats EAGAIN as disconnection on non-block... | ✓ (HIGH) | ✓ (HIGH) | ✗ | 2/3 |
+| 24 | select() error causes server exit — EINTR is recov... | ✗ | ✓ (HIGH) | ✗ | glm5.2 only |
+| 25 | socketSetNonBlockNoDelay return value ignored — se... | ✓ (HIGH) | ✓ (HIGH) | ✗ | 2/3 |
+| 26 | select()/FD_SET vulnerable to FD_SETSIZE overflow | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
+| 27 | write() return values ignored — messages silently ... | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
+| 28 | Misleading comment on MAX_CLIENTS | ✓ (MEDIUM) | ✓ (MEDIUM) | ✗ | 2/3 |
+| 29 | maxclient recalculation is a special case created ... | ✗ | ✓ (LOW) | ✗ | glm5.2 only |
+| 30 | Missing NUL-termination of generated nickname | ✓ (HIGH) | ✗ | ✗ | gpt-oss only |
+| 31 | No validation of user-provided nickname length | ✓ (HIGH) | ✗ | ✗ | gpt-oss only |
+| 32 | Potential out-of-bounds access of `Chat->clients` ... | ✓ (HIGH) | ✗ | ✗ | gpt-oss only |
 
-3. **`setRawMode` terminal state not restored on error** (gpt-oss CRITICAL,
-   mistral HIGH) — `atexit_registered` is set before `tcgetattr` succeeds, so
-   cleanup tries to restore a terminal state that was never saved. gpt-oss
-   rates this CRITICAL; mistral rates it HIGH and provides a full cleanup-handler
-   fix.
+### unspecified
 
-4. **`chatMalloc`/`chatRealloc` exit on OOM** (gpt-oss HIGH, glm5.2 MEDIUM) —
-   `exit(1)` on out-of-memory takes down every connected client for a single
-   failed allocation. gpt-oss rates it HIGH; glm5.2 rates it MEDIUM and calls
-   the "recovery is futile" comment "an excuse, not a justification."
+| # | Issue | gpt-oss | glm5.2 | mistral | Consensus |
+|---|-------|:-------:|:------:|:-------:|:---------:|
+| 33 | Missing header dependency: `chatlib.h` not tracked... | ✓ (CRITICAL) | ✓ (HIGH) | ✗ | 2/3 |
+| 34 | Phony targets `all` and `clean` not declared with ... | ✓ (LOW) | ✓ (MEDIUM) | ✗ | 2/3 |
+| 35 | No allocation-failure checks for `chatMalloc` | ✓ (HIGH) | ✗ | ✗ | gpt-oss only |
 
-5. **`MAX_CLIENTS` hard-coded limit** (gpt-oss HIGH, glm5.2 MEDIUM) — the
-   constant caps the server at 1000 clients with no runtime configuration.
-   glm5.2 additionally notes the name is misleading: it's used as an array size
-   indexed by fd, not a client count.
+---
 
-### Bugs only glm5.2 found
+## Severity Disagreement Table
 
-glm5.2 remains the sole model that found the most consequential bug:
+Cases where 2+ models found the same issue but assigned different severities:
 
-1. **`acceptClient()` return unchecked → `createClient(-1)`** (CRITICAL) —
-   `accept()` failure passes `-1` to `createClient`, which writes to
-   `Chat->clients[-1]` — out-of-bounds memory corruption. Triggered by EMFILE,
-   ECONNABORTED, or any transient accept failure under load.
+| Issue | gpt-oss | glm5.2 | mistral |
+|-------|:-------:|:------:|:-------:|
+| Misleading comment contradicts the code | — | LOW | MEDIUM |
+| assert() used for runtime condition — di... | HIGH | CRITICAL | — |
+| Missing header dependency: `chatlib.h` n... | CRITICAL | HIGH | — |
+| Phony targets `all` and `clean` not decl... | LOW | MEDIUM | — |
 
-2. **No bounds check on fd before array indexing** (CRITICAL) — `createClient()`
-   uses `c->fd` as an index into `Chat->clients[MAX_CLIENTS]` without checking
-   `c->fd < MAX_CLIENTS`. Any fd >= 1000 corrupts memory.
+---
 
-glm5.2 also found three bugs no other model caught:
+## Trigger Coverage Comparison
 
-3. **Non-blocking read treated as disconnect on EAGAIN/EINTR** (HIGH) — client
-   sockets are non-blocking, but `read() <= 0` is treated as "disconnected."
-   EAGAIN and EINTR are recoverable; the code drops healthy clients.
+Which skill triggers fired in each review:
 
-4. **Memory leak on EINPROGRESS path in `TCPConnect`** (HIGH) —
-   `freeaddrinfo(servinfo)` is skipped when `connect()` returns EINPROGRESS with
-   `nonblock` set. Every non-blocking connect leaks a `struct addrinfo` chain.
+| Trigger theme | gpt-oss | glm5.2 | mistral |
+|---------------|:-------:|:------:|:-------:|
+| "Code is binary — it works or ... | ✗ | ✓ (1) | ✗ |
+| 7.2 | ✓ (2) | ✗ | ✗ |
+| Code contains a conditional br... | ✗ | ✓ (1) | ✗ |
+| Code either works or it doesn'... | ✗ | ✓ (1) | ✗ |
+| Comment that does not match th... | ✗ | ✓ (2) | ✗ |
+| Dead or unused code paths reta... | ✗ | ✓ (1) | ✗ |
+| Enforce consistent naming, ind... | ✗ | ✓ (1) | ✗ |
+| Error handling path that masks... | ✗ | ✓ (1) | ✗ |
+| Error handling path that masks... | ✗ | ✓ (1) | ✗ |
+| Error handling that aborts or ... | ✗ | ✓ (3) | ✗ |
+| Error or diagnostic message th... | ✗ | ✓ (1) | ✗ |
+| Every allocated resource must ... | ✗ | ✓ (1) | ✗ |
+| Fatal assertion or crash used ... | ✗ | ✓ (1) | ✗ |
+| Fatal assertion or crash used ... | ✗ | ✓ (1) | ✗ |
+| Function returns a value that ... | ✗ | ✓ (2) | ✗ |
+| Internal implementation detail... | ✗ | ✓ (1) | ✗ |
+| Prefer discriminated types ove... | ✗ | ✓ (1) | ✗ |
+| Shared mutable data accessed w... | ✗ | ✓ (1) | ✗ |
+| Silent error swallowing (anti-... | ✗ | ✓ (2) | ✗ |
+| Silent error swallowing (anti-... | ✗ | ✓ (1) | ✗ |
+| Trigger 1.3 – hard-coded magic... | ✓ (2) | ✗ | ✗ |
+| Trigger 2.2 | ✓ (1) | ✗ | ✗ |
+| Trigger 7.2 – operation withou... | ✓ (6) | ✗ | ✗ |
+| Trigger 7.4 – fatal assertions... | ✓ (1) | ✗ | ✗ |
+| non‑file targets without .PHON... | ✓ (1) | ✗ | ✗ |
+| unnecessary duplicate compiler... | ✓ (1) | ✗ | ✗ |
 
-5. **`chatRealloc` exported but never called** (MEDIUM) — defined in chatlib.c,
-   declared in chatlib.h, zero callers. Unused public export.
+---
 
-### Bugs only gpt-oss found
+## With-Skill vs Baseline Comparison
 
-gpt-oss found two issues neither other model flagged:
+For each model, comparing findings with the skill vs without (baseline):
 
-1. **`socketSetNonBlockNoDelay` return ignored** (HIGH) — server.c:81 calls it
-   with "Pretend this will not fail." The socket may remain in blocking mode on
-   error.
+| Model | Baseline Total | With-Skill Total | Baseline CRITICAL | With-Skill CRITICAL | Critical Overlap | Skill-Only CRITICAL | Baseline-Only CRITICAL | Skill Added Value |
+|-------|----------------|------------------|-------------------|---------------------|------------------|---------------------|------------------------|-------------------|
+| gpt-oss-120b | 0 | 14 | 0 | 2 | 0 | 1 | 0 | yes (+1 net critical: 1 found, 0 lost) |
+| glm5.2 | 25 | 24 | 2 | 2 | 1 | 0 | 1 | no (-1 net critical: 0 found, 1 lost) |
+| mistral | 21 | 8 | 1 | 0 | 0 | 0 | 1 | no (-1 net critical: 0 found, 1 lost) |
 
-2. **`IB_MAX` hard-coded input buffer limit** (HIGH) — client.c:118 limits line
-   length to 128 bytes; longer input is silently dropped.
+---
 
-### Bugs only mistral found
+## Qualitative Analysis
 
-Mistral found one bug neither other model flagged:
+### Consensus-Based Accuracy
 
-1. **`/nick` memory safety with embedded null bytes** (CRITICAL) —
-   `strlen(arg)` truncates at the first null byte, but `memcpy(c->nick, arg,
-   nicklen+1)` copies past it. If `arg` contains embedded nulls, `nicklen` is
-   shorter than the actual allocation, and the copy reads uninitialized heap
-   memory. gpt-oss and glm5.2 both flag `/nick` for unbounded length (both LOW);
-   only mistral identifies the null-byte memory safety issue.
+Findings confirmed by 2+ models are treated as real bugs. Findings reported by only one model are unverified (could be real or false positive).
 
-Mistral also raised two process-level findings the other models missed:
+| Model | Total Findings | Confirmed (2+ models) | Unverified (1 model only) | Consensus Rate |
+|-------|:--------------:|:---------------------:|:--------------------------:|:--------------:|
+| gpt-oss-120b | 14 | 9 | 5 | 64% |
+| glm5.2 | 24 | 11 | 13 | 46% |
+| mistral | 8 | 2 | 6 | 25% |
 
-2. **Missing error documentation in `chatlib.h`** (MEDIUM) — no function-level
-   docs force every caller to rediscover error handling patterns.
+### Severity Calibration
 
-3. **Missing `test` target in Makefile** (LOW) — no automated verification.
+Cases where 2+ models found the same issue but assigned different severities:
 
-## Skill quality observations
+| Issue | gpt-oss | glm5.2 | mistral |
+|-------|:-------:|:------:|:-------:|
+| Misleading comment contradicts the code | — | LOW | MEDIUM |
+| assert() used for runtime condition — di... | HIGH | CRITICAL | — |
+| Missing header dependency: `chatlib.h` n... | CRITICAL | HIGH | — |
+| Phony targets `all` and `clean` not decl... | LOW | MEDIUM | — |
 
-### Trigger labeling
+Total severity disagreements: 4. Lower is better — it means the model's severity assessment aligns with the consensus.
 
-glm5.2's trigger labeling remains the most precise — every finding maps to a
-named trigger with type labels (invariant-false, invariant-true, guideline).
-gpt-oss labels triggers by name without the type annotation. Mistral uses
-numbered triggers (#21, #3, #20) referencing the skill's trigger catalog — a
-different but valid approach.
+### Unique Findings (Single-Model Discoveries)
 
-### Voice and tone
+Findings reported by only one model. These represent either unique insight or false positives:
 
-glm5.2 has the strongest Torvalds voice: "You don't crash a server because
-accept() failed. You log it and you move on." and "There is *no* excuse for
-killing the server for something like this." Direct, technical, profane where
-warranted. gpt-oss is measured but forceful. Mistral's voice is the weakest —
-correct in structure but reads more like a checklist than a review, with a
-generic closing quote attributed to Torvalds rather than an original voice.
+| Model | Unique Findings |
+|-------|:--------------:|
+| gpt-oss-120b | 5 |
+| glm5.2 | 13 |
+| mistral | 6 |
 
-### Coverage vs. precision tradeoff
+A high unique count with a low consensus rate suggests false positives. A high unique count with a high consensus rate suggests the model found real bugs others missed.
 
-- **glm5.2**: 18 findings, 2 CRITICAL, 5 HIGH. Found both accept-path memory
-  corruption bugs that no other model found. Highest precision — every finding
-  maps to a specific code location with a concrete fix and code example. 3,069
-  words — thorough but not bloated. The clear standout for bug-finding.
+### With-Skill vs Baseline: Skill Impact
 
-- **gpt-oss-120b**: 13 findings, 2 CRITICAL, 8 HIGH. Widest HIGH coverage —
-  flags socketSetNonBlockNoDelay and IB_MAX that glm5.2 misses. 855 words —
-  the most concise. No code examples in the findings, which limits
-  actionability compared to glm5.2.
+How the skill changed each model's review:
 
-- **mistral**: 8 findings, 1 CRITICAL, 2 HIGH. Most selective — only flags
-  what it considers the highest-impact issues. Found the /nick null-byte bug
-  no other model caught. 1,527 words. The model is functional as a reviewer
-  but should not be used solo (it missed acceptClient(-1) and the fd bounds
-  check).
+**gpt-oss-120b:** Baseline 0 findings (0 CRITICAL) → With-skill 14 findings (2 CRITICAL). Skill found 1 critical bug(s) the baseline missed; baseline found 0 critical bug(s) the skill missed.
 
-## Recommendation
+**glm5.2:** Baseline 25 findings (2 CRITICAL) → With-skill 24 findings (2 CRITICAL). Skill found 0 critical bug(s) the baseline missed; baseline found 1 critical bug(s) the skill missed.
 
-For a codebase of this size (<1000 LOC), glm5.2 remains the strongest
-single-model reviewer. It found both CRITICAL memory-safety bugs on the accept
-path that no other model found, maintained the strongest Torvalds voice, and
-produced the most precise trigger labeling with concrete code fixes.
+**mistral:** Baseline 21 findings (1 CRITICAL) → With-skill 8 findings (0 CRITICAL). Skill found 0 critical bug(s) the baseline missed; baseline found 1 critical bug(s) the skill missed.
 
-For production review, run at least two models and union the findings. gpt-oss
-catches socketSetNonBlockNoDelay and IB_MAX that glm5.2 skips; glm5.2 catches
-acceptClient(-1) and the fd bounds check that gpt-oss misses. Together they
-cover more ground than either alone.
+#### Skill Tradeoff Analysis
 
-Mistral is functional as a reviewer — it produces real findings and correctly
-fails the code. It should not be used as a sole reviewer (it missed both
-accept-path CRITICALs), but it catches the /nick null-byte issue that both other
-models miss. As a third model in a union, it adds value.
+The skill narrows reviewer focus toward memory-safety and correctness (Linus's priorities). This filters noise but can also suppress valid findings. Net critical impact per model:
+
+| Model | Skill-Only CRITICAL | Baseline-Only CRITICAL | Net Critical Impact | Total Finding Delta |
+|-------|:-------------------:|:----------------------:|:-------------------:|:-------------------:|
+| gpt-oss-120b | 1 | 0 | +1 | +14 |
+| glm5.2 | 0 | 1 | -1 | -1 |
+| mistral | 0 | 1 | -1 | -13 |
+
+**Interpretation:** A positive net critical impact means the skill found real bugs the baseline missed. A negative value means the skill suppressed critical findings the baseline caught — a coverage gap. A large negative total finding delta with neutral critical impact means the skill filtered noise without losing signal.
+
+**Per-model read:**
+- **gpt-oss-120b:** Clear win. Baseline found nothing; skill added 1 critical bug(s). The skill unlocked review capability this model didn't have without it.
+- **glm5.2:** Net negative on critical coverage. The skill cut 1 findings and suppressed 1 critical(s) the baseline caught, while only adding 0 new critical. The skill narrowed focus too aggressively — the 1 lost critical(s) are a real coverage gap worth investigating.
+- **mistral:** Net negative on critical coverage. The skill cut 13 findings and suppressed 1 critical(s) the baseline caught, while only adding 0 new critical. The skill narrowed focus too aggressively — the 1 lost critical(s) are a real coverage gap worth investigating.
+
+### Trigger Coverage Analysis
+
+Which skill triggers each model fired:
+
+**gpt-oss-120b:** 7 distinct triggers fired, 14 total trigger firings.
+  Top triggers: Trigger 7.2 – operation without first checking that the target object is in a permissible state (6x), Trigger 1.3 – hard-coded magic numbers, fixed physical addresses, or platform-specific constants (2x), 7.2 (2x)
+
+**glm5.2:** 19 distinct triggers fired, 24 total trigger firings.
+  Top triggers: Error handling that aborts or traps on a recoverable condition instead of returning an error (3x), Comment that does not match the code's actual behavior (2x), Silent error swallowing (anti-pattern) (2x)
+
+**mistral:** 0 distinct triggers fired, 0 total trigger firings.
+
+### Verdict
+
+Based on consensus-confirmed findings, net critical impact (skill-only minus baseline-only), and severity calibration:
+
+| Model | Confirmed | Skill-Only CRITICAL | Baseline-Only CRITICAL | Net Critical | Severity Disagreements | Score |
+|-------|:---------:|:-------------------:|:----------------------:|:-------------:|:----------------------:|:-----:|
+| gpt-oss-120b | 9 | 1 | 0 | +1 | 3 | 7 |
+| glm5.2 | 11 | 0 | 1 | -1 | 4 | 6 |
+| mistral | 2 | 0 | 1 | -1 | 1 | 0 |
+
+**Scoring:** `confirmed + skill_only_critical - baseline_only_critical - severity_disagreements`. The baseline-only penalty makes coverage gaps visible: a model that suppresses real bugs the baseline caught scores lower, even if it found other bugs the baseline missed.
+
+**Honest read:** 
+gpt-oss-120b wins clearly with score 7. 
+glm5.2 follows at 6.
+ The skill helps differently per model — see the per-model read above for the tradeoff details.
