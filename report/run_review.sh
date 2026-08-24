@@ -6,10 +6,10 @@
 #     review-gpt-oss-120b.md
 #     review-glm5.2.md
 #     review-mistral.md
-#   Baseline reviews (no skill/soul):
-#     review-baseline-gpt-oss-120b.md
-#     review-baseline-glm5.2.md
-#     review-baseline-mistral.md
+#   Baseline reviews (no skill) in report/baseline/:
+#     baseline/review-baseline-gpt-oss-120b.md
+#     baseline/review-baseline-glm5.2.md
+#     baseline/review-baseline-mistral.md
 #
 # Crash-proof features:
 #   - Skips reviews whose output already exists (use --force to override)
@@ -23,7 +23,11 @@
 #   - opencode agent CLI available as `opencode` on PATH
 #   - smallchat cloned to /tmp/smallchat (this script does it if missing)
 #   - skill files present at linus-torvalds-skill/SKILL.md, SKILL-GLM.md, SKILL-Mistral.md
-#   - soul files present at soul/soul.md, soul-glm.md, soul-mistral.md
+#
+# Environment variables:
+#   CHUNKED_MODELS — comma-separated list of models to use chunked pipeline
+#                    (e.g., "gpt-oss-120b,glm5.2"). Default: all models use chunked.
+
 #
 # Run from the repository root:
 #   bash report/run_review.sh              # skip existing, run missing
@@ -35,8 +39,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="/tmp/smallchat"
 REPORT_DIR="$ROOT/report"
 SKILL_DIR="$ROOT/linus-torvalds-skill"
-SOUL_DIR="$ROOT/soul"
+BASELINE_DIR="$REPORT_DIR/baseline"
 
+CHUNKED_MODELS="${CHUNKED_MODELS:-}"
 FORCE=0
 CLEAN_LOGS=0
 for arg in "$@"; do
@@ -53,6 +58,7 @@ if [ "$CLEAN_LOGS" -eq 1 ]; then
 fi
 
 mkdir -p "$REPORT_DIR"
+mkdir -p "$BASELINE_DIR"
 
 # 1. Ensure the target codebase is present.
 if [ ! -d "$TARGET" ]; then
@@ -328,7 +334,7 @@ merge_chunks() {
 
   # Write final file: summary body + findings section
   {
-    printf '%b' "$summary_body"
+    printf '%s' "$summary_body"
     printf '\n## Findings\n\n'
     for src in "${SOURCE_FILES[@]}"; do
       local chunk="$chunk_dir/${src}.md"
@@ -363,7 +369,7 @@ run_review_chunked() {
   fi
 
   # Handle interrupted merge: final file exists but chunks dir also exists
-  if [ -s "$out_file" ] && [ -d "$REPORT_DIR/chunks/$model_label" ]; then
+  if [ "$FORCE" -eq 0 ] && [ -s "$out_file" ] && [ -d "$REPORT_DIR/chunks/$model_label" ]; then
     echo "[$(date +%H:%M:%S)] $model_label: stale chunks dir found, cleaning up"
     rm -rf "$REPORT_DIR/chunks/$model_label"
     return 0
@@ -372,10 +378,10 @@ run_review_chunked() {
   local chunk_dir="$REPORT_DIR/chunks/$model_label"
   mkdir -p "$chunk_dir"
 
-  # Timeout per chunk: 900s for GLM5.2, 600s for others
+  # Timeout per chunk: 2400s for GLM5.2 (8K-word skill + reasoning latency), 600s for others
   local chunk_timeout=600
   if [ "$model_label" = "glm5.2" ]; then
-    chunk_timeout=900
+    chunk_timeout=2400
   fi
 
   # Check if chunks dir exists (resume from interrupted run)
@@ -442,15 +448,16 @@ run_review() {
 
   echo "[$(date +%H:%M:%S)] Starting $model_label review -> $(basename "$out_file") (timeout ${timeout_sec}s)"
 
+  local start_ts
+  start_ts=$(date +%s)
+
   local attempt
+  local exit_code=0
   for attempt in 1 2; do
     if [ "$attempt" -gt 1 ]; then
       echo "[$(date +%H:%M:%S)] $model_label review: retrying (attempt 2)"
       rm -f "$out_file"
     fi
-
-    local start_ts
-    start_ts=$(date +%s)
 
     if timeout "${timeout_sec}" opencode run -m "regolo-ai/$model_label" "$prompt" > "$REPORT_DIR/review-$model_label.log" 2>&1; then
       # Extract report from log if agent didn't write the file itself.
@@ -459,12 +466,17 @@ run_review() {
       fi
 
       if [ -s "$out_file" ]; then
+        local end_ts
+        end_ts=$(date +%s)
+        local duration=$((end_ts - start_ts))
         echo "[$(date +%H:%M:%S)] $model_label review done: $(wc -w < "$out_file") words"
+        log_metrics "$model_label" "with-skill" "$out_file" "$duration" 0 "" "false"
         return 0
       fi
       echo "[$(date +%H:%M:%S)] $model_label review: opencode exited OK but output empty" >&2
+      exit_code=1
     else
-      local exit_code=$?
+      exit_code=$?
       if [ "$exit_code" -eq 124 ]; then
         echo "[$(date +%H:%M:%S)] $model_label review TIMED OUT after ${timeout_sec}s" >&2
       else
@@ -473,11 +485,15 @@ run_review() {
     fi
   done
 
+  local end_ts
+  end_ts=$(date +%s)
+  local duration=$((end_ts - start_ts))
+  log_metrics "$model_label" "with-skill" "$out_file" "$duration" "$exit_code" "" "false"
   echo "[$(date +%H:%M:%S)] $model_label review FAILED after 2 attempts" >&2
   return 1
 }
 
-# Baseline review prompt (no skill/soul). Neutral code reviewer.
+# Baseline review prompt (no skill). Neutral code reviewer.
 baseline_prompt() {
   local out_file="$1"
   cat <<EOF
@@ -539,29 +555,35 @@ run_baseline_review() {
 
   echo "[$(date +%H:%M:%S)] Starting baseline $model_label review -> $(basename "$out_file") (timeout ${timeout_sec}s)"
 
+  local start_ts
+  start_ts=$(date +%s)
+
   local attempt
+  local exit_code=0
   for attempt in 1 2; do
     if [ "$attempt" -gt 1 ]; then
       echo "[$(date +%H:%M:%S)] baseline $model_label review: retrying (attempt 2)"
       rm -f "$out_file"
     fi
 
-    local start_ts
-    start_ts=$(date +%s)
-
-    if timeout "${timeout_sec}" opencode run -m "regolo-ai/$model_label" "$prompt" > "$REPORT_DIR/review-baseline-$model_label.log" 2>&1; then
+    if timeout "${timeout_sec}" opencode run -m "regolo-ai/$model_label" "$prompt" > "$BASELINE_DIR/review-baseline-$model_label.log" 2>&1; then
       # Extract report from log if agent didn't write the file.
       if [ ! -s "$out_file" ] || [ "$(stat -c %Y "$out_file" 2>/dev/null || echo 0)" -lt "$start_ts" ]; then
-        awk '/^---$/{found=1} found{print}' "$REPORT_DIR/review-baseline-$model_label.log" > "$out_file"
+        awk '/^---$/{found=1} found{print}' "$BASELINE_DIR/review-baseline-$model_label.log" > "$out_file"
       fi
 
       if [ -s "$out_file" ]; then
+        local end_ts
+        end_ts=$(date +%s)
+        local duration=$((end_ts - start_ts))
         echo "[$(date +%H:%M:%S)] baseline $model_label review done: $(wc -w < "$out_file") words"
+        log_metrics "$model_label" "baseline" "$out_file" "$duration" 0 "" "false"
         return 0
       fi
       echo "[$(date +%H:%M:%S)] baseline $model_label review: opencode exited OK but output empty" >&2
+      exit_code=1
     else
-      local exit_code=$?
+      exit_code=$?
       if [ "$exit_code" -eq 124 ]; then
         echo "[$(date +%H:%M:%S)] baseline $model_label review TIMED OUT after ${timeout_sec}s" >&2
       else
@@ -570,30 +592,92 @@ run_baseline_review() {
     fi
   done
 
+  local end_ts
+  end_ts=$(date +%s)
+  local duration=$((end_ts - start_ts))
+  log_metrics "$model_label" "baseline" "$out_file" "$duration" "$exit_code" "" "false"
   echo "[$(date +%H:%M:%S)] baseline $model_label review FAILED after 2 attempts" >&2
   return 1
 }
 
 export -f review_prompt run_review baseline_prompt run_baseline_review run_chunk_review run_summary_review merge_chunks run_review_chunked
 
+# Validate review format after generation
+validate_review_format() {
+  local file="$1"
+  local model="$2"
+  if [ ! -s "$file" ]; then
+    echo "[$(date +%H:%M:%S)] $model: review file empty" >&2
+    return 1
+  fi
+  if ! grep -qE '^#{2,4}\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]' "$file"; then
+    if ! grep -qi "no findings" "$file"; then
+      echo "[$(date +%H:%M:%S)] $model: no valid severity headings found" >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# Log metrics to metrics.jsonl after each review
+log_metrics() {
+  local model="$1"
+  local review_type="$2"
+  local out_file="$3"
+  local duration_sec="$4"
+  local exit_code="$5"
+  local chunk="$6"
+  local chunked="$7"
+
+  local ts
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  local word_count=0
+  local findings_count=0
+
+  if [ -s "$out_file" ]; then
+    word_count=$(wc -w < "$out_file")
+    findings_count=$(grep -cE '^#{2,4}\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]' "$out_file" || true)
+  fi
+
+  local chunk_json="null"
+  if [ -n "$chunk" ]; then
+    chunk_json="\"$chunk\""
+  fi
+
+  printf '{"ts":"%s","model":"%s","type":"%s","chunk":%s,"duration_sec":%d,"exit_code":%d,"word_count":%d,"findings_count":%d,"chunked":%s}\n' \
+    "$ts" "$model" "$review_type" "$chunk_json" "$duration_sec" "$exit_code" "$word_count" "$findings_count" "$chunked" >> "$REPORT_DIR/metrics.jsonl"
+}
+
 # 5. Dispatch all six reviews concurrently (3 with-skill + 3 baseline).
 echo "Dispatching six parallel reviews (3 with-skill, 3 baseline)..."
 echo "  Force mode: $FORCE (0=skip existing, 1=regenerate all)"
 echo ""
 
-# With-skill reviews
-run_review_chunked "gpt-oss-120b" "$SKILL_DIR/SKILL.md" "$REPORT_DIR/review-gpt-oss-120b.md" &
+# With-skill reviews — use chunked if model is in CHUNKED_MODELS
+if [[ ",${CHUNKED_MODELS}," == *",gpt-oss-120b,"* ]]; then
+  run_review_chunked "gpt-oss-120b" "$SKILL_DIR/SKILL.md" "$REPORT_DIR/review-gpt-oss-120b.md" &
+else
+  run_review "gpt-oss-120b" "$SKILL_DIR/SKILL.md" "$REPORT_DIR/review-gpt-oss-120b.md" &
+fi
 PID_GPT=$!
-run_review_chunked "glm5.2" "$SKILL_DIR/SKILL-GLM.md" "$REPORT_DIR/review-glm5.2.md" &
+if [[ ",${CHUNKED_MODELS}," == *",glm5.2,"* ]]; then
+  run_review_chunked "glm5.2" "$SKILL_DIR/SKILL-GLM.md" "$REPORT_DIR/review-glm5.2.md" &
+else
+  run_review "glm5.2" "$SKILL_DIR/SKILL-GLM.md" "$REPORT_DIR/review-glm5.2.md" &
+fi
 PID_GLM=$!
-run_review_chunked "mistral-small-4-119b" "$SKILL_DIR/SKILL-Mistral.md" "$REPORT_DIR/review-mistral.md" &
+if [[ ",${CHUNKED_MODELS}," == *",mistral-small-4-119b,"* ]]; then
+  run_review_chunked "mistral-small-4-119b" "$SKILL_DIR/SKILL-Mistral.md" "$REPORT_DIR/review-mistral.md" &
+else
+  run_review "mistral-small-4-119b" "$SKILL_DIR/SKILL-Mistral.md" "$REPORT_DIR/review-mistral.md" &
+fi
 PID_MIS=$!
-# Baseline reviews (no skill/soul)
-run_baseline_review "gpt-oss-120b" "$REPORT_DIR/review-baseline-gpt-oss-120b.md" &
+# Baseline reviews (no skill)
+run_baseline_review "gpt-oss-120b" "$BASELINE_DIR/review-baseline-gpt-oss-120b.md" &
 PID_GPT_BASE=$!
-run_baseline_review "glm5.2" "$REPORT_DIR/review-baseline-glm5.2.md" &
+run_baseline_review "glm5.2" "$BASELINE_DIR/review-baseline-glm5.2.md" &
 PID_GLM_BASE=$!
-run_baseline_review "mistral-small-4-119b" "$REPORT_DIR/review-baseline-mistral.md" &
+run_baseline_review "mistral-small-4-119b" "$BASELINE_DIR/review-baseline-mistral.md" &
 PID_MIS_BASE=$!
 
 # 6. Wait for all six. Collect failures independently.
@@ -616,8 +700,8 @@ for f in "$REPORT_DIR"/review-{gpt-oss-120b,glm5.2,mistral}.md; do
     printf '  %-40s MISSING\n' "$(basename "$f")"
   fi
 done
-echo "Baseline reviews (no skill/soul):"
-for f in "$REPORT_DIR"/review-baseline-{gpt-oss-120b,glm5.2,mistral}.md; do
+echo "Baseline reviews (no skill):"
+for f in "$BASELINE_DIR"/review-baseline-{gpt-oss-120b,glm5.2,mistral}.md; do
   if [ -f "$f" ] && [ -s "$f" ]; then
     printf '  %-40s %s words\n' "$(basename "$f")" "$(wc -w < "$f")"
   else
@@ -638,20 +722,8 @@ if [ "$FAILURES" -le 1 ]; then
     echo "[$(date +%H:%M:%S)] WARNING: comparison generation failed" >&2
   fi
 
-  # Baseline reviews are intermediate artifacts. Remove them now that
-  # the comparison has been generated. build_comparison.py tolerates their
-  # absence on future runs (shows "N/A" for baseline stats).
-  echo ""
-  echo "[$(date +%H:%M:%S)] Cleaning up intermediate baseline review files..."
-  for f in "$REPORT_DIR"/review-baseline-{gpt-oss-120b,glm5.2,mistral}.md; do
-    if [ -f "$f" ]; then
-      rm -f "$f"
-      echo "  removed $(basename "$f")"
-    fi
-  done
-  for f in "$REPORT_DIR"/review-baseline-{gpt-oss-120b,glm5.2,mistral}.log; do
-    [ -f "$f" ] && rm -f "$f"
-  done
+  # Baseline reviews are preserved in report/baseline/ for future runs.
+  # build_comparison.py tolerates their absence (shows "N/A" for baseline stats).
 
   echo ""
   echo "Done. Final artifacts:"

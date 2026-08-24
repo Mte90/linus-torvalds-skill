@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Distill Linus Torvalds' review method from LKML into a reusable skill"
 requires-python = ">=3.11"
 license = "CC0-1.0"
-dependencies = []
+dependencies = [
+    "aiohttp>=3.9.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest"]

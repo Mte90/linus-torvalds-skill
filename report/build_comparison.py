@@ -21,9 +21,9 @@ from pathlib import Path
 
 # Models and their review files
 MODELS = [
-    ("gpt-oss-120b", "review-gpt-oss-120b.md", "review-baseline-gpt-oss-120b.md"),
-    ("glm5.2", "review-glm5.2.md", "review-baseline-glm5.2.md"),
-    ("mistral", "review-mistral.md", "review-baseline-mistral.md"),
+    ("gpt-oss-120b", "review-gpt-oss-120b.md", "baseline/review-baseline-gpt-oss-120b.md"),
+    ("glm5.2", "review-glm5.2.md", "baseline/review-baseline-glm5.2.md"),
+    ("mistral", "review-mistral.md", "baseline/review-baseline-mistral.md"),
 ]
 
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
@@ -85,126 +85,23 @@ class Finding:
         return f"Finding({self.severity}, {self.title[:40]}..., {self.location})"
 
 
-def parse_gpt_oss_review(content: str) -> list[Finding]:
-    """Parse gpt-oss-120b review format (#### [SEVERITY] Title)."""
-    findings = []
-    lines = content.split("\n")
-
-    current_severity = None
-    current_title = None
-    current_location = None
-    current_trigger = None
-    current_type = None
-
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-
-        # Match heading with severity: #### [CRITICAL] Title
-        heading_match = re.match(r"^####\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s+(.+)$", line)
-        if heading_match:
-            # Save previous finding
-            if current_severity and current_title:
-                findings.append(Finding(current_severity, current_title, current_location, current_trigger, current_type))
-
-            current_severity = heading_match.group(1)
-            current_title = heading_match.group(2).strip()
-            current_location = None
-            current_trigger = None
-            current_type = None
-            i += 1
-            continue
-
-        # Match fields within a finding
-        if current_severity:
-            loc_match = re.match(r"^\s*-\s*\*\*Location:\*\*\s*(.+)$", line)
-            if loc_match:
-                current_location = loc_match.group(1).strip()
-                i += 1
-                continue
-
-            trigger_match = re.match(r"^\s*-\s*\*\*Trigger:\*\*\s*(.+)$", line)
-            if trigger_match:
-                current_trigger = trigger_match.group(1).strip()
-                i += 1
-                continue
-
-            type_match = re.match(r"^\s*-\s*\*\*Type:\*\*\s*(.+)$", line)
-            if type_match:
-                current_type = type_match.group(1).strip()
-                i += 1
-                continue
-
-        i += 1
-
-    # Save last finding
-    if current_severity and current_title:
-        findings.append(Finding(current_severity, current_title, current_location, current_trigger, current_type))
-
-    return findings
-
-
-def parse_glm52_review(content: str) -> list[Finding]:
-    """Parse glm5.2 review format (### [SEVERITY] Title)."""
-    findings = []
-    lines = content.split("\n")
-
-    current_severity = None
-    current_title = None
-    current_location = None
-    current_trigger = None
-    current_type = None
-
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-
-        # Match heading with severity: ### [CRITICAL] Title
-        heading_match = re.match(r"^###\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s+(.+)$", line)
-        if heading_match:
-            # Save previous finding
-            if current_severity and current_title:
-                findings.append(Finding(current_severity, current_title, current_location, current_trigger, current_type))
-
-            current_severity = heading_match.group(1)
-            current_title = heading_match.group(2).strip()
-            current_location = None
-            current_trigger = None
-            current_type = None
-            i += 1
-            continue
-
-        # Match fields within a finding
-        if current_severity:
-            loc_match = re.match(r"^\s*-\s*\*\*Location:\*\*\s*(.+)$", line)
-            if loc_match:
-                current_location = loc_match.group(1).strip()
-                i += 1
-                continue
-
-            trigger_match = re.match(r"^\s*-\s*\*\*Trigger:\*\*\s*(.+)$", line)
-            if trigger_match:
-                current_trigger = trigger_match.group(1).strip()
-                i += 1
-                continue
-
-            type_match = re.match(r"^\s*-\s*\*\*Type:\*\*\s*(.+)$", line)
-            if type_match:
-                current_type = type_match.group(1).strip()
-                i += 1
-                continue
-
-        i += 1
-
-    # Save last finding
-    if current_severity and current_title:
-        findings.append(Finding(current_severity, current_title, current_location, current_trigger, current_type))
-
-    return findings
-
-
-def parse_mistral_review(content: str) -> list[Finding]:
-    """Parse mistral review format (#### [SEVERITY] Title, note: Location: without **)."""
+def parse_review(content: str, track_section_file: bool = False) -> list[Finding]:
+    """Unified parser for all review formats.
+    
+    Accepts:
+    - #{2,4} for severity headings (### or ####)
+    - **Location:** and **Location**: field formats (colon inside or outside bold)
+    - file:line-range (e.g., server.c:188-189) -> line=188
+    - lines 85, 127-128 (no file) -> line=85, file=None
+    
+    Args:
+        content: Review markdown content
+        track_section_file: If True, track ### filename.c section headings and
+                           assign file to findings without explicit location
+    
+    Returns:
+        List of Finding objects
+    """
     findings = []
     lines = content.split("\n")
 
@@ -219,15 +116,16 @@ def parse_mistral_review(content: str) -> list[Finding]:
     while i < len(lines):
         line = lines[i]
 
-        # Track ### filename.c section headings (mistral groups findings by file)
-        section_match = re.match(r"^###\s+([\w./-]+\.\w+)\s*$", line)
-        if section_match:
-            current_section_file = normalize_filename(section_match.group(1))
-            i += 1
-            continue
+        # Track section headings if enabled (### filename.c)
+        if track_section_file:
+            section_match = re.match(r"^#{2,3}\s+([\w./-]+\.\w+)\s*$", line)
+            if section_match:
+                current_section_file = normalize_filename(section_match.group(1))
+                i += 1
+                continue
 
-        # Match heading with severity: #### [CRITICAL] Title
-        heading_match = re.match(r"^####\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s+(.+)$", line)
+        # Match severity heading: ### [SEVERITY] Title or #### SEVERITY Title (brackets optional)
+        heading_match = re.match(r"^#{2,4}\s+\[?(CRITICAL|HIGH|MEDIUM|LOW)\]?\s+(.+)$", line)
         if heading_match:
             # Save previous finding
             if current_severity and current_title:
@@ -244,21 +142,23 @@ def parse_mistral_review(content: str) -> list[Finding]:
             i += 1
             continue
 
-        # Match fields within a finding (note: mistral uses **Location**: not **Location:**)
         if current_severity:
-            loc_match = re.match(r"^\s*-\s*\*\*Location\*\*:\s*(.+)$", line)
+            # Match Location field: **Location:** or **Location**:
+            loc_match = re.match(r"^\s*-\s*\*\*Location[:*]+\s*(.+)$", line)
             if loc_match:
                 current_location = loc_match.group(1).strip()
                 i += 1
                 continue
 
-            trigger_match = re.match(r"^\s*-\s*\*\*Trigger\*\*:\s*(.+)$", line)
+            # Match Trigger field
+            trigger_match = re.match(r"^\s*-\s*\*\*Trigger[:*]+\s*(.+)$", line)
             if trigger_match:
                 current_trigger = trigger_match.group(1).strip()
                 i += 1
                 continue
 
-            type_match = re.match(r"^\s*-\s*\*\*Type\*\*:\s*(.+)$", line)
+            # Match Type field
+            type_match = re.match(r"^\s*-\s*\*\*Type[:*]+\s*(.+)$", line)
             if type_match:
                 current_type = type_match.group(1).strip()
                 i += 1
@@ -276,68 +176,24 @@ def parse_mistral_review(content: str) -> list[Finding]:
     return findings
 
 
+def parse_gpt_oss_review(content: str) -> list[Finding]:
+    """Parse gpt-oss-120b review format (#### [SEVERITY] Title)."""
+    return parse_review(content, track_section_file=False)
+
+
+def parse_glm52_review(content: str) -> list[Finding]:
+    """Parse glm5.2 review format (### [SEVERITY] Title)."""
+    return parse_review(content, track_section_file=False)
+
+
+def parse_mistral_review(content: str) -> list[Finding]:
+    """Parse mistral review format (#### [SEVERITY] Title, groups by file)."""
+    return parse_review(content, track_section_file=True)
+
+
 def parse_baseline_review(content: str) -> list[Finding]:
     """Parse baseline review format (### or #### [SEVERITY] Title)."""
-    findings = []
-    lines = content.split("\n")
-
-    current_severity = None
-    current_title = None
-    current_location = None
-    current_type = None
-    current_section_file = None
-
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-
-        # Track ## filename.c or ### filename.c section headings
-        section_match = re.match(r"^#{2,3}\s+([\w./-]+\.\w+)\s*$", line)
-        if section_match:
-            current_section_file = normalize_filename(section_match.group(1))
-            i += 1
-            continue
-
-        heading_match = re.match(r"^#{3,4}\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s+(.+)$", line)
-        if heading_match:
-            # Save previous finding
-            if current_severity and current_title:
-                f = Finding(current_severity, current_title, current_location, None, current_type)
-                if not f.file and current_section_file:
-                    f.file = current_section_file
-                findings.append(f)
-
-            current_severity = heading_match.group(1)
-            current_title = heading_match.group(2).strip()
-            current_location = None
-            current_type = None
-            i += 1
-            continue
-
-        # Match fields within a finding
-        if current_severity:
-            loc_match = re.match(r"^\s*-\s*\*\*Location:\*\*\s*(.+)$", line)
-            if loc_match:
-                current_location = loc_match.group(1).strip()
-                i += 1
-                continue
-
-            type_match = re.match(r"^\s*-\s*\*\*Type:\*\*\s*(.+)$", line)
-            if type_match:
-                current_type = type_match.group(1).strip()
-                i += 1
-                continue
-
-        i += 1
-
-    # Save last finding
-    if current_severity and current_title:
-        f = Finding(current_severity, current_title, current_location, None, current_type)
-        if not f.file and current_section_file:
-            f.file = current_section_file
-        findings.append(f)
-
-    return findings
+    return parse_review(content, track_section_file=True)
 
 
 def parse_review_file(filepath: Path) -> list[Finding]:
@@ -345,10 +201,14 @@ def parse_review_file(filepath: Path) -> list[Finding]:
     if not filepath.exists():
         return []
 
-    content = filepath.read_text()
+    try:
+        content = filepath.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return []
+
     filename = filepath.name
 
-    # Dispatch to appropriate parser
+    # Dispatch to appropriate parser (all now use unified parse_review)
     if "baseline" in filename:
         return parse_baseline_review(content)
     elif "gpt-oss" in filename:
@@ -358,15 +218,8 @@ def parse_review_file(filepath: Path) -> list[Finding]:
     elif "mistral" in filename:
         return parse_mistral_review(content)
     else:
-        # Try all parsers
-        findings = parse_gpt_oss_review(content)
-        if not findings:
-            findings = parse_glm52_review(content)
-        if not findings:
-            findings = parse_mistral_review(content)
-        if not findings:
-            findings = parse_baseline_review(content)
-        return findings
+        # Try unified parser
+        return parse_review(content, track_section_file=True)
 
 
 def count_severities(findings: list[Finding]) -> dict[str, int]:
@@ -395,6 +248,9 @@ def match_findings_across_models(
     """
     Match findings across models by file+line proximity or keyword overlap.
     Returns a list of matched groups with which models found each issue.
+    
+    Uses N-agnostic matching: first pass matches through GLM, second pass
+    matches unmatched GPT against unmatched mistral (for 2/3 consensus when GLM missed).
     """
     # Group all findings by file
     gpt_by_file = group_findings_by_file(gpt_findings)
@@ -411,7 +267,7 @@ def match_findings_across_models(
         glm_file_findings = glm_by_file.get(file, [])
         mistral_file_findings = mistral_by_file.get(file, [])
 
-        # For each finding in glm (most comprehensive), try to match with others
+        # First pass: For each finding in glm, try to match with gpt and mistral
         for i, glm_f in enumerate(glm_file_findings):
             if (file, i, "glm") in used_findings:
                 continue
@@ -434,7 +290,6 @@ def match_findings_across_models(
                         group["gpt"] = gpt_f
                         used_findings.add((file, j, "gpt"))
                         break
-                    # Also match by keyword overlap in title
                     if _keyword_overlap(gpt_f.title, glm_f.title):
                         group["gpt"] = gpt_f
                         used_findings.add((file, j, "gpt"))
@@ -456,7 +311,40 @@ def match_findings_across_models(
 
             matched_groups.append(group)
 
-        # Add unmatched gpt findings
+        # Second pass: Match unmatched gpt against unmatched mistral (2/3 consensus without GLM)
+        for j, gpt_f in enumerate(gpt_file_findings):
+            if (file, j, "gpt") in used_findings:
+                continue
+
+            for k, mis_f in enumerate(mistral_file_findings):
+                if (file, k, "mistral") in used_findings:
+                    continue
+
+                # Match by line proximity or keyword overlap
+                if gpt_f.line and mis_f.line and abs(gpt_f.line - mis_f.line) <= 10:
+                    matched_groups.append({
+                        "file": file,
+                        "gpt": gpt_f,
+                        "glm": None,
+                        "mistral": mis_f,
+                        "title": gpt_f.title,
+                    })
+                    used_findings.add((file, j, "gpt"))
+                    used_findings.add((file, k, "mistral"))
+                    break
+                elif _keyword_overlap(gpt_f.title, mis_f.title):
+                    matched_groups.append({
+                        "file": file,
+                        "gpt": gpt_f,
+                        "glm": None,
+                        "mistral": mis_f,
+                        "title": gpt_f.title,
+                    })
+                    used_findings.add((file, j, "gpt"))
+                    used_findings.add((file, k, "mistral"))
+                    break
+
+        # Add remaining unmatched gpt findings
         for j, gpt_f in enumerate(gpt_file_findings):
             if (file, j, "gpt") not in used_findings:
                 matched_groups.append({
@@ -468,9 +356,9 @@ def match_findings_across_models(
                 })
                 used_findings.add((file, j, "gpt"))
 
-        # Add unmatched mistral findings
-        for j, mis_f in enumerate(mistral_file_findings):
-            if (file, j, "mistral") not in used_findings:
+        # Add remaining unmatched mistral findings
+        for k, mis_f in enumerate(mistral_file_findings):
+            if (file, k, "mistral") not in used_findings:
                 matched_groups.append({
                     "file": file,
                     "gpt": None,
@@ -478,7 +366,7 @@ def match_findings_across_models(
                     "mistral": mis_f,
                     "title": mis_f.title,
                 })
-                used_findings.add((file, j, "mistral"))
+                used_findings.add((file, k, "mistral"))
 
     return matched_groups
 
@@ -602,7 +490,7 @@ def generate_markdown(
     # Title and intro
     lines.append("# Model Comparison — SmallChat Review")
     lines.append("")
-    lines.append("Three models reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill and soul. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.")
+    lines.append("Three models reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.")
     lines.append("")
 
     # Metrics Summary table

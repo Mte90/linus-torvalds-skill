@@ -86,6 +86,11 @@ ILLUSTRATE the voice and tone — they are evidence, not the trigger itself. Alw
 introduce a quote with the generalized trigger, then show the original wording as \
 an example.
 
+CRITICAL: The translation table applies to TRIGGER DESCRIPTIONS ONLY. Quotes and
+examples preserve verbatim wording. Over-generalization is as bad as under-generalization
+— if you strip too much specificity, the trigger loses its diagnostic power. A trigger
+that says "check for errors" is useless; "check allocation return before use" is actionable.
+
 TRANSLATION TABLE — when you encounter these in the data, generalize as shown:
 
   C/Kernel specific                           → Language-agnostic trigger
@@ -119,6 +124,11 @@ SELF-CHECK before writing each trigger:
      → If NO, rewrite it.
   3. Does the trigger describe a DESIGN problem (not a syntax problem)?
      → It should. Syntax problems are language-specific; design problems are universal.
+  4. Does the trigger cover more than 3 distinct bug types?
+     → If YES, split it into specific sub-triggers. Broad triggers like "Operation
+       without checking target state" should become: "unchecked allocation return",
+       "unchecked boundary-crossing return", "unchecked conversion return". Specificity
+       beats catch-all categories.
 
 ═══════════════════════════════════════════════════════════════════════
 SKILL QUALITIES
@@ -143,7 +153,7 @@ SKILL QUALITIES
 5. Actionable. Every principle must tell the reviewer WHAT to do and WHEN. Not "be careful" but "when X appears, flag it because Y."
 6. Grounded in real examples. Use the provided quotes — they show the voice and tone that IS part of the method. Preserve them verbatim.
 7. Honest about what the data shows. Use the actual counts. Don't invent statistics.
-8. Comprehensive. The skill should be a thorough reference, not a summary. Aim for 6000-9000 words. Cover each theme in depth with multiple examples.
+8. Comprehensive. The skill should be a thorough reference, not a summary. Aim for 4000-7000 words. Cover each theme in depth with multiple examples.
 
 ═══════════════════════════════════════════════════════════════════════
 YOUR TASK
@@ -153,6 +163,15 @@ You will receive raw review moves sampled from the corpus, grouped by category. 
 The corpus combines 38,000+ email review moves and 500+ interview passages, sampled into 350 representative patterns. \
 Each pattern has a `source` field indicating whether it comes from email ("source: email") or interview ("source: interview"). \
 Treat interview-sourced patterns with equal weight to email-sourced patterns — both are valid evidence of Torvalds' reviewing method. \
+
+ADDITIONAL TRIGGER THEMES TO CONSIDER:
+   - Copy-paste code detection: duplicate blocks, cargo-cult patterns where code is
+     copied without understanding
+   - Magic numbers in error messages: undocumented status codes, bare integers in error
+     paths that lack context
+   - Inconsistent error code conventions: mixed return-value conventions within the
+     same module (some functions return -1 on error, others return NULL, others
+     throw exceptions)
 Each move has: trigger (what prompted the review), principle (the underlying rule), \
 response (Torvalds' actual words), severity, and date.
 
@@ -335,6 +354,12 @@ DO NOT use markdown tables. Example of correct format:
 3. Check for style/readability
    - IF style inconsistency → nitpick (35.5% nitpick rate for style)
 ```
+
+NON-EXHAUSTIVE CATALOG: The triggers you list are a STARTING SET, not a ceiling. The
+reviewer must still apply general code-review judgment beyond the listed triggers. This
+is not an exhaustive catalog of every possible bug — it captures recurring themes from
+the corpus. When reviewing code, ask: "What else could be wrong here?" beyond the
+specific triggers listed.
 ]
 
 ## Quick Reference Checklist
@@ -970,7 +995,7 @@ SKILL QUALITIES
 4. Concrete definitions — define key terms explicitly
 5. Actionable — tell the reviewer WHAT to do and WHEN
 6. Grounded in real examples — use the provided quotes
-7. Comprehensive — aim for 6000-9000 words
+7. Comprehensive — aim for 4000-7000 words
 
 ═══════════════════════════════════════════════════════════════════════
 OUTPUT STRUCTURE
@@ -1031,7 +1056,7 @@ Cover at least 12 distinct themes with 3-6 triggers each.]
 ## Quick Reference Checklist
 [15-20 concrete items grouped by theme]
 
-Keep output between 6000-9000 words. Complete ALL sections.
+Keep output between 4000-7000 words. Complete ALL sections.
 """
 
     # Build user prompt with all fragments and context
@@ -1092,7 +1117,8 @@ Keep output between 6000-9000 words. Complete ALL sections.
     lines.append("")
     lines.append("OUTPUT FORMAT: Start with YAML frontmatter (--- fences), then markdown body.")
     lines.append("DO NOT use markdown tables — use nested bullet lists instead.")
-    lines.append("Target: 6000-9000 words, comprehensive coverage of all sections.")
+    lines.append("Target: 4000-7000 words, comprehensive coverage of all sections.")
+    lines.append("Target: 4000-7000 words, comprehensive coverage of all sections.")
     
     user_prompt = "\n".join(lines)
     
@@ -1138,7 +1164,8 @@ def _distill_single_call(patterns: list, calibration: dict, interview_data: str,
     lines.append("Generate a complete SKILL.md following the output structure in the system prompt.")
     lines.append("Use interview quotes for definitions and mindset sections, citing each as (Interview: filename) or (TED YYYY) etc.")
     lines.append("Ensure EVERY trigger is language-agnostic. Label every trigger with its type.")
-    lines.append("Complete ALL required sections. Target: 6000-9000 words.")
+    lines.append("Complete ALL required sections. Target: 4000-7000 words.")
+    lines.append("Complete ALL required sections. Target: 4000-7000 words.")
     lines.append("DO NOT use markdown tables — use nested bullet lists instead.")
     lines.append("OUTPUT FORMAT: Start with YAML frontmatter (--- fences), then markdown body.")
 
