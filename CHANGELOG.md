@@ -2,6 +2,24 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-08-24
+
+- **Documentation:** Added a reproducibility rule to `AGENTS.md` — all generated `.md` artifacts are produced by scripts and must never be edited by hand; any change requires editing the generator script and re-running it. Documented each artifact with its generator and regeneration command.
+- **Documentation:** Expanded `AGENTS.md` with nine project-specific sections: language-agnostic enforcement, runtime constraints (model token limits), API configuration, pipeline architecture (five stages), review pipeline (with-skill vs baseline, chunked mode), verification commands, data directory, and git discipline.
+- **Documentation:** Corrected the token-limits table — GLM5.2 has a 200K context, gpt-oss-120b and mistral-small-4-119b both 120K. Removed the License section from `AGENTS.md` (licensing belongs in the LICENSE file).
+- **Pipeline:** Fixed `distill.py` prompt (T2) — relaxed over-restrictive constraints that caused over-sanitization in the gpt-oss-120b skill, added missing triggers (copy-paste code, magic numbers, inconsistent error codes), and split the overly broad trigger 7.2 into focused sub-triggers.
+- **Pipeline:** Fixed `run_review.sh` `--force` bypass (T0a) — the flag no longer silently skips stale-chunk cleanup, preventing corrupted reviews from being merged.
+- **Pipeline:** Fixed consensus-matrix 2/3 matching (T0b) in `build_comparison.py` — findings that two of three models agree on are now correctly grouped instead of being dropped.
+- **Pipeline:** Added `CHUNKED_MODELS` environment variable (T1) — chunked review mode activates only for listed models (e.g. `CHUNKED_MODELS="glm5.2"`), leaving gpt-oss-120b and mistral on the fast single-call path.
+- **Pipeline:** Added `validate_review_format()` gate (T3) — checks for `### [SEVERITY]` headings and required fields after each review; fails loudly on invalid format instead of silently producing an empty comparison.
+- **Pipeline:** Collapsed duplicated review parsers (T4) into a single parameterized parser in `build_comparison.py`, added 15 parser unit tests in `tests/test_build_comparison.py`.
+- **Pipeline:** Fixed `merge_chunks` duplication and `awk`/`set -e` handling (T7) in the chunked review flow.
+- **Pipeline:** Added `metrics.jsonl` observability (T8) — each review run logs timestamps, model names, and outcome flags to `report/metrics.jsonl`.
+- **Pipeline:** Baseline review files are now retained in `report/baseline/` (git-ignored) instead of being deleted after comparison generation.
+- **Skill:** Regenerated all three skill files from the updated `distill.py` prompt — `SKILL.md` (gpt-oss-120b, 5624 words), `SKILL-GLM.md` (glm5.2, 8163 words), `SKILL-Mistral.md` (mistral-small-4-119b, 7734 words). All three pass `verify_skill.py`: language-agnostic, 13/13 categories, calibration sections present, no forbidden C/kernel terms, real quotes preserved.
+- **Pipeline:** Re-ran the SmallChat review pipeline with the regenerated skills. Three bugs surfaced and were fixed: (1) `printf` numeric bug in `log_metrics` — `grep -c || echo 0` produced `"0\n0"` when grep found no matches, breaking the `%d` format specifier; fixed with `|| true`. (2) GLM5.2 chunk timeout too short at 900s for the 8K-word skill; raised to 2400s to match the non-chunked timeout. (3) Parser regex required `[SEVERITY]` brackets but gpt-oss-120b switched to `#### CRITICAL` without brackets; made brackets optional in `parse_review`.
+- **Report:** Final comparison regenerated with all six reviews. Results: mistral wins (score 5, 0 net critical, 8 confirmed findings); glm5.2 follows (score 4, -1 net critical, 9 confirmed); gpt-oss-120b last (score -1, -1 net critical, 1 confirmed). The skill narrows focus toward correctness but suppresses one critical finding per model that the baseline caught — a coverage gap worth investigating.
+
 ## 2026-08-21
 
 - **Documentation:** Finalized the README with a Quick Start guide, an environment variable table, a documentation index, and the CC0 license note — making the project usable in under 60 seconds for a new reader.

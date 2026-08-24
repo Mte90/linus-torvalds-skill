@@ -40,6 +40,10 @@ htmlcov/
 *.log
 data/checkpoint.jsonl
 data/fetch_progress.json
+report/metrics.jsonl
+
+# === Baseline reviews ===
+report/baseline/
 
 # === Editor / IDE ===
 .vscode/
