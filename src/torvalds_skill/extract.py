@@ -19,9 +19,11 @@ import json
 import logging
 import os
 import random
+import threading
 import time
 import urllib.request
 import urllib.error
+from pathlib import Path
 
 from . import config
 from .models import EmailRecord, ReviewMove
@@ -30,6 +32,19 @@ from .audit import log_decision
 # Logger setup - idempotent (safe to call multiple times)
 _LOGGER = logging.getLogger("torvalds_skill.extract")
 _HANDLER = None
+
+# Cache configuration - read at runtime, not import time
+def _get_cache_enabled():
+    """Check if cache is enabled."""
+    return os.environ.get("EXTRACT_CACHE", "1") != "0"
+
+def _get_cache_path():
+    """Get cache path from environment."""
+    return os.environ.get("EXTRACT_CACHE_PATH", "data/extract_cache.jsonl")
+
+# Thread lock for cache access
+_CACHE_LOCK = threading.Lock()
+_CACHE_DATA: dict[str, dict] | None = None
 
 
 def _get_logger():
@@ -65,6 +80,88 @@ Rules:
 
 Return ONLY valid JSON, no markdown fences, in this exact format:
 {"moves": [{"trigger": "...", "principle": "...", "response": "...", "severity": "...", "category": "..."}]}"""
+
+
+def _get_cache_logger():
+    """Get logger for cache operations."""
+    logger = logging.getLogger("torvalds_skill.extract.cache")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    return logger
+
+
+def _compute_cache_key(model_name: str, prompt_text: str) -> str:
+    """Compute SHA-256 cache key from model name and prompt text."""
+    combined = f"{model_name}:{prompt_text}"
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()
+
+
+def _load_cache() -> dict[str, dict]:
+    """Load cache from JSONL file into memory. Returns empty dict if file doesn't exist or is empty."""
+    global _CACHE_DATA
+    if _CACHE_DATA is not None:
+        return _CACHE_DATA
+    
+    cache = {}
+    cache_path = Path(_get_cache_path())
+    
+    if not cache_path.exists():
+        _CACHE_DATA = cache
+        return cache
+    
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    key = entry.get("key")
+                    if key:
+                        cache[key] = entry
+                except json.JSONDecodeError:
+                    # Skip corrupt lines silently
+                    continue
+    except (IOError, OSError):
+        # If we can't read the file, start with empty cache
+        pass
+    
+    _CACHE_DATA = cache
+    return cache
+
+
+def _save_cache_entry(key: str, response: str):
+    """Append a cache entry to the JSONL file. Thread-safe."""
+    cache_path = Path(_get_cache_path())
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    entry = {
+        "key": key,
+        "response": response,
+        "ts": int(time.time()),
+    }
+    
+    with _CACHE_LOCK:
+        with open(cache_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        
+        # Update in-memory cache
+        if _CACHE_DATA is not None:
+            _CACHE_DATA[key] = entry
+
+
+def _get_cached_response(key: str) -> str | None:
+    """Get cached response by key. Returns None if not found."""
+    with _CACHE_LOCK:
+        cache = _load_cache()
+        entry = cache.get(key)
+        if entry:
+            return entry.get("response")
+    return None
 
 
 def _call_llm(email: EmailRecord, retries: int = None) -> dict:
@@ -110,7 +207,10 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
             with urllib.request.urlopen(req, timeout=config.REQUEST_TIMEOUT) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 content = data["choices"][0]["message"]["content"]
-                return _parse_json_response(content)
+                parsed = _parse_json_response(content)
+                # Store raw content on the parsed result for caching
+                parsed["_raw_content"] = content
+                return parsed
         except urllib.error.HTTPError as e:
             last_err = e
             if e.code == 429:
@@ -146,9 +246,77 @@ def _parse_json_response(content: str) -> dict:
 
 def extract_moves(email: EmailRecord) -> dict:
     """Extract review moves from one email. Returns a dict with moves list."""
+    # Input validation
+    logger = _get_logger()
+    
+    # Check required fields exist and are non-empty strings
+    if not email.body or not isinstance(email.body, str) or not email.body.strip():
+        msg = "missing or empty body"
+        logger.warning("Validation failed for %s: %s", getattr(email, "message_id", "unknown"), msg)
+        return {"email_message_id": getattr(email, "message_id", "unknown"), "moves": [], "error": f"validation_failed: {msg}"}
+    
+    if not email.message_id or not isinstance(email.message_id, str) or not email.message_id.strip():
+        msg = "missing or empty message_id"
+        logger.warning("Validation failed for %s: %s", getattr(email, "message_id", "unknown"), msg)
+        return {"email_message_id": getattr(email, "message_id", "unknown"), "moves": [], "error": f"validation_failed: {msg}"}
+    
+    if not email.subject or not isinstance(email.subject, str) or not email.subject.strip():
+        msg = "missing or empty subject"
+        logger.warning("Validation failed for %s: %s", getattr(email, "message_id", "unknown"), msg)
+        return {"email_message_id": getattr(email, "message_id", "unknown"), "moves": [], "error": f"validation_failed: {msg}"}
+    
+    if not email.from_name or not isinstance(email.from_name, str) or not email.from_name.strip():
+        msg = "missing or empty from_name"
+        logger.warning("Validation failed for %s: %s", getattr(email, "message_id", "unknown"), msg)
+        return {"email_message_id": getattr(email, "message_id", "unknown"), "moves": [], "error": f"validation_failed: {msg}"}
+    
+    # Body length warnings (don't block extraction)
+    body_len = len(email.body)
+    if body_len <= 10:
+        logger.warning("Very short body (%d chars) for message %s", body_len, email.message_id)
+    elif body_len > 100000:
+        logger.warning("Very long body (%d chars) for message %s", body_len, email.message_id)
+    
+    # Build user content for cache key computation
+    user_content = (
+        f"Subject: {email.subject}\n"
+        f"Date: {email.date}\n\n"
+        f"{email.body[:8000]}"
+    )
+    prompt_text = SYSTEM_PROMPT + user_content
+    cache_key = _compute_cache_key(config.MODEL, prompt_text)
+    
+    # Check cache before calling LLM
+    if _get_cache_enabled():
+        cached_response = _get_cached_response(cache_key)
+        if cached_response is not None:
+            try:
+                parsed = _parse_json_response(cached_response)
+                moves = parsed.get("moves", [])
+                cache_logger = _get_cache_logger()
+                cache_logger.info(f"cache hit: {email.message_id} ({len(moves)} moves)")
+                return {
+                    "email_message_id": email.message_id,
+                    "email_date": email.date,
+                    "email_subject": email.subject,
+                    "moves": moves,
+                    "cached": True,
+                }
+            except (json.JSONDecodeError, KeyError):
+                # Corrupt cache entry, fall through to LLM call
+                pass
+    
     try:
         result = _call_llm(email)
         moves = result.get("moves", [])
+        
+        # Cache successful responses with valid moves
+        if _get_cache_enabled() and moves:
+            # Get the raw response content for caching
+            raw_response = result.get("_raw_content")
+            if raw_response:
+                _save_cache_entry(cache_key, raw_response)
+        
         return {
             "email_message_id": email.message_id,
             "email_date": email.date,

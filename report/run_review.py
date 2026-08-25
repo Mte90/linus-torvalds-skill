@@ -391,30 +391,53 @@ def run_chunk_review(
     return False
 
 
+def _clean_chunk_content(text: str) -> str:
+    """Strip per-chunk YAML frontmatter and leaked prompt templates.
+
+    Chunks sometimes echo the prompt's format instructions (e.g. a literal
+    '### [SEVERITY] Finding title' heading) or carry their own frontmatter;
+    both pollute the merged document.
+    """
+    import re
+
+    # Strip YAML frontmatter if present
+    if text.lstrip().startswith("---"):
+        stripped = text.lstrip()
+        end = stripped.find("\n---", 3)
+        if end != -1:
+            text = stripped[end + 4:]
+
+    # Drop literal prompt-template headings like '### [SEVERITY] Finding title'
+    text = re.sub(r"^#{3,4}\s+\[SEVERITY\]\s+Finding title\s*$", "", text, flags=re.MULTILINE)
+    return text.strip("\n")
+
+
 def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
     """Merge chunks mechanically into final review file. Returns True on success."""
     total_findings = 0
     files_reviewed = 0
-    findings_by_severity = []
+    severity_totals = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
 
     import re
+    # Tolerant heading match: 3-4 hashes, brackets optional.
+    # Models emit both '### [CRITICAL] Title' and '### CRITICAL Title'.
+    sev_re = re.compile(r"^#{3,4}\s+\[?(CRITICAL|HIGH|MEDIUM|LOW)\]?(?:\s|$)", re.MULTILINE)
 
+    cleaned_chunks = {}
     for src in SOURCE_FILES:
         chunk = chunk_dir / f"{src}.md"
         if chunk.exists() and chunk.stat().st_size > 0:
             files_reviewed += 1
-            content = chunk.read_text()
-            chunk_findings = len(re.findall(r'^### \[(CRITICAL|HIGH|MEDIUM|LOW)\]', content, re.MULTILINE))
-            total_findings += chunk_findings
-
-            critical = len(re.findall(r'^### \[CRITICAL\]', content, re.MULTILINE))
-            high = len(re.findall(r'^### \[HIGH\]', content, re.MULTILINE))
-            medium = len(re.findall(r'^### \[MEDIUM\]', content, re.MULTILINE))
-            low = len(re.findall(r'^### \[LOW\]', content, re.MULTILINE))
-            findings_by_severity.append(f"CRITICAL: {critical}, HIGH: {high}, MEDIUM: {medium}, LOW: {low}")
+            content = _clean_chunk_content(chunk.read_text())
+            cleaned_chunks[src] = content
+            for sev in sev_re.findall(content):
+                total_findings += 1
+                severity_totals[sev] += 1
 
     verdict = "passes review" if total_findings == 0 else "needs review"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    severity_summary = ", ".join(f"{sev}: {n}" for sev, n in severity_totals.items())
 
     # Build frontmatter
     output_lines = [
@@ -432,7 +455,7 @@ def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
         f"**Model:** {model_label}",
         f"**Files reviewed:** {files_reviewed}",
         f"**Total findings:** {total_findings}",
-        f"**Findings by severity:** {'; '.join(findings_by_severity)}",
+        f"**Findings by severity:** {severity_summary}",
         "",
         "## Findings",
         "",
@@ -440,11 +463,10 @@ def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
 
     # Concatenate all chunk findings
     for src in SOURCE_FILES:
-        chunk = chunk_dir / f"{src}.md"
-        if chunk.exists() and chunk.stat().st_size > 0:
+        if src in cleaned_chunks:
             output_lines.append(f"### {src}")
             output_lines.append("")
-            output_lines.append(chunk.read_text())
+            output_lines.append(cleaned_chunks[src])
             output_lines.append("")
 
     final_file.write_text("\n".join(output_lines))

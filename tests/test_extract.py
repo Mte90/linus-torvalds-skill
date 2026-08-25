@@ -257,3 +257,90 @@ class TestExtractBatch:
         assert result["processed"] == 0
         assert result["moves"] == 0
         assert result["errors"] == 0
+
+
+class TestInputValidation:
+    """Test input validation in extract_moves."""
+
+    def test_valid_email_passes_validation(self):
+        """Valid email passes validation (no error in output)."""
+        with patch("torvalds_skill.extract._call_llm") as mock_call:
+            mock_call.return_value = {"moves": []}
+            email = _make_email()
+            result = extract_moves(email)
+
+            assert "error" not in result
+            assert result["moves"] == []
+
+    def test_missing_body_returns_validation_error(self):
+        """Missing body returns validation_failed error with empty moves."""
+        email = _make_email(body="")
+        result = extract_moves(email)
+
+        assert result["moves"] == []
+        assert "error" in result
+        assert "validation_failed" in result["error"]
+        assert "body" in result["error"]
+
+    def test_missing_message_id_returns_validation_error(self):
+        """Missing message_id returns validation_failed error with empty moves."""
+        email = _make_email(message_id="")
+        result = extract_moves(email)
+
+        assert result["moves"] == []
+        assert "error" in result
+        assert "validation_failed" in result["error"]
+        assert "message_id" in result["error"]
+
+    def test_missing_subject_returns_validation_error(self):
+        """Missing subject returns validation_failed error with empty moves."""
+        email = _make_email(subject="")
+        result = extract_moves(email)
+
+        assert result["moves"] == []
+        assert "error" in result
+        assert "validation_failed" in result["error"]
+        assert "subject" in result["error"]
+
+    def test_missing_from_name_returns_validation_error(self):
+        """Missing from_name returns validation_failed error with empty moves."""
+        email = EmailRecord(
+            message_id="test@example.com",
+            from_name="",
+            from_email="torvalds@linux.org",
+            date="2024-01-01",
+            subject="Re: Some patch",
+            in_reply_to="parent@example.com",
+            body="Valid body content here.",
+        )
+        result = extract_moves(email)
+
+        assert result["moves"] == []
+        assert "error" in result
+        assert "validation_failed" in result["error"]
+        assert "from_name" in result["error"]
+
+    def test_very_short_body_logs_warning(self):
+        """Very short body (<10 chars) logs warning but still attempts extraction."""
+        with patch("torvalds_skill.extract._call_llm") as mock_call:
+            mock_call.return_value = {"moves": []}
+            email = _make_email(body="short")
+            result = extract_moves(email)
+
+            # Should not have validation error, extraction attempted
+            assert "error" not in result or "validation_failed" not in result.get("error", "")
+            # _call_llm was called, meaning validation passed
+            mock_call.assert_called_once()
+
+    def test_very_long_body_logs_warning(self):
+        """Very long body (>100K chars) logs warning but still attempts extraction."""
+        with patch("torvalds_skill.extract._call_llm") as mock_call:
+            mock_call.return_value = {"moves": []}
+            long_body = "x" * 100001
+            email = _make_email(body=long_body)
+            result = extract_moves(email)
+
+            # Should not have validation error, extraction attempted
+            assert "error" not in result or "validation_failed" not in result.get("error", "")
+            # _call_llm was called, meaning validation passed
+            mock_call.assert_called_once()
