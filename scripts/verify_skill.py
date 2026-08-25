@@ -29,6 +29,7 @@ REQUIRED_SECTIONS = [
     "Reviewer Mindset",
     "Review Triggers",
     "Precedence and Priorities",
+    "Decision Cards",
     "Key Definitions",
     "Anti-Patterns",
     "Voice and Tone",

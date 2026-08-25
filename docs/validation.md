@@ -29,4 +29,4 @@ To validate the skill's effectiveness, we ran six code reviews (two per model) a
 - **gpt-oss-120b** has the widest HIGH coverage (8 findings) — catches `socketSetNonBlockNoDelay` and `IB_MAX` that glm5.2 misses
 - **Mistral** is the only model that flags the `/nick` embedded null-byte memory safety issue
 - Run after expanding the interview corpus from 6 to 67 sources and wiring interview data into both pipelines
-- Replicate with `bash report/run_review.sh`
+- Replicate with `python3 report/run_review.py`

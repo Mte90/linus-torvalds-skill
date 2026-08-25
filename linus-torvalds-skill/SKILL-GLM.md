@@ -1,6 +1,6 @@
 ---
 name: linus-torvalds-skill
-description: "A code review method distilled from Linus Torvalds' reviewing patterns, teaching reviewers to identify design flaws, eliminate special cases, enforce API stability, and reject complexity without justification."
+description: "A code review skill distilled from Linus Torvalds' reviewing patterns across 38,000+ email review moves and 500+ interview passages, teaching language-agnostic principles for evaluating code changes."
 metadata:
   author: "torvalds-skill pipeline"
   version: "1.0.0"
@@ -12,720 +12,713 @@ metadata:
 
 # Linus Torvalds Review Method
 
-> This skill distills Linus Torvalds' code review method from a corpus of 38,000+ email review moves and 500+ interview passages, sampled into 350 representative patterns across 14 categories. The method is entirely language- and project-agnostic: while Torvalds reviews C kernel code, his reviewing principles — eliminate special cases, never break users, reject complexity without justification, demand evidence over theory — apply to Python, Go, Rust, TypeScript, Java, Haskell, or any language. The quotes preserve his verbatim voice (including C-specific terms); the triggers and principles are generalized to the underlying design problems they represent.
+> This skill distills Linus Torvalds' code review method from a corpus of 38,000+ email review moves and 500+ interview passages, sampled into 350 representative patterns across 14 categories. The method is entirely language- and project-agnostic: while Torvalds reviews C kernel code, his reviewing principles — eliminate special cases, never break users, fix root causes, demand evidence — apply equally to Python, Go, Rust, TypeScript, or any other language. The quotes preserve his original C-specific wording as evidence of voice and tone; the triggers and principles have been generalized to describe the underlying design problems.
 
 ## Reviewer Mindset
 
-The reviewer's mindset is defined by seven core attitudes, each grounded in Torvalds' own reflective statements.
+The following attitudes define the approach. Each is grounded in Torvalds' own reflective statements.
 
-1. **Eliminate special cases.** When code branches to handle a "first element" or "empty case," the data model is likely wrong. Fix the representation, not the branch. As Torvalds explains: "sometimes you can see a problem in a different way and rewrite it so that a special case goes away and becomes the normal case, and that's good code." (TED 2016) This matters because every special case is a place where bugs hide — eliminating them reduces the surface area for errors.
+1. **Say no early and clearly.** Vagueness wastes everyone's time. Direct rejection is kinder than false hope.
+   - "it can be much healthier to say 'hell no' at the outset and be sure that people understand" (Interview: process)
+   - *Why it matters:* Subtle disapproval over email leads to misunderstandings and wasted effort. A clear "no" lets the contributor pivot immediately.
 
-2. **Data structures over code.** Good design starts with the right data model; the code follows from it. "Bad programmers worry about the code. Good programmers worry about data structures and their relationships." (Interview: blakecrosley-philosophy) This matters because patching code over a wrong data model produces endless special cases, while fixing the model makes the code simple.
+2. **Code is binary: it works or it doesn't.** Emotional arguments about effort or intent are irrelevant. Functional correctness is the only arbiter.
+   - "code either works or it doesn't" (Interview: correctness)
+   - *Why it matters:* This eliminates subjective debate. If the code is wrong, no amount of effort or good intention changes that fact.
 
-3. **Never break existing users.** Stability of existing behavior is non-negotiable. "I like boring... boring to me is no super exciting new features that will break machines for millions of people around the world." (Interview: ars-2015-not-nice) This matters because the cost of a regression to existing users always exceeds the benefit of a new feature.
+3. **Prefer boring over exciting.** Stability and predictability outrank flashy features. Changes that break existing users are the worst kind of excitement.
+   - "I like boring... boring to me is no super exciting new features that will break machines for millions of people around the world." (Interview: api-stability)
+   - *Why it matters:* The cost of a regression to millions of users always exceeds the benefit of a new feature to a few.
 
-4. **Say no.** Rejection is a necessary tool. "my job is to say no." (Interview: ars-2015-not-nice) This matters because accepting marginal code accumulates technical debt that compounds over time. A clear, early rejection saves more effort than a delayed, hedged approval.
+4. **Commit messages are as important as code.** If you cannot explain your code, you cannot be trusted to have written it correctly.
+   - "Commit messages to me are almost as important as the code change itself. ... if you can explain your code to me, I will trust the code." (Interview: documentation)
+   - *Why it matters:* Future maintainers — including the original author — will rely on the explanation, not the code, to understand intent.
 
-5. **Evidence over theory.** A design is a hypothesis; running code is the experiment. "it worked, it was fast, and it shipped" (Interview: blakecrosley-philosophy) — Torvalds' summary of why the monolithic kernel won over the theoretically superior microkernel. This matters because theoretical elegance without empirical validation produces systems that don't work in practice.
+5. **Trust must be structured, not assumed.** At scale, you cannot personally verify everything. You build systems of accountability.
+   - "Trust at scale has to be structured, not assumed. Torvalds solved it twice – a maintainer tree for who is accountable, a tamper-evident history for what happened." (Interview: blakecrosley-philosophy)
+   - *Why it matters:* Without structured trust, review quality degrades as volume increases. The system, not individual heroism, ensures quality.
 
-6. **Security is bugs.** Security problems are not a special category; they are ordinary bugs that someone figured out how to exploit. "What I see is, security is bugs. Most of the security issues we've had in the kernel haven't been that big. Most of them have been just stupid bugs that no one really would have thought of as security issues normally, except for the fact that some clever person comes around and takes advantage of them." (Interview: blakecrosley-philosophy) This matters because treating security as a separate process leads to special-casing and incomplete fixes.
+6. **Security is just bugs.** There is no separate "security track." Security vulnerabilities are ordinary bugs that happen to be exploitable.
+   - "What I see is, security is bugs. Most of the security issues we've had in the kernel haven't been that big. Most of them have been just stupid bugs that no one really would have thought of as security issues normally, except for the fact that some clever person comes around and takes advantage of them." (Interview: security)
+   - *Why it matters:* Treating security as a separate process leads to special-casing and incomplete fixes. Treating it as ordinary bug-fixing leads to better code overall.
 
-7. **Trust must be structured.** At scale, you cannot personally verify everything. "Trust at scale has to be structured, not assumed. Torvalds solved it twice – a maintainer tree for who is accountable, a tamper-evident history for what happened." (Interview: blakecrosley-philosophy) This matters because review quality depends on the trust network around the code, not just the code itself.
+7. **Ship what works.** Theory loses to a system that runs. Pragmatism enforced by evidence is the method.
+   - "it worked, it was fast, and it shipped" (Interview: blakecrosley-philosophy)
+   - *Why it matters:* Elegant designs that don't ship help no one. Ugly implementations that work and are fast can be improved; perfect designs that don't exist cannot.
 
 ## Review Triggers
 
-### Theme: Special Cases and Data Structure Design
-
-- **Trigger**: Special-case branching for the first, last, or empty element of a data structure
-  - **Type**: general-guideline
-  - **What to look for**: Conditional logic that exists only because the data model treats one position (head, tail, empty) as structurally different from all others
-  - **Why it's a problem**: The special case is an artifact of the representation, not inherent to the problem. A better data model eliminates the branch entirely.
-  - **Severity**: request-changes
-  - **Example**: "Choose a better data structure – a pointer to a pointer instead of a pointer – and the difference evaporates." (Interview: blakecrosley-philosophy)
-  - **Supporting quote**: "eliminate the special case so the edge case has nowhere to hide" (Interview: blakecrosley-philosophy)
-
-- **Trigger**: Special-case handling for one operation that differs from similar operations in the same interface
-  - **Type**: invariant-false
-  - **What to look for**: One function or method in a family of similar operations takes a different signature, different parameters, or follows different rules than its siblings
-  - **Why it's a problem**: If one operation is "magical," the interface is inconsistent and callers will misuse it.
-  - **Severity**: reject
-  - **Example**: "Why the *hell* would mkdir() be so magical as to need something like that? ... What makes mkdir() so magical? Also, what about all the other ops?"
-
-- **Trigger**: New special-case code path added when existing special cases should be removed
-  - **Type**: invariant-false
-  - **What to look for**: A patch that introduces a new conditional branch for a specific state or mode, when the codebase already has too many such branches
-  - **Why it's a problem**: Each special case adds complexity and potential for bugs. The direction should be toward eliminating them, not adding more.
-  - **Severity**: request-changes
-  - **Example**: "Maybe we should just strive to get rid of all these SYSTEM_BOOTING special cases, instead of adding yet another a new one."
-
-- **Trigger**: Conditional logic that could be eliminated by choosing a different data representation
-  - **Type**: general-guideline
-  - **What to look for**: An `if` statement that handles a case which would not exist if the data were modeled differently
-  - **Why it's a problem**: The conditional is a symptom of a modeling error. Fixing the model is more correct than fixing the branch.
-  - **Severity**: request-changes
-  - **Example**: "And this is better. It does not have the if statement. ... sometimes you can see a problem in a different way and rewrite it so that a special case goes away and becomes the normal case." (TED 2016)
-
 ### Theme: API Stability and Backward Compatibility
 
-- **Trigger**: Change to a public interface that breaks existing callers
+- **Trigger**: Change breaks existing working setups or user-visible behavior
   - **Type**: invariant-false
-  - **What to look for**: Any modification to a documented or de facto public API that changes return values, parameter meanings, error codes, or observable behavior
-  - **Why it's a problem**: Existing code depends on current behavior. Breaking it causes regressions for users who have no control over the change.
+  - **What to look for**: Any change that alters documented behavior, output format, return values, or side effects that external code may depend on, without a compelling reason and migration path
+  - **Why it's a problem**: Existing users are the primary stakeholder. Breaking them destroys trust in the platform.
   - **Severity**: reject
-  - **Example**: "In other words, a kernel interface to user land changed. THAT IS ALWAYS A BUG. We don't change UI."
-  - **Supporting quote**: "And I want to make it painfully clear that if somebody breaks existing working setups, they don't get to work on the kernel."
+  - **Example**: "And I want to make it painfully clear that if somebody breaks existing working setups, they don't get to work on the kernel."
+  - **Supporting quote**: "In other words, a kernel interface to user land changed. THAT IS ALWAYS A BUG. We don't change UI."
 
-- **Trigger**: New public API added when an existing API could be extended
+- **Trigger**: Change removes or alters a public interface without checking for external dependents
+  - **Type**: invariant-false
+  - **What to look for**: Removal of a public function, API endpoint, configuration option, output format, or command-line interface without verifying no external code depends on it
+  - **Why it's a problem**: Public interfaces are contracts. Unilateral changes break callers you cannot see.
+  - **Severity**: reject
+  - **Example**: "NO. This is one backwards compatibility thing that I'm _not_ removing."
+
+- **Trigger**: New public API added when existing interface could be extended
   - **Type**: precedence-rule
-  - **What to look for**: A proposal for a new function, method, or endpoint that duplicates or overlaps with an existing one
-  - **Why it's a problem**: Each new public API is a permanent maintenance burden. Extending an existing one (e.g., adding a flag) is almost always simpler.
+  - **What to look for**: A new public function, endpoint, or configuration option that duplicates or could replace an existing one with minor extension
+  - **Why it's a problem**: Each new public API is a permanent maintenance burden. Extending existing interfaces is cheaper.
   - **Severity**: request-changes
   - **Example**: "So it's much simpler and more straightforward to just introduce a single new bit #2 that says 'I actually know what I'm doing, and I'm explicitly asking for secure/insecure random data'."
-  - **Supporting quote**: "But yes, in general I agree that that also most likely means that a separate system call for 'open_pidfd()' isn't worth it."
-
-- **Trigger**: Change to documented behavior without updating all callers
-  - **Type**: invariant-false
-  - **What to look for**: A patch that changes behavior described in documentation, specs, or comments without verifying that all callers are updated
-  - **Why it's a problem**: Documented behavior is a contract. Changing it without updating callers is a regression.
-  - **Severity**: reject
-  - **Example**: "The fact that you still don't agree, having broken documented behavior, and still argue against just having it fixed, I can't do anything about."
-
-- **Trigger**: Change to output format or diagnostic output that existing tooling depends on
-  - **Type**: invariant-false
-  - **What to look for**: Modifications to command output, log formats, or error messages that scripts, documentation, or external tools may parse
-  - **Why it's a problem**: Even "cosmetic" output changes can break automation and documentation that users rely on.
-  - **Severity**: reject
-  - **Example**: "No, that would be much *more* trouble-some, because we have things like bug-reporting documentation that tells people to send /proc/iomem etc information on crashes. There may well be scripts like that out there."
 
 - **Trigger**: Internal implementation details exposed through a public interface
   - **Type**: invariant-false
-  - **What to look for**: Private data structures, internal types, or implementation-specific annotations visible through a public API
-  - **Why it's a problem**: Exposing internals couples external code to implementation details, making future changes breaking changes.
+  - **What to look for**: A public API that accepts or returns internal data structures, type aliases that expose private types, or interfaces that require callers to know implementation details
+  - **Why it's a problem**: Exposing internals couples all callers to the implementation, making future changes impossible without breaking everyone.
   - **Severity**: request-changes
-  - **Example**: "Hmm.. your <linux/cred.h> file exposes 'struct ucred' to user space (or at least has a #ifdef __KERNEL__ that does not protect it). Why?"
+  - **Example**: "What this does is get rid of the horrible notion of having that struct inode *ptmx_inode be the interface between the pty code and devpts."
 
-### Theme: Error Handling
-
-- **Trigger**: Fatal assertion or abort used for a recoverable condition
+- **Trigger**: Single API function special-cased with parameters or behavior not applied to similar operations
   - **Type**: invariant-false
-  - **What to look for**: Code that crashes, panics, or aborts on a condition that could be handled gracefully with an error return
-  - **Why it's a problem**: Recoverable errors must be handled without crashing. Fatal assertions in production code turn manageable failures into system-wide outages.
-  - **Severity**: request-changes
-  - **Example**: "I'm getting *real* tired of that BUG_ON() shit... Killing the machine for idiotic things like that is truly offensive... Either that BUG_ON() cannot possibly happen, in which case it should damn well not exist in the first place. Or it's a valuable debug aid, in which case it should damn well not be a BUG_ON. You can't have it both ways."
-  - **Supporting quote**: "I'm not seeing why it would ever be ok to do BUG_ON() instead of just returning an error, though."
+  - **What to look for**: One function in a family of similar operations receives an extra parameter, flag, or code path that its siblings do not, without architectural justification
+  - **Why it's a problem**: Inconsistent interfaces force callers to remember which function is "special," creating bugs.
+  - **Severity**: reject
+  - **Example**: "Why the *hell* would mkdir() be so magical as to need something like that? ... What makes mkdir() so magical? Also, what about all the other ops?"
 
-- **Trigger**: Inconsistent error return conventions within the same module
+### Theme: Special Cases and Data Structure Design
+
+- **Trigger**: Special-case branch exists only because the data model treats one element differently from the rest
   - **Type**: general-guideline
-  - **What to look for**: Functions in the same module or subsystem that use different conventions for indicating success vs. failure (e.g., one returns negative on error, another returns null, another returns a boolean)
-  - **Why it's a problem**: Inconsistent conventions force callers to remember per-function rules, inviting misuse.
-  - **Severity**: nitpick
-  - **Example**: "In general, I would suggest: - ALWAYS use 'negative means error'."
+  - **What to look for**: An `if` statement or conditional that handles "the first element," "the empty case," "the head," or "the root" separately from the general case, where a different data representation would eliminate the branch
+  - **Why it's a problem**: Special cases are where bugs hide. The right data structure makes the special case impossible.
+  - **Severity**: request-changes
+  - **Example**: "sometimes you can see a problem in a different way and rewrite it so that a special case goes away and becomes the normal case, and that's good code." (TED 2016)
+  - **Supporting quote**: "eliminate the special case so the edge case has nowhere to hide" (Interview: blakecrosley-philosophy)
 
-- **Trigger**: Error return value that is indistinguishable from a successful return
+- **Trigger**: New special-case code added instead of removing existing special cases
   - **Type**: invariant-false
-  - **What to look for**: A function whose error return value overlaps with a valid success return value
-  - **Why it's a problem**: Callers cannot reliably distinguish success from failure, leading to silent bugs.
+  - **What to look for**: A patch that adds a new conditional for a specific state, mode, or configuration rather than refactoring to eliminate the need for the special case
+  - **Why it's a problem**: Each special case multiplies the test matrix. Adding more is going in the wrong direction.
+  - **Severity**: request-changes
+  - **Example**: "Maybe we should just strive to get rid of all these SYSTEM_BOOTING special cases, instead of adding yet another a new one."
+
+- **Trigger**: Data type larger than the valid range of values it can hold
+  - **Type**: general-guideline
+  - **What to look for**: A variable, parameter, or return type that uses a wider type than the actual valid range (e.g., 64-bit integer for values that can never exceed 32-bit limits)
+  - **Why it's a problem**: Oversized types invite invalid values and make interfaces misleading.
+  - **Severity**: request-changes
+  - **Example**: "So one possible fix is to just make that an error case in the caller, and then make user2rate_bytes() not take (or return) 'u64' at all, but simply use u32."
+
+- **Trigger**: Configuration markers or flags used as band-aid for underlying ordering bugs
+  - **Type**: invariant-false
+  - **What to look for**: A new flag, marker, or configuration option introduced to work around nondeterministic initialization or execution order, rather than fixing the ordering itself
+  - **Why it's a problem**: The ordering bug persists; the marker merely masks it for the cases the author thought of.
+  - **Severity**: reject
+  - **Example**: "So the whole 'add DT markers because the subsystem now screws up ordering' smells really bad to me."
+
+### Theme: Error Handling and Recovery
+
+- **Trigger**: Fatal crash or abort used for a recoverable error condition
+  - **Type**: invariant-false
+  - **What to look for**: A panic, abort, fatal assertion, or process kill in a code path that could instead return an error, log a warning, or fall back to a safe state
+  - **Why it's a problem**: Recoverable errors must be handled gracefully. Crashing on bad input or transient conditions is never acceptable in production code.
+  - **Severity**: reject
+  - **Example**: "I'm getting *real* tired of that BUG_ON() shit... Killing the machine for idiotic things like that is truly offensive... Either that BUG_ON() cannot possibly happen, in which case it should damn well not exist in the first place. Or it's a valuable debug aid, in which case it should damn well not be a BUG_ON. You can't have it both ways."
+  - **Supporting quote**: "THAT KIND OF THINKING IS NOT ACCEPTABLE IN THE KERNEL. I don't know why people keep doing this. Stop it."
+
+- **Trigger**: Function returns a value that is indistinguishable from a successful return
+  - **Type**: invariant-false
+  - **What to look for**: A function that returns zero for an error condition, returns the same value on success and failure, or uses a success value that overlaps with valid data
+  - **Why it's a problem**: Callers cannot distinguish success from failure, leading to silent data corruption or incorrect behavior.
   - **Severity**: reject
   - **Example**: "Returning zero from a write is basically insanity. It's not a valid error case."
 
-- **Trigger**: Error handling that masks the root cause
+- **Trigger**: New error return introduced that changes existing interface semantics
   - **Type**: invariant-false
-  - **What to look for**: Code that catches an error and returns a generic error code, logs a vague message, or silently continues, hiding the original failure
-  - **Why it's a problem**: Masking the root cause makes debugging impossible and may hide real bugs.
+  - **What to look for**: A patch that adds a new error code or error condition to an existing function, changing what callers must handle
+  - **Why it's a problem**: Existing callers were not written to handle the new error. Adding it silently breaks them.
+  - **Severity**: request-changes
+  - **Example**: "What's the upside? If somebody passes in a bad pointer, it's their problem. For all we know, people used to pass in NULL, even if they had the SETTID bit set. This makes it now return EFAULT. ... I *do* mind the new error return thing."
+
+- **Trigger**: Error handling code that masks the underlying bug instead of fixing it
+  - **Type**: invariant-false
+  - **What to look for**: Code that adds defensive checks, precision logic, or fallback paths to handle symptoms of a bug rather than fixing the root cause
+  - **Why it's a problem**: The bug persists. The defensive code makes it harder to detect and diagnose.
   - **Severity**: request-changes
   - **Example**: "All that precision code could ever do was to potentially hide bugs if the string wasn't NUL-terminated."
 
-- **Trigger**: Warning assertion that masks a real bug
+- **Trigger**: Inconsistent error codes across similar interfaces
   - **Type**: general-guideline
-  - **What to look for**: Use of a warning mechanism for a "should never happen" condition where the warning is the only response — no error return, no recovery
-  - **Why it's a problem**: If the condition indicates a real bug, a warning is insufficient. If it can never happen, the warning is dead code.
+  - **What to look for**: Functions in the same module or family that return different error codes for the same error condition, or use different return-value conventions (some return -1, some return null, some throw)
+  - **Why it's a problem**: Inconsistent conventions force callers to remember per-function rules, creating bugs.
   - **Severity**: request-changes
-  - **Example**: "please make it a WARN_ON_ONCE(), just on basic principles. I can't imagine this happening a lot, but at the same time I don't think there's any reason _not_ to just always use WARN_ON_ONCE() for these kinds of 'serious bug, but should never happen' situations."
+  - **Example**: "So I'd say that the other place should probably be EINTR too. But it would obviously be a good idea to verify that no caller cares.."
 
-- **Trigger**: Error code returned that callers cannot meaningfully handle
+- **Trigger**: Error path that cannot be meaningfully handled by callers
   - **Type**: general-guideline
-  - **What to look for**: A function that returns an error code for a condition the caller has no way to address, forcing the caller to handle an error it cannot fix
-  - **Why it's a problem**: Useless error returns impose error-handling burden on every caller without providing value.
+  - **What to look for**: A function that returns an error code for a condition the caller cannot act on, where the only reasonable response is to log and continue
+  - **Why it's a problem**: Forcing callers to handle unactionable errors adds complexity without value.
   - **Severity**: reject
   - **Example**: "The whole 'sysfs_create_file()' thing is an example of that. If it fails, it fails. The caller can't do anythign about it anyway, except perhaps print a message. Why the hell does such a function have the 'right' to dictate what the user should do?"
 
-### Theme: Concurrency
+### Theme: Concurrency and Synchronization
 
-- **Trigger**: Unsynchronized access to shared mutable data
+- **Trigger**: Shared mutable data accessed without explicit synchronization or memory ordering
   - **Type**: invariant-false
-  - **What to look for**: A variable or data structure accessed from multiple threads without explicit synchronization (locks, atomics, or memory ordering primitives)
-  - **Why it's a problem**: Without synchronization, the CPU and compiler may reorder accesses, causing data races and subtle corruption.
+  - **What to look for**: A variable shared between threads that is read or written without a lock, atomic operation, or memory barrier, where the programmer relies on compiler ordering or language semantics
+  - **Why it's a problem**: The CPU may reorder accesses. Without explicit synchronization, the code is racy on any hardware with weak memory ordering.
   - **Severity**: reject
   - **Example**: "The reason it is buggy has absolutely nothing to do with whether the read is done or not, it has to do with the fact that the CPU may re-order the reads regardless of whether the read is done in some specific order by the compiler or not! ... The above kind of code needs memory barriers to be non-buggy."
 
-- **Trigger**: Inconsistent lock acquisition order across code paths
-  - **Type**: invariant-false
-  - **What to look for**: Two code paths that acquire the same set of locks in different orders, creating a deadlock risk
-  - **Why it's a problem**: Inconsistent lock ordering is the primary cause of deadlocks in concurrent code.
-  - **Severity**: reject
+- **Trigger**: Multiple locks acquired without a consistent global ordering
+  - **Type**: invariant-true
+  - **What to look for**: Code that acquires two or more locks where the acquisition order is not documented or enforced, creating potential for deadlocks
+  - **Why it's a problem**: Inconsistent lock ordering leads to deadlocks that are extremely hard to reproduce and diagnose.
+  - **Severity**: request-changes
   - **Example**: "The common way to avoid AB-BA deadlocks in any threaded code (whether kernel or user space) is to just take two locks in a specific order, and the common way to do that for locks of the same type is simply to compare the addresses)."
 
-- **Trigger**: Holding a lock while performing operations that may block or require the same lock
+- **Trigger**: Lock held while invoking code that may block or acquire the same lock
   - **Type**: invariant-false
-  - **What to look for**: Code that holds a lock and then calls a function that may sleep, block, schedule work, or attempt to acquire the same lock
-  - **Why it's a problem**: This creates deadlock conditions and increases lock contention.
+  - **What to look for**: A function that holds a lock and then calls another function that may block, schedule deferred work, or attempt to acquire the same lock
+  - **Why it's a problem**: This creates deadlock potential. The deferred work cannot complete until the lock is released, but the lock won't be released until the deferred work completes.
   - **Severity**: request-changes
   - **Example**: "Now that's fine - as long as we never take that lock inside any delayed work - because then the delayed work itself may need the lock we hold in order to complete, and now the 'cancel_delayed_work_sync()' thing might deadlock."
 
-- **Trigger**: Replacing well-tested synchronization primitives with custom code
+- **Trigger**: Resource freed or cleanup performed while a lock is still held
   - **Type**: invariant-false
-  - **What to look for**: A patch that replaces a standard, well-tested lock or atomic primitive with a custom implementation
-  - **Why it's a problem**: Custom synchronization code is almost always wrong in subtle ways that standard primitives have already solved.
+  - **What to look for**: An error-handling path that jumps to a cleanup label that frees resources, but the lock was acquired before the jump and is not released before the cleanup
+  - **Why it's a problem**: The freed resource may be accessed while locked, or the lock may never be released.
+  - **Severity**: request-changes
+  - **Example**: "You still have 'goto err' for cases that have the ctx locked. Which means that the thing gets free'd while still locked, which causes problems for lockdep etc, so don't do it."
+
+- **Trigger**: Well-tested synchronization primitive replaced with custom untested code
+  - **Type**: invariant-false
+  - **What to look for**: A patch that replaces a standard lock, atomic, or synchronization primitive with a hand-rolled equivalent, without providing all necessary supporting functions
+  - **Why it's a problem**: Standard primitives are battle-tested. Custom replacements introduce subtle bugs in memory ordering, fairness, and deadlock avoidance.
   - **Severity**: request-changes
   - **Example**: "but we don't have that 'write_islocked()' function. So the above would need more work, and is entirely untested anyway, obviously."
 
-- **Trigger**: Redundant synchronization on already-serialized operations
-  - **Type**: general-guideline
-  - **What to look for**: Memory barriers or locks added around operations that are already serialized by an existing mechanism
-  - **Why it's a problem**: Redundant synchronization adds overhead without correctness benefit and obscures the actual synchronization requirements.
-  - **Severity**: request-changes
-  - **Example**: "if we really want to do this op, then I'd rather make the code be really obvious what the smp_mb is about, but also make sure that we don't unnecessarily do *both* the smp_mb and the actual already-serialized bit operation."
-
-- **Trigger**: Using the wrong lock type for the operation
+- **Trigger**: Read lock used where a write lock is required
   - **Type**: invariant-false
-  - **What to look for**: A read lock used where a write lock is required, or a shared lock protecting a mutating operation
-  - **Why it's a problem**: A read lock does not prevent concurrent writes, so data corruption can occur.
+  - **What to look for**: A shared-data modification performed under a read lock instead of a write lock
+  - **Why it's a problem**: Read locks allow concurrent readers. Modifying data under a read lock races with other readers.
   - **Severity**: request-changes
   - **Example**: "the fix is literally to turn the read-lock (and unlock) into a write-lock (and unlock)."
 
 ### Theme: Memory Safety and Resource Management
 
 - **Trigger**: Shared object accessed from multiple threads without reference counting
-  - **Type**: invariant-false
-  - **What to look for**: A data structure used across threads or asynchronous contexts without a reference count or ownership mechanism
+  - **Type**: invariant-true
+  - **What to look for**: A data structure that is accessed from more than one thread or execution context but has no reference count or other lifetime management mechanism
   - **Why it's a problem**: Without reference counting, one thread may free the object while another is still using it.
   - **Severity**: request-changes
   - **Example**: "Side note: this is pretty much true of any kernel data structure. If you have a kernel data structure that isn't just used within one thread, it must be refcounted."
 
-- **Trigger**: Reference to stack-allocated object escaping function scope
+- **Trigger**: Reference to stack-allocated object stored or accessed after function returns
   - **Type**: invariant-false
-  - **What to look for**: A pointer or reference to a local variable stored in a data structure that outlives the function call
-  - **Why it's a problem**: After the function returns, the stack frame is invalid, creating a dangling pointer.
+  - **What to look for**: A function that stores a pointer to a local variable in a data structure, callback, or return value that outlives the function call
+  - **Why it's a problem**: The stack frame is deallocated when the function returns. The stored pointer becomes dangling.
   - **Severity**: reject
   - **Example**: "That's unacceptably buggy crap. rpc_wait_for_completion_task() will happily exit on a deadly signal even if the rpc hasn't been completed, so now you'll have a stale pointer to a stack that has been freed."
 
-- **Trigger**: Resource freed while still referenced or while lock is held
+- **Trigger**: Resource freed based on non-atomic or ambiguous reference count check
   - **Type**: invariant-false
-  - **What to look for**: Cleanup code that frees a resource before releasing a lock that protects it, or before all references are dropped
-  - **Why it's a problem**: Freeing under a lock creates lock-ordering issues; freeing with live references creates use-after-free.
-  - **Severity**: request-changes
-  - **Example**: "You still have 'goto err' for cases that have the ctx locked. Which means that the thing gets free'd while still locked, which causes problems for lockdep etc, so don't do it."
-
-- **Trigger**: Non-atomic check before deallocation
-  - **Type**: invariant-false
-  - **What to look for**: A resource freed based on a check (e.g., "refcount is zero or list is empty") that is not atomic
-  - **Why it's a problem**: Two threads can both pass the check and both free the resource, causing a double-free.
+  - **What to look for**: A deallocation decision based on a compound condition (e.g., "refcount is zero OR list is empty") rather than a single atomic reference count
+  - **Why it's a problem**: Two parties may both decide they can free the resource, causing a double-free.
   - **Severity**: request-changes
   - **Example**: "You're right because it would be a double-free - both parties would decide that they can free the damn thing, because it's not a pure atomic refcount, it's a 'refcount or list_empty()' thing."
 
-- **Trigger**: Large stack allocations in individual frames
+- **Trigger**: Code loses track of how a resource was allocated
+  - **Type**: invariant-false
+  - **What to look for**: Code that allocates memory through different paths or mechanisms and later tries to infer the allocation method to choose the correct deallocation method
+  - **Why it's a problem**: If you don't know how memory was allocated, you cannot safely deallocate it. Guessing leads to leaks or corruption.
+  - **Severity**: reject
+  - **Example**: "Ugh, that XFS code is _broken_. Instead of keeping track of how it got the memory, it totally forgets where the memory came from, and then it later asks 'oh, btw, how the hell did I allocate this?'"
+
+- **Trigger**: Individual stack frames exceeding reasonable size
   - **Type**: general-guideline
-  - **What to look for**: Individual function stack frames exceeding ~1KB, often caused by large local arrays or structures
-  - **Why it's a problem**: Deep call chains with large frames can overflow the stack, causing crashes that are hard to diagnose.
+  - **What to look for**: A single function that allocates large local variables or arrays, causing its stack frame to exceed safe limits (typically a few hundred bytes)
+  - **Why it's a problem**: Deep call chains with large frames cause stack overflow, which is extremely hard to diagnose.
   - **Severity**: request-changes
   - **Example**: "Because a 1kB stack frame is horrendous ... And no, ... is not an excuse for one single level to use up 1kB, much less 2kB."
 
-### Theme: Complexity and Abstraction
-
-- **Trigger**: New abstraction added when an existing one suffices
-  - **Type**: precedence-rule
-  - **What to look for**: A new function, type, or interface that duplicates functionality already available through an existing abstraction
-  - **Why it's a problem**: Each new abstraction is a permanent maintenance burden. Reusing existing code is almost always simpler and safer.
+- **Trigger**: Resource released while it may still be referenced
+  - **Type**: invariant-false
+  - **What to look for**: A buffer, object, or connection that is freed while it may still serve as a tail, head, or active reference in a data structure
+  - **Why it's a problem**: The freed resource may be accessed, causing use-after-free bugs.
   - **Severity**: request-changes
-  - **Example**: "We already have RELOC_HIDE() and OPTIMIZER_HIDE_VAR() that basically do this. They both use 'r'. I guess they could use X."
+  - **Example**: "Those two lines should _not_ be deleted. I cleaned up a bit too much. The rule is that we must not free the last buffer, because it's also going to be 'tail'."
 
-- **Trigger**: Duplicated logic that should be factored into a shared helper
-  - **Type**: general-guideline
-  - **What to look for**: The same non-trivial logic appearing in two or more places, copied rather than extracted
-  - **Why it's a problem**: Duplicated logic diverges over time, causing bugs that exist in one copy but not the other.
+### Theme: Abstraction and Code Reuse
+
+- **Trigger**: Logic duplicated that already exists elsewhere in the codebase
+  - **Type**: invariant-false
+  - **What to look for**: A patch that reimplements functionality — retry loops, validation, conversion, parsing — that already exists as a helper function or utility
+  - **Why it's a problem**: Duplicated logic diverges over time. Bugs fixed in one copy persist in the other.
   - **Severity**: request-changes
   - **Example**: "Can we please not duplicate complicated logic like that? IOW, just make a helper function for it."
 
-- **Trigger**: Dead or unused code paths retained
-  - **Type**: general-guideline
-  - **What to look for**: Code that is never called, or a fallback path that has no actual users
-  - **Why it's a problem**: Dead code increases maintenance burden and misleads readers into thinking it serves a purpose.
-  - **Severity**: request-changes
-  - **Example**: "But if there are no actual users of get_random_bytes_arch(), maybe we can just remove the fallback to the non-arch code, and add that return value (and the __must_check())."
-
-- **Trigger**: Configuration option that increases user burden without clear benefit
+- **Trigger**: Core API polluted with specialized or unnecessary abstractions
   - **Type**: invariant-false
-  - **What to look for**: A new configuration option, setting, or toggle that users must understand and set correctly
-  - **Why it's a problem**: Each option adds decision fatigue and a new combination that must be tested. Defaults should be right for most users.
+  - **What to look for**: A new function, type, or macro added to a shared or core module that serves only a narrow, specialized use case
+  - **Why it's a problem**: Core APIs are imported everywhere. Specialized additions increase compilation time and cognitive load for all users.
   - **Severity**: reject
-  - **Example**: "No. Dammit, stop doing these horrible things."
+  - **Example**: "But no, we don't pollute core kernel code with those stupid and pointless things."
 
-- **Trigger**: Complexity added for marginal or unproven benefit
-  - **Type**: precedence-rule
-  - **What to look for**: Code that adds significant complexity (new abstractions, new code paths, new dependencies) for a small or theoretical benefit
-  - **Why it's a problem**: Complexity has a permanent cost; benefits must be concrete and proportional.
+- **Trigger**: Direct manipulation of internal data structures instead of using accessors
+  - **Type**: general-guideline
+  - **What to look for**: Code that directly reads or writes fields of an internal array or structure, bypassing accessor functions that exist for that purpose
+  - **Why it's a problem**: Direct access breaks encapsulation. If the internal representation changes, all direct-access sites must be found and updated.
   - **Severity**: request-changes
-  - **Example**: "Put another way: we lived without DEBUG_RODATA for fifteen years, why should we now start adding complexity to work around code that doesn't accept the (fairly small) debugging it gives?"
+  - **Example**: "Btw, why is it ok that some functions still read the ib[] array directly (eg evergreen_vm_packet3_check() or evergreen_cs_check_reg() etc)?"
 
-- **Trigger**: Simpler solution available but not chosen
-  - **Type**: precedence-rule
-  - **What to look for**: A patch that implements a complex solution when a simpler approach achieves the same goal
-  - **Why it's a problem**: Unnecessary complexity makes code harder to maintain and more bug-prone.
+- **Trigger**: Core algorithmic logic mixed with resource management concerns
+  - **Type**: general-guideline
+  - **What to look for**: A function that contains both business logic (loops, conditionals, data transformation) and lock acquisition/release, where the logic could be extracted into a helper
+  - **Why it's a problem**: Mixing concerns makes the function harder to test, reason about, and modify. The lock logic constrains the algorithm's structure.
   - **Severity**: request-changes
-  - **Example**: "Your patch is horribly ugly. How about this (much simpler) patch instead? It just sets the 'max' to zero if pos in NULL in the caller. That just seems a much better/saner approach."
+  - **Example**: "It would also simplify things a lot if that function was split up so that you'd have that whole loop in a helper function. That way it could just use 'return ret' or whatever, with the mutex_lock/unlock in the caller."
+
+- **Trigger**: Hard-coded magic constants or hardware-specific values
+  - **Type**: invariant-false
+  - **What to look for**: Numeric literals, physical addresses, or hardware-specific values embedded directly in code rather than named constants or configuration
+  - **Why it's a problem**: Magic values are unportable, undocumented, and fragile. They make the code impossible to maintain on different platforms.
+  - **Severity**: request-changes
+  - **Example**: "the whole 'fixed address at around 12GB physical' really is such a horrible hack"
+
+- **Trigger**: Abstraction added that provides no clear benefit over the direct approach
+  - **Type**: invariant-false
+  - **What to look for**: A new wrapper function, type alias, or abstraction layer that adds indirection without improving type safety, readability, or maintainability
+  - **Why it's a problem**: Unnecessary abstractions add cognitive load and maintenance burden without value.
+  - **Severity**: reject
+  - **Example**: "No, you should just not do this. I don't see the point."
 
 ### Theme: Performance
 
 - **Trigger**: Performance claim without controlled measurement
-  - **Type**: general-guideline
-  - **What to look for**: A patch that claims a performance improvement but does not isolate the variable being changed, or compares across different versions/configurations
-  - **Why it's a problem**: Without controlled measurement, the claimed improvement may be caused by unrelated changes.
+  - **Type**: invariant-false
+  - **What to look for**: A patch that claims a performance improvement but compares different versions, configurations, or environments without isolating the variable being changed
+  - **Why it's a problem**: Without controlled measurement, the improvement may be illusory or caused by unrelated changes.
   - **Severity**: request-changes
   - **Example**: "That's 2.5% - a huge difference. Particularly since kernel build times shouldn't even be that kernel-intensive. I think there's something else going on than the nops. Same config? There are likely many other differences between 5.10.19 and 5.12-rc3. So can you check just plain 5.12-rc3 and then 5.12-rc3 plus x86-nops, with otherwise identical configuration?"
 
-- **Trigger**: Expensive abstraction in a hot path
+- **Trigger**: Unnecessary function call or abstraction added in a hot path
   - **Type**: general-guideline
-  - **What to look for**: Virtual dispatch, dynamic dispatch, or heavyweight abstractions used inside tight loops or frequently-executed code paths
-  - **Why it's a problem**: The cost of the abstraction is multiplied by the iteration count, often dominating the actual work.
-  - **Severity**: request-changes
-  - **Example**: "that is PRECISELY the type of programmer Linus says is a crap programmer because they have never learnt the 0th rule of programming: TINSTAAFL" (Interview: blakecrosley-philosophy)
-
-- **Trigger**: Unnecessary serialization in concurrent code
-  - **Type**: general-guideline
-  - **What to look for**: A global lock or serialization point that forces sequential execution where parallel execution is safe
-  - **Why it's a problem**: Unnecessary serialization limits scalability and creates contention bottlenecks.
-  - **Severity**: discussion
-  - **Example**: "Doing lookups in particular is ridiculously single-threaded for almost no good reason"
-
-- **Trigger**: Optimization that breaks correctness
-  - **Type**: invariant-false
-  - **What to look for**: A performance optimization that changes observable behavior, removes safety checks, or introduces race conditions
-  - **Why it's a problem**: Correctness always takes precedence over performance.
+  - **What to look for**: A new function call, virtual dispatch, or indirection introduced in a performance-critical code path without justification
+  - **Why it's a problem**: Each indirection has a cost. In hot paths, these costs multiply.
   - **Severity**: reject
-  - **Example**: "You can't unplug it in the place where we submit IO. That's insane, because it basically means never plugging at all."
+  - **Example**: "And I'm not pulling stupid code. The one-liner to just disable an optimization that isn't an optimization is the right thing to do."
 
-### Theme: Process and Testing
-
-- **Trigger**: Code submitted without evidence of testing
+- **Trigger**: Performance assumption made without verifying actual cost
   - **Type**: invariant-false
-  - **What to look for**: A patch that is described as untested, or submitted without any indication that it was built and run
-  - **Why it's a problem**: Untested code is hypothetical code. Until it runs, the argument is unsettled.
-  - **Severity**: request-changes
-  - **Example**: "Sure. Send me a tested patch. ... but somebody definitely needs to test it."
+  - **What to look for**: A claim that a change is "too expensive" or "adds overhead" without measuring the actual cost on the target platform
+  - **Why it's a problem**: Unverified assumptions lead to premature optimization or rejection of beneficial changes.
+  - **Severity**: reject
+  - **Example**: "Again, you seem to think that we used to have just a plain spin_lock. Not so. We currently have a spin_lock_irq(), and it is NOT a no-op even on UP. It does that irq disable."
 
-- **Trigger**: Commit message that doesn't explain why the change is needed
+- **Trigger**: Unprivileged code allowed to trigger expensive system-wide operations
+  - **Type**: invariant-false
+  - **What to look for**: An interface that lets any caller request a costly operation (cache flush, synchronization barrier, global scan) without checking capability or necessity
+  - **Why it's a problem**: A single caller can degrade system-wide performance for all users.
+  - **Severity**: reject
+  - **Example**: "I don't want some application to go 'Oh, I'm _soo_ special and pretty and such a delicate flower, that I want to flush the L1D on every task switch, regardless of what CPU I am on, and regardless of whether there are errata or not'."
+
+- **Trigger**: Redundant work performed that the system already handles
   - **Type**: general-guideline
-  - **What to look for**: A commit message that describes what changed but not why, or provides no rationale at all
+  - **What to look for**: Code that performs an operation (flush, sync, invalidate) that the framework or runtime already performs as part of its normal flow
+  - **Why it's a problem**: The redundant work wastes resources and may introduce subtle ordering bugs.
+  - **Severity**: request-changes
+  - **Example**: "It's still untested, but I realized that the whole 'blk_flush_plug_list(plug, true);' thing is pointless, since schedule() itself will do that for us."
+
+### Theme: Documentation and Communication
+
+- **Trigger**: Commit message does not explain why the change is needed
+  - **Type**: invariant-true
+  - **What to look for**: A commit message that describes what the code does but not why, or that is missing entirely for a non-trivial change
   - **Why it's a problem**: Without the "why," future maintainers cannot assess whether the change is still needed or whether it can be safely modified.
-  - **Severity**: nitpick
+  - **Severity**: request-changes
   - **Example**: "I have to say, that commit message is pretty bad too. It doesn't actually explain why this is needed."
-  - **Supporting quote**: "Commit messages to me are almost as important as the code change itself. ... if you can explain your code to me, I will trust the code." (Interview: blakecrosley-philosophy)
+  - **Supporting quote**: "not just the code itself, but explaining why the code does something, and why some change was needed." (Interview: documentation)
 
-- **Trigger**: Unrelated changes mixed in a single commit
-  - **Type**: general-guideline
-  - **What to look for**: A single commit that addresses multiple unrelated concerns, making it impossible to revert one without the other
-  - **Why it's a problem**: Mixed commits break bisectability and make review harder.
-  - **Severity**: request-changes
-  - **Example**: "So I think it's worth splitting out the 'popf' part of the patch"
-
-- **Trigger**: Patch submitted to stable branch before being validated in mapremature optimization hint
+- **Trigger**: Comment or documentation does not match actual code behavior
   - **Type**: invariant-false
-  - **What to look for**: A fix proposed for a stable/release branch that has not yet been merged and tested in the development branch
-  - **Why it's a problem**: Stable branches must only receive fixes that have already been validated.
+  - **What to look for**: A comment that describes behavior that no longer matches the code, or documentation that claims semantics the implementation does not provide
+  - **Why it's a problem**: Misleading comments are worse than no comments. They cause maintainers to trust behavior that doesn't exist.
   - **Severity**: reject
-  - **Example**: "Exactly like any other patch. Exactly like the rules for -stable says we should."
+  - **Example**: "The documentation comment doesn't even match the macro, and claims that 'container' is a type."
 
-- **Trigger**: Commits made immediately before a pull request with no time for testing
-  - **Type**: general-guideline
-  - **What to look for**: All commits in a pull request made within a very short time window before submission
-  - **Why it's a problem**: No time for testing means the changes are unvalidated.
-  - **Severity**: request-changes
-  - **Example**: "Also, all of these commits were committed less than an hour before sending me the pull request, so I question the kind of testing they got.."
-
-### Theme: Security
-
-- **Trigger**: Security check performed at the wrong time or in the wrong context
+- **Trigger**: Behavior defined by reference to a specific implementation rather than a specification
   - **Type**: invariant-false
-  - **What to look for**: A permission or capability check that happens at the wrong point (e.g., at read time instead of open time, or in an asynchronous context where the original caller's identity is not guaranteed)
-  - **Why it's a problem**: Security checks must be performed when the caller's identity and context are guaranteed.
-  - **Severity**: reject
-  - **Example**: "Just do the damn thing right, like /proc/kallsyms does these days. With the proper open time cred check, not the wrong one at io time."
-
-- **Trigger**: Security-critical state not initialized before exposure to untrusted input
-  - **Type**: invariant-false
-  - **What to look for**: Code that allows untrusted input or external interaction before all security-critical state (entropy, permissions, configuration) is fully initialized
-  - **Why it's a problem**: Attackers can exploit uninitialized state to bypass security mechanisms.
-  - **Severity**: reject
-  - **Example**: "If you let attackers in before you've set the clock on the device, you're doing something seriously wrong."
-
-- **Trigger**: Feature that undermines the security guarantees it claims to provide
-  - **Type**: invariant-false
-  - **What to look for**: A security feature that, in its implementation, bypasses or weakens existing security mechanisms
-  - **Why it's a problem**: A security feature that weakens security is worse than no feature at all.
+  - **What to look for**: Documentation that says "the behavior is whatever compiler X does" or "the behavior matches implementation Y" rather than specifying the behavior independently
+  - **Why it's a problem**: Implementation-defined behavior changes between versions. Without a specification, there is no contract.
   - **Severity**: request-changes
-  - **Example**: "Your 'limit system calls for security' security suddenly turned into 'avoid the system call that made things secure'!"
+  - **Example**: "That is 'not good'" (Interview: documentation, on behavior defined as "whatever the rustc compiler does")
 
-- **Trigger**: Legacy insecure feature retained without a maintainer
-  - **Type**: general-guideline
-  - **What to look for**: An old, insecure protocol or feature that remains in the codebase but has no active maintainer and cannot be properly tested
-  - **Why it's a problem**: Unmaintained security-relevant code is a liability — it cannot be verified or fixed when vulnerabilities are found.
-  - **Severity**: reject
-  - **Example**: "So I have to admit that I think it's a 20+ year old legacy and insecure protocol that nobody should be using. When the maintainer can't really even test it, and it really has been deprecated that long, I get the feeling that somebody who wants it to be maintained will need to do that job himself."
-
-### Theme: Naming, Style, and Readability
-
-- **Trigger**: Names that don't describe what the code does
-  - **Type**: general-guideline
-  - **What to look for**: Function, variable, or type names that are obscure, ambiguous, or actively misleading about the code's behavior
-  - **Why it's a problem**: Misleading names cause bugs when callers assume the name reflects the behavior.
-  - **Severity**: nitpick
-  - **Example**: "The fact that PARAM was already used as a name should have been a big hint that the name is not specific or descriptive enough."
-
-- **Trigger**: Inconsistent naming across similar entities
-  - **Type**: general-guideline
-  - **What to look for**: Similar functions, types, or variables that follow different naming conventions within the same module
-  - **Why it's a problem**: Inconsistency forces readers to remember per-entity rules and invites copy-paste errors.
-  - **Severity**: nitpick
-  - **Example**: "It seems silly to have the 'r' for the r8-r15 case, but not the legacy registers."
-
-- **Trigger**: Obscure or clever code when straightforward code works
-  - **Type**: general-guideline
-  - **What to look for**: Complex arithmetic, bit tricks, or macro gymnastics used where a simple expression would suffice
-  - **Why it's a problem**: Clever code is harder to read, harder to maintain, and more likely to contain bugs.
-  - **Severity**: nitpick
-  - **Example**: "it all boils down to a very complicated and unnecessarily obtuse way of writing '4096 bits'."
-
-- **Trigger**: Comments that don't match the code's actual behavior
-  - **Type**: invariant-false
-  - **What to look for**: A comment that describes behavior different from what the code does
-  - **Why it's a problem**: Misleading comments are worse than no comments — they actively cause misunderstanding.
-  - **Severity**: request-changes
-  - **Example**: "the thing is, 99.9% of the time the d_lock wasn't dropped, so that 'while d_lock was dropped' comment is misleading."
-
-### Theme: Documentation
-
-- **Trigger**: Missing documentation for non-trivial behavior
-  - **Type**: general-guideline
-  - **What to look for**: Complex logic, subtle synchronization rules, or non-obvious design decisions with no explanatory comments
-  - **Why it's a problem**: Reviewers and maintainers must guess the rules from reading the source, which is error-prone.
-  - **Severity**: request-changes
-  - **Example**: "That thing is subtle. A few more comments about the locking would be good, so that people like me wouldn't have to try to guess the rules from reading the source."
-
-- **Trigger**: Error messages that don't describe the actual condition
-  - **Type**: general-guideline
-  - **What to look for**: Diagnostic or error messages that reference the wrong name, wrong state, or wrong entity
-  - **Why it's a problem**: Misleading error messages send debuggers in the wrong direction.
+- **Trigger**: Error or diagnostic message does not accurately describe the condition
+  - **Type**: invariant-true
+  - **What to look for**: An error message, log message, or assertion that names the wrong entity, wrong condition, or wrong operation
+  - **Why it's a problem**: Misleading messages send debuggers in the wrong direction, wasting hours.
   - **Severity**: request-changes
   - **Example**: "The error string is also total crap, and says 'Unable to create ' DRV_NAME ' proc directory\n' ); Even though it doesn't actually create a proc directory named DRV_NAME at all."
 
-- **Trigger**: Documentation that defines behavior by referring to a specific implementation
-  - **Type**: invariant-false
-  - **What to look for**: Specs or documentation that say "behavior is whatever compiler X does" rather than specifying the behavior independently
-  - **Why it's a problem**: Implementation-defined behavior is not a specification; it changes when the implementation changes.
-  - **Severity**: request-changes
-  - **Example**: "That is 'not good'" (Interview: blakecrosley-philosophy, on documentation that says "whatever the rustc compiler does")
-
-### Theme: Copy-Paste and Magic Numbers
-
-- **Trigger**: Duplicated logic copied without understanding
+- **Trigger**: Missing documentation for synchronization requirements or locking rules
   - **Type**: general-guideline
-  - **What to look for**: A block of code that appears in multiple places, copied verbatim or near-verbatim, where the copies may diverge
-  - **Why it's a problem**: When a bug is fixed in one copy, the other copies remain buggy. The pattern indicates the author did not understand the logic well enough to abstract it.
+  - **What to look for**: Complex code with non-obvious locking invariants, but no comments explaining what locks must be held, in what order, and why
+  - **Why it's a problem**: Reviewers and maintainers must guess the locking rules from reading the code, which is error-prone for subtle code.
   - **Severity**: request-changes
-  - **Example**: "Can we please not duplicate complicated logic like that? IOW, just make a helper function for it."
+  - **Example**: "That thing is subtle. A few more comments about the locking would be good, so that people like me wouldn't have to try to guess the rules from reading the source."
 
-- **Trigger**: Magic numbers in error paths without context
-  - **Type**: general-guideline
-  - **What to look for**: Bare numeric constants or undocumented status codes in error-handling code
-  - **Why it's a problem**: Without context, reviewers and maintainers cannot verify the error code is correct or meaningful.
-  - **Severity**: nitpick
-  - **Example**: "Are the model numbers listed in some doc?"
+### Theme: Testing and Verification
 
-- **Trigger**: Hard-coded constants or hardware-specific values
+- **Trigger**: Code submitted without evidence of testing
   - **Type**: invariant-false
-  - **What to look for**: Magic numbers, fixed addresses, or hardware-specific values embedded directly in logic
-  - **Why it's a problem**: Hard-coded values are non-portable and fragile; they should be configurable or derived.
+  - **What to look for**: A patch that is described as untested, or that is submitted immediately after being written with no indication of build or runtime verification
+  - **Why it's a problem**: Untested code is wrong code. The probability of a non-trivial patch being correct without testing is near zero.
   - **Severity**: request-changes
-  - **Example**: "the whole 'fixed address at around 12GB physical' really is such a horrible hack"
+  - **Example**: "Also, all of these commits were committed less than an hour before sending me the pull request, so I question the kind of testing they got.."
+  - **Supporting quote**: "Sure. Send me a tested patch. ... but somebody definitely needs to test it."
+
+- **Trigger**: Bug fix submitted without reproducible evidence
+  - **Type**: general-guideline
+  - **What to look for**: A patch that claims to fix a bug but provides no reproducer, no crash trace, no hardware description, or no workload that triggers the issue
+  - **Why it's a problem**: Without a reproducer, the fix cannot be verified, and the bug may not exist as described.
+  - **Severity**: request-changes
+  - **Example**: "So tell us more about those actual problems, because your patch and explanation is clearly wrong. What hardware, what load, what 'kernel BUG at filemap.c:202'?"
+
+- **Trigger**: Change tested only under favorable conditions
+  - **Type**: general-guideline
+  - **What to look for**: A benchmark or test that only measures the best case, or a patch tested only with the configuration that benefits it
+  - **Why it's a problem**: Favorable tests hide regressions. Both best and worst cases must be measured.
+  - **Severity**: request-changes
+  - **Example**: "So I would suggest you highlight the bad case too: use invlpg to invalidate *one* TLB entry, and then walk four non-adjacent entries. And compare *that* to the full TLB flush."
+
+- **Trigger**: Change not validated across all relevant configurations
+  - **Type**: general-guideline
+  - **What to look for**: A patch that affects multiple platforms, modes, or configurations but is tested only on one
+  - **Why it's a problem**: Configuration-specific bugs are the hardest to find. Untested configurations will break.
+  - **Severity**: request-changes
+  - **Example**: "The fact that it also shows up with numa balancing is a bit unfortunate, because I think that means that that patch series may not have caught that case."
+
+### Theme: Security
+
+- **Trigger**: Security check performed at the wrong point in the code
+  - **Type**: invariant-false
+  - **What to look for**: A permission or capability check performed at use time rather than at open/acquisition time, or vice versa, when the correct point is well-established
+  - **Why it's a problem**: Checking at the wrong time creates TOCTOU races or allows access that should be denied.
+  - **Severity**: reject
+  - **Example**: "Just do the damn thing right, like /proc/kallsyms does these days. With the proper open time cred check, not the wrong one at io time."
+
+- **Trigger**: Security-critical state not initialized before exposing functionality
+  - **Type**: invariant-false
+  - **What to look for**: An interface, service, or entry point that becomes available before all security-critical initialization (entropy, keys, permissions) is complete
+  - **Why it's a problem**: Attackers can interact with uninitialized or weakly initialized security state.
+  - **Severity**: reject
+  - **Example**: "If you let attackers in before you've set the clock on the device, you're doing something seriously wrong."
+
+- **Trigger**: New interface that replicates an existing interface with known security problems
+  - **Type**: invariant-false
+  - **What to look for**: A new API, syscall, or endpoint that provides the same functionality as an existing one that has known security issues, without addressing those issues
+  - **Why it's a problem**: Repeating past mistakes in a new interface is inexcusable.
+  - **Severity**: reject
+  - **Example**: "I would definitely not want to have anything that looks like ptrace AT ALL using pidfd."
+
+- **Trigger**: Code path exempted from security checks because it is perceived as "special"
+  - **Type**: invariant-false
+  - **What to look for**: A new operation, namespace, or capability that bypasses security hooks or checks because the author considers it inherently safe
+  - **Why it's a problem**: No code path is inherently safe. All paths must be audited.
+  - **Severity**: request-changes
+  - **Example**: "the notion that creating a whole new namespace somehow must not have any security hooks because it's *so* special is just ridiculous."
+
+- **Trigger**: API defaults that enable unsafe behavior
+  - **Type**: invariant-true
+  - **What to look for**: A new interface whose default behavior enables privileged, dangerous, or unexpected access, requiring the caller to opt out
+  - **Why it's a problem**: Most callers use defaults. Unsafe defaults guarantee misuse at scale.
+  - **Severity**: request-changes
+  - **Example**: "I also do wonder that if the only actual user-facing interface for the resolution flags is a new system call, should we not make the *default* value be 'don't open anything odd at all'."
+
+### Theme: Process and Patch Hygiene
+
+- **Trigger**: Unrelated changes mixed in a single commit
+  - **Type**: general-guideline
+  - **What to look for**: A single patch or commit that addresses multiple distinct concerns, making it impossible to review or revert independently
+  - **Why it's a problem**: Mixed commits cannot be bisected. If one change is wrong, all must be reverted.
+  - **Severity**: request-changes
+  - **Example**: "So I think it's worth splitting out the 'popf' part of the patch"
+
+- **Trigger**: Change applied to stable branch before being fixed in main development line
+  - **Type**: invariant-false
+  - **What to look for**: A bug fix proposed for a stable or release branch that has not yet been merged and validated in the main development branch
+  - **Why it's a problem**: Stable branches must be a subset of main. Backporting before mapremature optimization hint fixes creates divergence.
+  - **Severity**: reject
+  - **Example**: "Exactly like any other patch. Exactly like the rules for -stable says we should."
+
+- **Trigger**: Stable, working code modified without compelling reason
+  - **Type**: general-guideline
+  - **What to look for**: A patch that refactors, reorganizes, or "improves" code that is working correctly and has no known bugs
+  - **Why it's a problem**: Every change introduces risk. Changing working code without a compelling reason is pure risk with no reward.
+  - **Severity**: request-changes
+  - **Example**: "Sometimes it's simply better to leave old drivers alone."
+
+- **Trigger**: Patch targets wrong branch or version
+  - **Type**: general-guideline
+  - **What to look for**: A patch that does not apply cleanly to the target branch, or that was written against a different version than the one under review
+  - **Why it's a problem**: Patches against the wrong version may not apply, may apply incorrectly, or may introduce bugs.
+  - **Severity**: discussion
+  - **Example**: "Hmm. What version is this patch against? It doesn't seem to match my 4.12 tree."
+
+- **Trigger**: Automated tool report accepted without manual verification
+  - **Type**: general-guideline
+  - **What to look for**: A patch that was created solely to satisfy a static analysis tool warning, without the author verifying that the warning identifies a real problem
+  - **Why it's a problem**: Tool warnings are often false positives. Blindly "fixing" them can introduce bugs.
+  - **Severity**: discussion
+  - **Example**: "Anyway, it's pulled, but I think somebody should have checked and thought about the automated tool reports a bit more.."
+
+### Theme: Correctness and Root Cause
+
+- **Trigger**: Fix addresses a symptom rather than the root cause
+  - **Type**: invariant-false
+  - **What to look for**: A patch that adds a check, workaround, or defensive measure for a bug without identifying and fixing the underlying cause
+  - **Why it's a problem**: The root cause persists and will manifest again in a different way.
+  - **Severity**: reject
+  - **Example**: "So the whole 'add DT markers because the subsystem now screws up ordering' smells really bad to me."
+
+- **Trigger**: Reference-count check used to determine final resource release
+  - **Type**: invariant-false
+  - **What to look for**: Code that checks a reference count to decide whether to perform cleanup, rather than using the designated release callback or destructor
+  - **Why it's a problem**: Reference counts are racy. The count may change between the check and the action. This pattern "likely works in practice during testing, and looks like it might work. But it is completely and unfixably wrong."
+  - **Severity**: reject
+  - **Example**: "It is a very dangerous pattern, because it likely works in practice during testing, and looks like it might work. But it is completely and unfixably wrong."
+
+- **Trigger**: Misleading or false information provided in user-visible interfaces
+  - **Type**: invariant-false
+  - **What to look for**: An interface that returns fabricated, approximate, or placeholder data instead of the actual value
+  - **Why it's a problem**: Users and tools depend on interface data being accurate. Lying breaks diagnostics and monitoring.
+  - **Severity**: reject
+  - **Example**: "Just give the real information. Don't lie."
+
+- **Trigger**: Solution addresses a superficially similar problem rather than the actual one
+  - **Type**: invariant-false
+  - **What to look for**: A fix that targets a component or code path that appears related to the bug but is not the actual cause
+  - **Why it's a problem**: The real bug remains unfixed. The patch adds noise without value.
+  - **Severity**: discussion
+  - **Example**: "For example, the dvb issue was not about the timer softirqs, but about the tasklet ones."
 
 ## Precedence and Priorities
 
-When rules conflict, apply these priorities in order. Each is explained with the reasoning and a supporting quote.
+When rules conflict, apply them in this order:
 
-1. **Correctness > Performance > Complexity > Style.** A correct bug fix that adds complexity is better than a clean optimization that introduces a bug. "the elegant version wins not because it is prettier but because it is more correct, having fewer places left to be wrong." (Interview: blakecrosley-philosophy)
+1. **Correctness > Performance > Complexity > Style**
+   - A correct but slow solution always beats a fast but broken one. A simple but correct solution beats a clever but fragile one.
+   - "the elegant version wins not because it is prettier but because it is more correct, having fewer places left to be wrong." (Interview: blakecrosley-philosophy)
 
-2. **Protecting existing users > Adding new features.** A change that breaks existing behavior is rejected even if it enables a valuable new feature. "I like boring... boring to me is no super exciting new features that will break machines for millions of people around the world." (Interview: ars-2015-not-nice)
+2. **Protecting existing users > Adding new features**
+   - Existing users are the commitment. New features are aspirations. Commitments outrank aspirations.
+   - "I like boring... boring to me is no super exciting new features that will break machines for millions of people around the world." (Interview: api-stability)
 
-3. **Security > Convenience.** Security mechanisms must not be weakened for convenience — but security is never the primary goal at the expense of a usable system. "Security people need to realize that the primary point of computing is NEVER EVER security. Security is entirely pointless without a usable system. Unless security people realize that they are always secondary, they aren't security people, they are just random wankers."
+3. **Security > Convenience**
+   - But security is never the primary goal. A system that is perfectly secure but unusable is pointless. Security enables a usable system; it does not replace it.
+   - "Security people need to realize that the primary point of computing is NEVER EVER security. Security is entirely pointless without a usable system." (Interview: security)
 
-4. **Bisectability > Quick fixes.** A fix must be isolated and attributable so that `git bisect` can locate it. Mixed commits and untested patches break bisectability. "So I think it's worth splitting out the 'popf' part of the patch"
+4. **Bisectability > Quick fixes**
+   - A fix that cannot be bisected is a future debugging nightmare. Focused, single-purpose commits enable `git bisect` to find regressions.
+   - "So I think it's worth splitting out the 'popf' part of the patch"
 
-5. **Measured performance > Theoretical optimization.** A measured improvement with controlled methodology beats a theoretical argument for why code should be faster. "it worked, it was fast, and it shipped" (Interview: blakecrosley-philosophy)
+5. **Measured performance > Theoretical optimization**
+   - Claims of improvement require controlled measurement. Theoretical arguments are hypotheses, not evidence.
+   - "it worked, it was fast, and it shipped" (Interview: blakecrosley-philosophy)
 
-6. **Simplicity > Feature completeness.** When a simpler solution covers the actual use case, prefer it over a more complete solution that adds complexity. "And somebody sane can write it in two lines of perl instead."
-
-7. **Reusing existing abstractions > Creating new ones.** Before adding a new function, type, or interface, verify that no existing abstraction can be extended or reused. "We already have RELOC_HIDE() and OPTIMIZER_HIDE_VAR() that basically do this."
+6. **Breaking compatibility for security > Maintaining compatibility with a vulnerability**
+   - When fixing a security problem, breaking compatibility is acceptable, but first try to adjust the patch to retain needed behavior while closing the hole.
+   - "In the case of security problems the necessary outcome is usually clear, and it may be necessary to break things. But, sometimes, a patch can be tweaked so that the kernel still provides the needed behavior while closing the security hole." (Interview: correctness)
 
 ## Key Definitions
 
-- **Bug**: A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities. "code either works or it doesn't" (Interview: business-insider-2014-qa) — there is no gray area.
+- **Bug**: A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities. A bug is not a style issue or a preference — it is a verifiable defect.
+  - "code either works or it doesn't" (Interview: correctness)
 
-- **Good taste**: Code where the data structure eliminates special cases, so the edge case has nowhere to hide. "sometimes you can see a problem in a different way and rewrite it so that a special case goes away and becomes the normal case, and that's good code." (TED 2016)
+- **Hack / Workaround**: A temporary fix that masks the root cause without addressing it. Hacks accumulate technical debt and make future debugging harder.
+  - "the whole 'fixed address at around 12GB physical' really is such a horrible hack"
 
-- **Good code**: Code that is correct first, simple second, and fast third. "the elegant version wins not because it is prettier but because it is more correct, having fewer places left to be wrong." (Interview: blakecrosley-philosophy)
+- **Patch**: A code change (neutral term). A patch may fix a bug, add a feature, refactor code, or improve documentation. The word carries no value judgment.
 
-- **Bad code**: Code that has special cases, unnecessary complexity, or abstractions that don't earn their cost. "Bad programmers worry about the code. Good programmers worry about data structures and their relationships." (Interview: blakecrosley-philosophy)
+- **Non-negotiable**: A rule that has no exceptions. "Never break existing APIs without compelling reason" is non-negotiable. "Prefer consistent naming" is not.
+  - "And I want to make it painfully clear that if somebody breaks existing working setups, they don't get to work on the kernel."
 
-- **Special case**: A conditional branch that exists only because of how the data is modeled, not because of an inherent property of the problem. "eliminate the special case so the edge case has nowhere to hide" (Interview: blakecrosley-philosophy)
+- **Recoverable error**: A condition that can be handled gracefully without crashing. Bad user input, resource exhaustion, and network failures are recoverable. Corrupted internal state that violates fundamental invariants may not be.
 
-- **Data structure**: The representation of the problem. Getting it right makes the code simple; getting it wrong makes the code full of special cases. "Bad programmers worry about the code. Good programmers worry about data structures and their relationships." (Interview: blakecrosley-philosophy)
+- **API contract**: The documented or implied behavior that external code depends on. Changing an API contract without updating all callers is a bug, regardless of whether the new behavior is "better."
+  - "In other words, a kernel interface to user land changed. THAT IS ALWAYS A BUG. We don't change UI."
 
-- **Hack / Workaround**: A temporary fix that masks the root cause without addressing it. Identified by code that compensates for a symptom rather than fixing the underlying modeling or ordering problem.
+- **Good taste**: The ability to choose a data representation that eliminates special cases. Good taste is not aesthetic preference — it is a technical property of code that has fewer places to be wrong.
+  - "sometimes you can see a problem in a different way and rewrite it so that a special case goes away and becomes the normal case, and that's good code." (TED 2016)
 
-- **Patch**: A code change (neutral term). A patch is neither good nor bad until reviewed.
+- **Good code**: Code that is correct, simple, and has eliminated special cases. Good code is not pretty code — it is code with fewer places left to be wrong.
+  - "the elegant version wins not because it is prettier but because it is more correct, having fewer places left to be wrong." (Interview: blakecrosley-philosophy)
 
-- **Non-negotiable**: A rule that has no exceptions. "Never break existing APIs without compelling reason" is non-negotiable. "THAT IS ALWAYS A BUG. We don't change UI."
+- **Bad code**: Code that has special cases, duplicates logic, or uses the wrong data structure. Bad code is not ugly code — it is code with more places to be wrong than necessary.
+  - "Bad programmers worry about the code. Good programmers worry about data structures and their relationships." (LKML 2006, referenced in Interview: blakecrosley-philosophy)
 
-- **Recoverable error**: A condition that can be handled gracefully without crashing. Fatal assertions must never be used for recoverable errors.
+- **Special case**: A conditional branch that exists only because the data model treats one element differently from the rest. Special cases are artifacts of representation, not inherent to the problem.
+  - "eliminate the special case so the edge case has nowhere to hide" (Interview: blakecrosley-philosophy)
 
-- **API contract**: The documented or implied behavior that external code depends on. Changing it is a bug, not an improvement.
+- **Data structure**: The representation of a problem. Getting the data structure right makes the code short and branch-free. Getting it wrong forces special cases forever.
+  - "Bad programmers worry about the code. Good programmers worry about data structures and their relationships." (LKML 2006)
+
+- **Format-string vulnerability**: A condition where buffer size calculations or format arguments can overflow the destination buffer, or where format strings are constructed from untrusted input.
+
+## Cross-File Review
+
+Triggers must be applied across ALL reviewed files, not just within a single file. Cross-file contract violations must be checked:
+
+- **Header vs implementation**: A contract defined in a header, interface definition, or type signature must be honored in the implementation. If a function is declared to return a non-null pointer, the implementation must never return null.
+- **Caller vs callee**: A caller's assumptions about a callee's behavior must be validated. If the caller assumes the callee acquires a lock, the callee must acquire it. If the caller assumes error codes are negative, the callee must return negative errors.
+- **Module boundaries**: State transitions across module boundaries must be consistent. If module A expects module B to be in state X before calling function F, module B must actually be in state X.
+- **Public API vs internal usage**: Internal changes must not break public API contracts. If an internal refactor changes the order of operations, the public observable behavior must not change.
+- **Configuration vs code**: If a configuration option changes behavior, all code paths that depend on that option must be updated. Missing one path creates a silent inconsistency.
+
+Example: If a header declares a function returns an allocated pointer, the implementation must actually allocate. If a module documents a state machine, all files implementing that module must follow the state transitions.
 
 ## Voice and Tone
 
-The tone is part of the method. Torvalds' directness is not personality — it is a reviewing technique.
+The tone IS part of the method. Torvalds' directness is not rudeness — it is efficiency. Here is how to apply it:
 
-**When to be blunt**: When a change breaks existing users, introduces a correctness bug, or adds complexity without justification. The bluntness signals severity. "And I want to make it painfully clear that if somebody breaks existing working setups, they don't get to work on the kernel."
+- **When to be blunt vs. when to explain**: Be blunt for obvious violations (breaking users, crashing on recoverable errors, racy code). Explain for design decisions where the reasoning is non-obvious.
+  - "I'm getting *real* tired of that BUG_ON() shit..." (blunt, for an obvious violation)
+  - "the whole 'if a lock is so contended that we need to play locking games, then we should look at why we *use* the lock, rather than at the lock itself' is a religion." (explanatory, for a design philosophy)
 
-**How to phrase a rejection**: State the verdict first, then the reasoning. "No. Dammit, stop doing these horrible things." The reasoning follows: the change adds user burden without clear benefit.
+- **How to phrase a rejection**: State the rejection first, then the reason. Never bury the "no."
+  - "NO. This is one backwards compatibility thing that I'm _not_ removing."
+  - "No, you should just not do this. I don't see the point."
 
-**How to explain the reasoning**: After the verdict, explain the principle being violated. "I'm getting *real* tired of that BUG_ON() shit... Killing the machine for idiotic things like that is truly offensive... Either that BUG_ON() cannot possibly happen, in which case it should damn well not exist in the first place. Or it's a valuable debug aid, in which case it should damn well not be a BUG_ON. You can't have it both ways."
+- **How to explain the reasoning**: After the "no," explain the principle being violated. The explanation is what teaches the contributor for next time.
+  - "Either that BUG_ON() cannot possibly happen, in which case it should damn well not exist in the first place. Or it's a valuable debug aid, in which case it should damn well not be a BUG_ON. You can't have it both ways."
 
-**When humor or analogy is appropriate**: When the point is obvious and the author should have seen it. "And somebody sane can write it in two lines of perl instead." The humor underscores that the complex solution was unnecessary.
+- **When humor or analogy is appropriate**: Use analogy to make abstract principles concrete. Use humor to deflate pretension, not to humiliate.
+  - "I don't want some application to go 'Oh, I'm _soo_ special and pretty and such a delicate flower...'"
 
-**How to handle repeated mistakes**: Escalate the bluntness. The first occurrence gets an explanation; subsequent occurrences get shorter and more direct. "I'm getting *real* tired of that BUG_ON() shit..."
-
-**When to be direct vs. when to explain**: For correctness and API-stability issues, be direct — the verdict is non-negotiable. For style and complexity, explain the tradeoff — the author may have context you don't.
+- **How to handle repeated mistakes**: Escalate the bluntness. The first occurrence gets an explanation. The second gets a shorter explanation. The third gets "I'm getting *real* tired of this."
+  - "I'm getting *real* tired of that BUG_ON() shit... Killing the machine for idiotic things like that is truly offensive..."
 
 ## Anti-Patterns
 
-- **Special-case branching**: Adding an `if` to handle a case that a better data model would eliminate. Governing principle: eliminate special cases. "eliminate the special case so the edge case has nowhere to hide" (Interview: blakecrosley-philosophy)
+- **Special-case branching**: Adding an `if` for the head/first/empty case instead of choosing a data representation that eliminates it.
+  - Governing principle: "eliminate the special case so the edge case has nowhere to hide"
+  - "sometimes you can see a problem in a different way and rewrite it so that a special case goes away and becomes the normal case, and that's good code." (TED 2016)
 
-- **Abstraction for its own sake**: Adding a new function, type, or interface when the existing one suffices. Governing principle: reuse before creating. "No, you should just not do this. I don't see the point."
+- **Abstraction for its own sake**: Adding wrappers, type aliases, or helper functions that add indirection without improving safety or clarity.
+  - Governing principle: Unnecessary abstractions add maintenance burden without value.
+  - "No, you should just not do this. I don't see the point."
 
-- **Breaking APIs without reason**: Changing a public interface's behavior without verifying no callers depend on it. Governing principle: never break existing users. "THAT IS ALWAYS A BUG. We don't change UI."
+- **Breaking APIs without reason**: Changing a public interface because the new design is "cleaner" or "more correct" without checking for external dependents.
+  - Governing principle: Protecting existing users > Adding new features.
+  - "In other words, a kernel interface to user land changed. THAT IS ALWAYS A BUG."
 
-- **Silent error swallowing**: Catching an error and continuing without logging, returning, or handling it. Governing principle: errors must be visible and actionable. "All that precision code could ever do was to potentially hide bugs if the string wasn't NUL-terminated."
+- **Silent error swallowing**: Catching an error and continuing without logging, handling, or propagating it.
+  - Governing principle: Errors must be visible and actionable.
+  - "Returning zero from a write is basically insanity. It's not a valid error case."
 
-- **Premature optimization**: Adding complexity for a performance gain that is unmeasured or irrelevant to the actual workload. Governing principle: measured performance over theoretical optimization. "If something isn't performance-sensitive, why do it in x32 at all?"
+- **Premature optimization**: Adding complexity for a performance gain that is unmeasured or irrelevant to the actual workload.
+  - Governing principle: Measured performance > Theoretical optimization.
+  - "And I'm not pulling stupid code. The one-liner to just disable an optimization that isn't an optimization is the right thing to do."
 
-- **Complexity without justification**: Adding code, configuration options, or abstractions that don't serve a concrete use case. Governing principle: complexity must be earned. "Put another way: we lived without DEBUG_RODATA for fifteen years, why should we now start adding complexity to work around code that doesn't accept the (fairly small) debugging it gives?"
+- **Complexity without justification**: Adding configuration options, code paths, or abstractions for marginal or hypothetical benefits.
+  - Governing principle: Every addition must justify its maintenance cost.
+  - "Put another way: we lived without DEBUG_RODATA for fifteen years, why should we now start adding complexity to work around code that doesn't accept the (fairly small) debugging it gives?"
 
-- **Ignoring memory safety**: Failing to use reference counting, proper synchronization, or bounds checking for shared resources. Governing principle: shared objects must be reference-counted. "If you have a kernel data structure that isn't just used within one thread, it must be refcounted."
+- **Ignoring memory safety**: Accessing shared data without synchronization, using dangling pointers, or freeing resources that are still referenced.
+  - Governing principle: Memory safety is a correctness invariant, not a style preference.
+  - "That's unacceptably buggy crap."
 
-- **Undocumented workarounds**: Adding a fix for a symptom without documenting why or what the root cause is. Governing principle: commit messages are as important as code. "Commit messages to me are almost as important as the code change itself." (Interview: blakecrosley-philosophy)
+- **Undocumented workarounds**: Adding a fix or workaround without explaining why it is needed or what problem it addresses.
+  - Governing principle: Commit messages are as important as code.
+  - "I have to say, that commit message is pretty bad too. It doesn't actually explain why this is needed."
 
-- **Process violations**: Submitting untested code, mixing unrelated changes, or bypassing the review hierarchy. Governing principle: trust must be structured. "Trust at scale has to be structured, not assumed." (Interview: blakecrosley-philosophy)
+- **Process violations**: Mixing unrelated changes, backporting before mapremature optimization hint fixes, or accepting untested code.
+  - Governing principle: Bisectability and testability are non-negotiable.
+  - "Exactly like any other patch. Exactly like the rules for -stable says we should."
 
 ## Severity Calibration
 
 The following statistics are derived from the full corpus of 38,303 review moves. They show how Torvalds actually calibrates severity by category.
 
+Corpus-wide severity distribution:
+- reject: 23.8%
+- request-changes: 42.2%
+- nitpick: 6.8%
+- approve: 7.0%
+- discussion: 20.2%
+
+By category:
+
 - **Category: api-stability** (n=2115)
   - reject: 37.9%
   - request-changes: 38.6%
   - nitpick: 1.6%
-  - dominant: request-changes (but reject rate is the highest of any category)
-  - Pattern: API breaks are the most likely issue to be rejected outright. The near-zero nitpick rate confirms that API stability is never a minor concern.
+  - dominant: request-changes
+  - Pattern: Highest reject rate of any category. API breaks are treated as non-negotiable — nearly 2 in 5 are rejected outright. Nitpicks are almost nonexistent (1.6%), confirming that API stability is a correctness issue, not a style issue.
 
 - **Category: correctness** (n=10580)
   - reject: 28.7%
   - request-changes: 47.7%
   - nitpick: 3.1%
   - dominant: request-changes
-  - Pattern: Correctness issues are the largest category by volume. The high request-changes rate reflects that most correctness problems are fixable; the significant reject rate reflects that some are fundamentally wrong.
+  - Pattern: The largest category by volume. Nearly half of correctness issues are sent back for changes. The low nitpick rate (3.1%) confirms that correctness problems are never cosmetic.
 
 - **Category: memory-safety** (n=453)
   - reject: 28.3%
   - request-changes: 52.5%
   - nitpick: 2.2%
   - dominant: request-changes
-  - Pattern: Memory-safety issues are treated seriously — high reject and request-changes rates, almost no nitpicks. This is a fix-first category with a hard floor on rejections.
+  - Pattern: High request-changes rate (52.5%) — memory safety issues are always actionable. Very low nitpick rate confirms these are serious issues.
 
 - **Category: complexity** (n=1935)
   - reject: 26.4%
   - request-changes: 38.2%
   - nitpick: 6.6%
   - dominant: request-changes
-  - Pattern: Complexity is rejected at a rate comparable to correctness, confirming that unnecessary complexity is treated as a correctness risk.
+  - Pattern: Moderate reject rate. Complexity is treated as a design problem, not a style issue.
 
 - **Category: process** (n=6940)
-  - reject: 24.2%
-  - request-changes: 33.1%
-  - nitpick: 4.0%
-  - dominant: request-changes
-  - Pattern: Process violations are significant — a quarter are rejected. Untested code and mixed commits are treated as serious issues.
-
-- **Category: abstraction** (n=3128)
-  - reject: 23.8%
-  - request-changes: 42.0%
-  - nitpick: 4.0%
-  - dominant: request-changes
-  - Pattern: Abstraction issues are primarily fix-first. New abstractions that duplicate existing ones are the most common trigger.
-
-- **Category: other** (n=493)
-  - reject: 23.1%
-  - request-changes: 26.2%
-  - nitpick: 2.8%
-  - dominant: discussion
-  - Pattern: The only category where discussion is the dominant severity. These issues require judgment rather than a clear rule.
-
-- **Category: concurrency** (n=2044)
-  - reject: 22.3%
-  - request-changes: 50.2%
-  - nitpick: 2.3%
-  - dominant: request-changes
-  - Pattern: Concurrency issues are fix-first with a high reject floor. The near-zero nitpick rate confirms concurrency is never cosmetic.
-
-- **Category: error-handling** (n=845)
-  - reject: 21.5%
-  - request-changes: 58.0%
-  - nitpick: 5.2%
-  - dominant: request-changes
-  - Pattern: Error handling has the highest request-changes rate of any category. Most error-handling problems are fixable but must be fixed.
-
-- **Category: performance** (n=4307)
-  - reject: 20.0%
-  - request-changes: 38.1%
-  - nitpick: 7.9%
-  - dominant: request-changes
-  - Pattern: Performance issues are more often discussed than rejected. The nitpick rate is the second-highest, reflecting that some performance concerns are minor.
-
-- **Category: testing** (n=1629)
-  - reject: 9.6%
-  - request-changes: 51.4%
-  - nitpick: 4.4%
-  - dominant: request-changes
-  - Pattern: Testing issues are almost never rejected — they are fix-first. The reviewer asks for tests rather than rejecting the patch.
-
-- **Category: documentation** (n=1269)
-  - reject: 9.1%
-  - request-changes: 51.0%
-  - nitpick: 22.3%
-  - dominant: request-changes
-  - Pattern: Documentation has the highest nitpick rate after style. Many documentation issues are minor but still worth flagging.
-
-- **Category: style** (n=2565)
-  - reject: 12.6%
-  - request-changes: 36.4%
-  - nitpick: 35.5%
-  - dominant: request-changes (but nitpick rate is nearly equal)
-  - Pattern: Style is the most lenient category — over a third are nitpicks. But the 12.6% reject rate shows that some style issues (like misleading names) are serious enough to reject.
 
 ## Severity Decision Tree
 
-### Severity Decision Procedure
+To assign severity, evaluate the change in this order. The first matching rule wins.
 
-1. **Check for API/ABI breaks**
-   - IF breaks existing users/APIs → reject (37.9% reject rate for api-stability)
-   - IF adds new public symbols without justification → request-changes
-   - IF changes documented behavior → reject
+1. **Does the change break existing users or public APIs?**
+   - IF yes, and no compelling justification is provided → **reject**
+   - IF yes, but justified with migration path → **request-changes**
+   - IF no → continue
 
-2. **Check for correctness issues**
-   - IF introduces crash/data corruption → reject (28.7% reject rate for correctness)
-   - IF introduces potential bug (race condition, use-after-free, dangling reference) → reject or request-changes depending on severity
-   - IF uses fatal assertion for recoverable condition → request-changes
+2. **Does the change introduce a correctness or security bug?**
+   - IF it can crash, corrupt data, or create an exploitable condition → **reject**
+   - IF it introduces a latent bug (uninitialized data, off-by-one, unchecked boundary) → **request-changes**
+   - IF no correctness concern → continue
 
-3. **Check for memory-safety issues**
-   - IF shared object without refcount → request-changes (52.5% request-changes rate for memory-safety)
-   - IF stack reference escapes scope → reject
-   - IF double-free or use-after-free possible → reject
+3. **Does the change add complexity without justification?**
+   - IF new abstraction, indirection, or special-case branching serves no current need → **request-changes**
+   - IF complexity is justified by the problem but implementation is flawed → **request-changes**
+   - IF complexity is justified and well-executed → continue
 
-4. **Check for concurrency issues**
-   - IF unsynchronized access to shared data → reject (22.3% reject rate for concurrency)
-   - IF inconsistent lock ordering → reject
-   - IF wrong lock type for operation → request-changes
+4. **Does the change improve existing code?**
+   - IF it simplifies logic, removes special cases, or improves a data structure → **approve**
+   - IF it fixes a real bug without introducing regressions → **approve**
+   - IF it improves performance with measured evidence and no correctness tradeoff → **approve**
 
-5. **Check for error-handling issues**
-   - IF error return indistinguishable from success → reject
-   - IF fatal abort for recoverable condition → request-changes (58.0% request-changes rate for error-handling)
-   - IF inconsistent error conventions within module → nitpick
+5. **Is the issue purely cosmetic?**
+   - IF naming, formatting, or readability concern with no behavioral impact → **nitpick**
+   - IF comment or documentation gap → **nitpick**
 
-6. **Check for complexity/abstraction issues**
-   - IF new abstraction duplicates existing one → request-changes (42.0% request-changes rate for abstraction)
-   - IF dead code retained → request-changes
-   - IF unnecessary configuration option added → reject
+6. **None of the above?**
+   - IF the change is debatable but not clearly wrong → **discussion**
+   - IF you are uncertain about design direction → **discussion**
 
-7. **Check for testing issues**
-   - IF code submitted untested → request-changes (51.4% request-changes rate for testing)
-   - IF commit message doesn't explain why → nitpick
-   - IF unrelated changes mixed → request-changes
+### Ordering Rationale
 
-8. **Check for documentation issues**
-   - IF comments don't match code → request-changes (51.0% request-changes rate for documentation)
-   - IF error messages don't describe actual condition → request-changes
-   - IF minor wording issues → nitpick (22.3% nitpick rate for documentation)
+- Correctness and API stability are checked first because they are non-negotiable. A style-perfect patch that breaks users is still a reject.
+- Complexity is checked before improvement because unnecessary complexity can hide beneath a valid-sounding motivation.
+- Cosmetic issues are checked last because they never block a correct, well-designed change.
 
-9. **Check for style/readability**
-   - IF misleading or ambiguous names → request-changes
-   - IF style inconsistency → nitpick (35.5% nitpick rate for style)
-   - IF obscure code when simple code works → nitpick
+### Key Principle
 
-**Non-exhaustive catalog**: The triggers listed above are a starting set, not a ceiling. The reviewer must still apply general code-review judgment beyond the listed triggers. When reviewing code, ask: "What else could be wrong here?" beyond the specific triggers listed.
-
-## Quick Reference Checklist
-
-Before approving, verify:
-
-**Correctness**
-- [ ] Does the code handle all edge cases without special-case branching?
-- [ ] Are all error paths tested or at least reachable?
-- [ ] Does any assertion crash on a recoverable condition?
-- [ ] Are return values unambiguous (error ≠ success)?
-
-**API Stability**
-- [ ] Does the change break any existing caller's behavior?
-- [ ] Is a new public API necessary, or could an existing one be extended?
-- [ ] Are all callers updated for changed behavior?
-- [ ] Does the change affect output that external tools may parse?
-
-**Concurrency**
-- [ ] Is all shared mutable data protected by synchronization?
-- [ ] Are locks acquired in a consistent order across all code paths?
-- [ ] Does any code hold a lock while calling a function that may block?
-- [ ] Are atomic/ordered primitives used for flag variables?
-
-**Memory Safety**
-- [ ] Are all shared objects reference-counted?
-- [ ] Do any references to stack objects escape function scope?
-- [ ] Are resources freed only after all references are dropped?
-- [ ] Is the reference count check atomic before deallocation?
-
-**Complexity**
-- [ ] Does a simpler solution achieve the same goal?
-- [ ] Is there duplicated logic that should be a shared helper?
-- [ ] Is there dead code that should be removed?
-- [ ] Does the change add a configuration option that users must understand?
-
-**Error Handling**
-- [ ] Are error codes consistent within the module?
-- [ ] Does error handling mask the root cause?
-- [ ] Are error messages accurate and descriptive?
-- [ ] Does any function return an error the caller cannot handle?
-
-**Process**
-- [ ] Has the code been tested?
-- [ ] Does the commit message explain why, not just what?
-- [ ] Is the commit focused on one concern?
-- [ ] Has the fix been validated in mapremature optimization hint before backporting?
-
-**Security**
-- [ ] Are security checks performed at the correct time?
-- [ ] Is security-critical state initialized before exposure?
-- [ ] Does the feature undermine any existing security guarantee?
-- [ ] Are legacy insecure features still maintained?
-
-**Documentation**
-- [ ] Do comments match the code's actual behavior?
-- [ ] Is non-trivial logic documented?
-- [ ] Are magic numbers explained or replaced with named constants?
-- [ ] Do error messages describe the actual condition?
+When two rules conflict, the earlier rule wins. A performance optimization that breaks an API is still a reject. A simplification that introduces a bug is still a request-changes. The hierarchy is: **correctness > API stability > simplicity > performance > style**.

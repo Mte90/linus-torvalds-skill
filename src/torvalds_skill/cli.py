@@ -414,9 +414,12 @@ def main():
 
     sub.add_parser("validate", help="validate data files")
 
+    sub.add_parser("audit", help="generate audit report, flowchart, and reproduce script")
+
     args = parser.parse_args()
 
-    print(f"config: model={config.MODEL}, host={config.HOST}")
+    active_model = getattr(args, "model", None) or config.MODEL
+    print(f"config: model={active_model}, host={config.HOST}")
 
     if args.stage == "classify":
         stage_classify()
@@ -471,6 +474,9 @@ def main():
             sys.exit(1)
     elif args.stage == "validate":
         stage_validate()
+    elif args.stage == "audit":
+        from .audit import run_audit
+        run_audit()
 
 
 if __name__ == "__main__":

@@ -14,7 +14,10 @@ The prompt asks the LLM to extract "review moves":
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
+import os
 import random
 import time
 import urllib.request
@@ -22,6 +25,24 @@ import urllib.error
 
 from . import config
 from .models import EmailRecord, ReviewMove
+from .audit import log_decision
+
+# Logger setup - idempotent (safe to call multiple times)
+_LOGGER = logging.getLogger("torvalds_skill.extract")
+_HANDLER = None
+
+
+def _get_logger():
+    """Get logger with file handler, idempotent."""
+    global _HANDLER
+    if _HANDLER is None:
+        _HANDLER = logging.FileHandler("data/extract_errors.log")
+        _HANDLER.setFormatter(
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        )
+        _LOGGER.addHandler(_HANDLER)
+        _LOGGER.setLevel(logging.ERROR)
+    return _LOGGER
 
 SYSTEM_PROMPT = """\
 You are analyzing an email from Linus Torvalds on the Linux kernel mailing list.
@@ -54,6 +75,16 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
         f"Subject: {email.subject}\n"
         f"Date: {email.date}\n\n"
         f"{email.body[:8000]}"
+    )
+
+    prompt_hash = hashlib.md5((SYSTEM_PROMPT + user_content).encode("utf-8")).hexdigest()
+    
+    log_decision(
+        "extract",
+        model=config.MODEL,
+        prompt_hash=prompt_hash,
+        params={"temperature": 0.1, "retries": retries},
+        truncation_handling=len(email.body) > 8000,
     )
 
     payload = {
@@ -125,6 +156,14 @@ def extract_moves(email: EmailRecord) -> dict:
             "moves": moves,
         }
     except Exception as e:
+        logger = _get_logger()
+        message_id = email.message_id or email.subject or "unknown"
+        logger.error(
+            "Extraction failed for %s: %s: %s",
+            message_id,
+            type(e).__name__,
+            str(e),
+        )
         return {
             "email_message_id": email.message_id,
             "email_date": email.date,

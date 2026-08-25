@@ -23,7 +23,7 @@ from pathlib import Path
 MODELS = [
     ("gpt-oss-120b", "review-gpt-oss-120b.md", "baseline/review-baseline-gpt-oss-120b.md"),
     ("glm5.2", "review-glm5.2.md", "baseline/review-baseline-glm5.2.md"),
-    ("mistral", "review-mistral.md", "baseline/review-baseline-mistral.md"),
+    ("mistral", "review-mistral-small-4-119b.md", "baseline/review-baseline-mistral-small-4-119b.md"),
 ]
 
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
@@ -241,138 +241,131 @@ def group_findings_by_file(findings: list[Finding]) -> dict[str, list[Finding]]:
 
 
 def match_findings_across_models(
-    gpt_findings: list[Finding],
-    glm_findings: list[Finding],
-    mistral_findings: list[Finding],
+    model_findings: dict[str, list[Finding]],
 ) -> list[dict]:
     """
     Match findings across models by file+line proximity or keyword overlap.
     Returns a list of matched groups with which models found each issue.
     
-    Uses N-agnostic matching: first pass matches through GLM, second pass
-    matches unmatched GPT against unmatched mistral (for 2/3 consensus when GLM missed).
+    Args:
+        model_findings: Dict mapping model_name -> list[Finding]
+        
+    Uses N-agnostic matching: first pass matches through the first model,
+    second pass matches unmatched findings from other models (for 2/N consensus).
     """
     # Group all findings by file
-    gpt_by_file = group_findings_by_file(gpt_findings)
-    glm_by_file = group_findings_by_file(glm_findings)
-    mistral_by_file = group_findings_by_file(mistral_findings)
+    by_file = {}
+    for model_name, findings in model_findings.items():
+        by_file[model_name] = group_findings_by_file(findings)
 
-    all_files = set(gpt_by_file.keys()) | set(glm_by_file.keys()) | set(mistral_by_file.keys())
+    all_files = set()
+    for file_groups in by_file.values():
+        all_files.update(file_groups.keys())
 
     matched_groups = []
     used_findings = set()
 
-    for file in sorted(all_files):
-        gpt_file_findings = gpt_by_file.get(file, [])
-        glm_file_findings = glm_by_file.get(file, [])
-        mistral_file_findings = mistral_by_file.get(file, [])
+    # Get model names in order
+    model_names = list(model_findings.keys())
+    if not model_names:
+        return []
 
-        # First pass: For each finding in glm, try to match with gpt and mistral
-        for i, glm_f in enumerate(glm_file_findings):
-            if (file, i, "glm") in used_findings:
+    # Use first model as the anchor for matching
+    anchor_model = model_names[0]
+    anchor_by_file = by_file[anchor_model]
+
+    for file in sorted(all_files):
+        # For each finding in anchor model, try to match with other models
+        anchor_file_findings = anchor_by_file.get(file, [])
+
+        for i, anchor_f in enumerate(anchor_file_findings):
+            if (file, i, anchor_model) in used_findings:
                 continue
 
-            group = {
-                "file": file,
-                "gpt": None,
-                "glm": glm_f,
-                "mistral": None,
-                "title": glm_f.title,
-            }
-            used_findings.add((file, i, "glm"))
+            group = {"file": file}
+            for model_name in model_names:
+                group[model_name] = None
+            group[anchor_model] = anchor_f
+            group["title"] = anchor_f.title
+            used_findings.add((file, i, anchor_model))
 
-            # Try to match with gpt by line proximity
-            if glm_f.line:
-                for j, gpt_f in enumerate(gpt_file_findings):
-                    if (file, j, "gpt") in used_findings:
+            # Try to match with other models
+            for other_model in model_names[1:]:
+                other_file_findings = by_file[other_model].get(file, [])
+                for j, other_f in enumerate(other_file_findings):
+                    if (file, j, other_model) in used_findings:
                         continue
-                    if gpt_f.line and abs(gpt_f.line - glm_f.line) <= 10:
-                        group["gpt"] = gpt_f
-                        used_findings.add((file, j, "gpt"))
+                    if other_f.line and anchor_f.line and abs(other_f.line - anchor_f.line) <= 10:
+                        group[other_model] = other_f
+                        used_findings.add((file, j, other_model))
                         break
-                    if _keyword_overlap(gpt_f.title, glm_f.title):
-                        group["gpt"] = gpt_f
-                        used_findings.add((file, j, "gpt"))
-                        break
-
-            # Try to match with mistral
-            if glm_f.line:
-                for j, mis_f in enumerate(mistral_file_findings):
-                    if (file, j, "mistral") in used_findings:
-                        continue
-                    if mis_f.line and abs(mis_f.line - glm_f.line) <= 10:
-                        group["mistral"] = mis_f
-                        used_findings.add((file, j, "mistral"))
-                        break
-                    if _keyword_overlap(mis_f.title, glm_f.title):
-                        group["mistral"] = mis_f
-                        used_findings.add((file, j, "mistral"))
+                    if _keyword_overlap(other_f.title, anchor_f.title):
+                        group[other_model] = other_f
+                        used_findings.add((file, j, other_model))
                         break
 
             matched_groups.append(group)
 
-        # Second pass: Match unmatched gpt against unmatched mistral (2/3 consensus without GLM)
-        for j, gpt_f in enumerate(gpt_file_findings):
-            if (file, j, "gpt") in used_findings:
-                continue
-
-            for k, mis_f in enumerate(mistral_file_findings):
-                if (file, k, "mistral") in used_findings:
+        # Second pass: Match unmatched findings from other models against each other
+        for other_model in model_names[1:]:
+            other_file_findings = by_file[other_model].get(file, [])
+            for j, other_f in enumerate(other_file_findings):
+                if (file, j, other_model) in used_findings:
                     continue
 
-                # Match by line proximity or keyword overlap
-                if gpt_f.line and mis_f.line and abs(gpt_f.line - mis_f.line) <= 10:
-                    matched_groups.append({
-                        "file": file,
-                        "gpt": gpt_f,
-                        "glm": None,
-                        "mistral": mis_f,
-                        "title": gpt_f.title,
-                    })
-                    used_findings.add((file, j, "gpt"))
-                    used_findings.add((file, k, "mistral"))
-                    break
-                elif _keyword_overlap(gpt_f.title, mis_f.title):
-                    matched_groups.append({
-                        "file": file,
-                        "gpt": gpt_f,
-                        "glm": None,
-                        "mistral": mis_f,
-                        "title": gpt_f.title,
-                    })
-                    used_findings.add((file, j, "gpt"))
-                    used_findings.add((file, k, "mistral"))
-                    break
+                # Try to match with remaining unmatched models
+                for other_model2 in model_names[1:]:
+                    if other_model2 == other_model:
+                        continue
+                    other_file_findings2 = by_file[other_model2].get(file, [])
+                    for k, other_f2 in enumerate(other_file_findings2):
+                        if (file, k, other_model2) in used_findings:
+                            continue
 
-        # Add remaining unmatched gpt findings
-        for j, gpt_f in enumerate(gpt_file_findings):
-            if (file, j, "gpt") not in used_findings:
-                matched_groups.append({
-                    "file": file,
-                    "gpt": gpt_f,
-                    "glm": None,
-                    "mistral": None,
-                    "title": gpt_f.title,
-                })
-                used_findings.add((file, j, "gpt"))
+                        # Match by line proximity or keyword overlap
+                        if other_f.line and other_f2.line and abs(other_f.line - other_f2.line) <= 10:
+                            matched_groups.append({
+                                "file": file,
+                                **{m: None for m in model_names},
+                                other_model: other_f,
+                                other_model2: other_f2,
+                                "title": other_f.title,
+                            })
+                            used_findings.add((file, j, other_model))
+                            used_findings.add((file, k, other_model2))
+                            break
+                        elif _keyword_overlap(other_f.title, other_f2.title):
+                            matched_groups.append({
+                                "file": file,
+                                **{m: None for m in model_names},
+                                other_model: other_f,
+                                other_model2: other_f2,
+                                "title": other_f.title,
+                            })
+                            used_findings.add((file, j, other_model))
+                            used_findings.add((file, k, other_model2))
+                            break
 
-        # Add remaining unmatched mistral findings
-        for k, mis_f in enumerate(mistral_file_findings):
-            if (file, k, "mistral") not in used_findings:
-                matched_groups.append({
-                    "file": file,
-                    "gpt": None,
-                    "glm": None,
-                    "mistral": mis_f,
-                    "title": mis_f.title,
-                })
-                used_findings.add((file, k, "mistral"))
+        # Add remaining unmatched findings
+        for model_name in model_names:
+            model_file_findings = by_file[model_name].get(file, [])
+            for j, f in enumerate(model_file_findings):
+                if (file, j, model_name) not in used_findings:
+                    group = {"file": file, **{m: None for m in model_names}, "title": f.title}
+                    group[model_name] = f
+                    matched_groups.append(group)
+                    used_findings.add((file, j, model_name))
 
     return matched_groups
 
 
 def _keyword_overlap(title1: str, title2: str) -> bool:
-    """Check if two titles share significant keywords."""
+    """Check if two titles share significant keywords.
+    
+    Requires either:
+    - At least 3 overlapping content words (after filtering stopwords), OR
+    - Jaccard similarity ratio >= 0.5
+    """
     words1 = set(re.findall(r"\b\w+\b", title1.lower()))
     words2 = set(re.findall(r"\b\w+\b", title2.lower()))
     # Filter out common words
@@ -382,20 +375,31 @@ def _keyword_overlap(title1: str, title2: str) -> bool:
     if not words1 or not words2:
         return False
     overlap = words1 & words2
-    return len(overlap) >= 2
+    # Require at least 3 overlapping words OR Jaccard ratio >= 0.5
+    if len(overlap) >= 3:
+        return True
+    jaccard = len(overlap) / len(words1 | words2)
+    return jaccard >= 0.5
 
 
-def find_severity_disagreements(matched_groups: list[dict]) -> list[dict]:
-    """Find cases where 2+ models found the same issue but assigned different severities."""
+def find_severity_disagreements(matched_groups: list[dict], model_names: list[str] | None = None) -> list[dict]:
+    """Find cases where 2+ models found the same issue but assigned different severities.
+    
+    Args:
+        matched_groups: List of matched finding groups
+        model_names: Optional list of model names to check. If None, extracts from group keys.
+    """
     disagreements = []
     for group in matched_groups:
         severities = []
-        if group["gpt"]:
-            severities.append(("gpt-oss-120b", group["gpt"].severity))
-        if group["glm"]:
-            severities.append(("glm5.2", group["glm"].severity))
-        if group["mistral"]:
-            severities.append(("mistral", group["mistral"].severity))
+        # Extract model names from group if not provided
+        if model_names is None:
+            model_names = [k for k in group.keys() if k not in ("file", "title")]
+        
+        for model_name in model_names:
+            finding = group.get(model_name)
+            if finding:
+                severities.append((model_name, finding.severity))
 
         if len(severities) >= 2:
             unique_sevs = set(s[1] for s in severities)
@@ -464,6 +468,72 @@ def compare_skill_vs_baseline(
     }
 
 
+def generate_scorecard(models_data: list[dict]) -> str:
+    """Generate stakeholder scorecard table and summary.
+    
+    Args:
+        models_data: List of dicts with keys: model, skill_total, skill_critical, 
+                    skill_only_critical, baseline_only_critical (from skill_vs_baseline comparisons)
+    
+    Returns:
+        Markdown string with scorecard table and 1-2 sentence summary
+    """
+    lines = []
+    
+    # Scorecard table
+    lines.append("## Stakeholder Scorecard")
+    lines.append("")
+    lines.append("Quick summary for non-technical readers:")
+    lines.append("")
+    lines.append("| Model | Total Findings | Critical Findings | Skill-Only Critical | Verdict |")
+    lines.append("|-------|---------------|-------------------|---------------------|---------|")
+    
+    for data in models_data:
+        model = data["model"]
+        total = data["skill_total"]
+        critical = data["skill_critical"]
+        skill_only = data["skill_only_critical"]
+        baseline_only = data["baseline_only_critical"]
+        
+        # Determine verdict
+        if not isinstance(skill_only, int) or not isinstance(baseline_only, int):
+            verdict = "Baseline pending"
+        elif skill_only > 0 and baseline_only == 0:
+            verdict = "Skill adds value"
+        elif skill_only == 0 and baseline_only == 0:
+            verdict = "No change"
+        elif baseline_only > skill_only:
+            verdict = "Skill reduces coverage"
+        else:
+            verdict = "Skill adds value"
+        
+        lines.append(f"| {model} | {total} | {critical} | {skill_only} | {verdict} |")
+    
+    lines.append("")
+    
+    # Generate summary sentence
+    # Find model with most skill-only criticals
+    best_model = None
+    best_count = -1
+    for data in models_data:
+        skill_only = data["skill_only_critical"]
+        if isinstance(skill_only, int) and skill_only > best_count:
+            best_count = skill_only
+            best_model = data["model"]
+    
+    if best_model and best_count > 0:
+        summary = f"The skill adds the most value for {best_model}, which gained {best_count} critical finding(s) exclusive to the with-skill review."
+    elif best_model and best_count == 0:
+        summary = "The skill provides neutral critical coverage across all models, with no model gaining exclusive critical findings."
+    else:
+        summary = "Baseline comparisons not yet available for all models."
+    
+    lines.append(summary)
+    lines.append("")
+    
+    return "\n".join(lines)
+
+
 def generate_markdown(
     report_dir: Path,
     metrics: dict,
@@ -472,8 +542,21 @@ def generate_markdown(
     trigger_coverage: dict,
     skill_vs_baseline: list[dict],
     missing_files: list[str],
+    model_names: list[str] | None = None,
 ) -> str:
-    """Generate the complete comparison.md content."""
+    """Generate the complete comparison.md content.
+    
+    Args:
+        model_names: List of model names. If None, defaults to hardcoded list.
+    """
+    # Generate stakeholder scorecard
+    scorecard = generate_scorecard(skill_vs_baseline)
+    
+    lines = []
+    
+    # Default model names for backward compatibility
+    if model_names is None:
+        model_names = ["gpt-oss-120b", "glm5.2", "mistral"]
     lines = []
 
     # YAML frontmatter
@@ -481,7 +564,7 @@ def generate_markdown(
     lines.append("title: Model Comparison — SmallChat Review")
     lines.append(f"date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}")
     lines.append("codebase: antirez/smallchat")
-    lines.append("models: gpt-oss-120b, glm5.2, mistral-small-4-119b")
+    lines.append("models: " + ", ".join(model_names))
     lines.append("skill: linus-torvalds-skill (language-agnostic)")
     lines.append("method: static review, skill triggers applied per source file")
     lines.append("---")
@@ -490,18 +573,23 @@ def generate_markdown(
     # Title and intro
     lines.append("# Model Comparison — SmallChat Review")
     lines.append("")
-    lines.append("Three models reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.")
+    
+    # Insert scorecard after title
+    lines.append(scorecard)
+    
+    lines.append(f"{len(model_names)} models reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.")
     lines.append("")
 
     # Metrics Summary table
     lines.append("## Metrics Summary")
     lines.append("")
-    lines.append("| Metric | gpt-oss-120b | glm5.2 | mistral |")
-    lines.append("|--------|:------------:|:------:|:-------:|")
+    header = "| Metric | " + " | ".join(model_names) + " |"
+    lines.append(header)
+    lines.append("|" + "|".join(["--------"] + [":---:"] * len(model_names)) + "|")
 
     for metric_name in ["findings", "CRITICAL", "HIGH", "MEDIUM", "LOW", "words"]:
         row = [metric_name.replace("_", " ").title()]
-        for model_key in ["gpt-oss-120b", "glm5.2", "mistral"]:
+        for model_key in model_names:
             m = metrics.get(model_key, {})
             skill_metrics = m.get("skill", {})
             val = skill_metrics.get(metric_name, "N/A")
@@ -536,33 +624,39 @@ def generate_markdown(
     for file in sorted(files_in_matrix):
         lines.append(f"### {file}")
         lines.append("")
-        lines.append("| # | Issue | gpt-oss | glm5.2 | mistral | Consensus |")
-        lines.append("|---|-------|:-------:|:------:|:-------:|:---------:|")
+        # Build dynamic header based on model names
+        header_cols = ["#", "Issue"] + model_names + ["Consensus"]
+        lines.append("| " + " | ".join(header_cols) + " |")
+        sep_cols = ["---"] + [":---:"] * len(model_names) + [":---:"]
+        lines.append("|" + "|".join(sep_cols) + "|")
 
         file_groups = [g for g in matched_groups if g["file"] == file]
         for group in file_groups:
-            gpt_mark = f"✓ ({group['gpt'].severity})" if group["gpt"] else "✗"
-            glm_mark = f"✓ ({group['glm'].severity})" if group["glm"] else "✗"
-            mis_mark = f"✓ ({group['mistral'].severity})" if group["mistral"] else "✗"
+            # Build dynamic marks based on model names
+            marks = []
+            for model_name in model_names:
+                finding = group.get(model_name)
+                if finding:
+                    marks.append(f"✓ ({finding.severity})")
+                else:
+                    marks.append("✗")
 
             # Determine consensus
-            found_count = sum([bool(group["gpt"]), bool(group["glm"]), bool(group["mistral"])])
-            if found_count == 3:
-                consensus = "3/3"
-            elif found_count == 2:
-                consensus = "2/3"
+            found_count = sum(1 for model_name in model_names if group.get(model_name))
+            if found_count == len(model_names):
+                consensus = f"{len(model_names)}/{len(model_names)}"
+            elif found_count == len(model_names) - 1:
+                consensus = f"{len(model_names)-1}/{len(model_names)}"
             elif found_count == 1:
-                if group["gpt"]:
-                    consensus = "gpt-oss only"
-                elif group["glm"]:
-                    consensus = "glm5.2 only"
-                else:
-                    consensus = "mistral only"
+                for model_name in model_names:
+                    if group.get(model_name):
+                        consensus = f"{model_name} only"
+                        break
             else:
                 consensus = "—"
 
             title = group["title"][:50] + "..." if len(group["title"]) > 50 else group["title"]
-            lines.append(f"| {row_num} | {title} | {gpt_mark} | {glm_mark} | {mis_mark} | {consensus} |")
+            lines.append(f"| {row_num} | {title} | {' | '.join(marks)} | {consensus} |")
             row_num += 1
 
         lines.append("")
@@ -576,15 +670,16 @@ def generate_markdown(
     lines.append("")
 
     if severity_disagreements:
-        lines.append("| Issue | gpt-oss | glm5.2 | mistral |")
-        lines.append("|-------|:-------:|:------:|:-------:|")
+        header_cols = ["Issue"] + model_names
+        lines.append("| " + " | ".join(header_cols) + " |")
+        lines.append("|" + "|".join(["-------"] + [":---:"] * len(model_names)) + "|")
         for d in severity_disagreements:
             title = d["title"][:40] + "..." if len(d["title"]) > 40 else d["title"]
             sev_row = []
-            for model in ["gpt-oss-120b", "glm5.2", "mistral"]:
+            for model in model_names:
                 found = next((s for m, s in d["severities"] if m == model), None)
                 sev_row.append(found if found else "—")
-            lines.append(f"| {title} | {sev_row[0]} | {sev_row[1]} | {sev_row[2]} |")
+            lines.append(f"| {title} | {' | '.join(sev_row)} |")
     else:
         lines.append("*No severity disagreements found.*")
     lines.append("")
@@ -603,21 +698,19 @@ def generate_markdown(
         all_triggers.update(model_data.keys())
 
     if all_triggers:
-        lines.append("| Trigger theme | gpt-oss | glm5.2 | mistral |")
-        lines.append("|---------------|:-------:|:------:|:-------:|")
+        header_cols = ["Trigger theme"] + model_names
+        lines.append("| " + " | ".join(header_cols) + " |")
+        lines.append("|" + "|".join(["---------------"] + [":---:"] * len(model_names)) + "|")
 
         for trigger in sorted(all_triggers):
-            gpt_count = trigger_coverage.get("gpt-oss-120b", {}).get(trigger, 0)
-            glm_count = trigger_coverage.get("glm5.2", {}).get(trigger, 0)
-            mis_count = trigger_coverage.get("mistral", {}).get(trigger, 0)
-
-            gpt_mark = f"✓ ({gpt_count})" if gpt_count > 0 else "✗"
-            glm_mark = f"✓ ({glm_count})" if glm_count > 0 else "✗"
-            mis_mark = f"✓ ({mis_count})" if mis_count > 0 else "✗"
+            marks = []
+            for model_name in model_names:
+                count = trigger_coverage.get(model_name, {}).get(trigger, 0)
+                marks.append(f"✓ ({count})" if count > 0 else "✗")
 
             # Truncate trigger name for display
             trigger_display = trigger[:30] + "..." if len(trigger) > 30 else trigger
-            lines.append(f"| {trigger_display} | {gpt_mark} | {glm_mark} | {mis_mark} |")
+            lines.append(f"| {trigger_display} | {' | '.join(marks)} |")
     else:
         lines.append("*No trigger data available.*")
     lines.append("")
@@ -669,40 +762,38 @@ def generate_markdown(
     # --- Accuracy Scoring (consensus-based) ---
     # A finding found by 2+ models is treated as a confirmed real bug.
     # A finding found by only 1 model is "unverified" (could be real or false positive).
-    model_keys = ["gpt-oss-120b", "glm5.2", "mistral"]
-    model_short = {"gpt-oss-120b": "gpt", "glm5.2": "glm", "mistral": "mis"}
-
-    confirmed_per_model = {k: 0 for k in model_keys}
-    unverified_per_model = {k: 0 for k in model_keys}
-    unique_per_model = {k: 0 for k in model_keys}
+    confirmed_per_model = {k: 0 for k in model_names}
+    confirmed_critical_per_model = {k: 0 for k in model_names}
+    unverified_per_model = {k: 0 for k in model_names}
+    unique_per_model = {k: 0 for k in model_names}
 
     for group in matched_groups:
-        found_count = sum([bool(group["gpt"]), bool(group["glm"]), bool(group["mistral"])])
+        found_count = sum(1 for model_name in model_names if group.get(model_name))
         if found_count >= 2:
-            if group["gpt"]:
-                confirmed_per_model["gpt-oss-120b"] += 1
-            if group["glm"]:
-                confirmed_per_model["glm5.2"] += 1
-            if group["mistral"]:
-                confirmed_per_model["mistral"] += 1
+            # Count all confirmed findings
+            for model_name in model_names:
+                if group.get(model_name):
+                    confirmed_per_model[model_name] += 1
+            # Also count CRITICAL-only confirmed findings for scoring
+            for model_name in model_names:
+                finding = group.get(model_name)
+                if finding and finding.severity == "CRITICAL":
+                    confirmed_critical_per_model[model_name] += 1
         elif found_count == 1:
-            if group["gpt"]:
-                unverified_per_model["gpt-oss-120b"] += 1
-                unique_per_model["gpt-oss-120b"] += 1
-            elif group["glm"]:
-                unverified_per_model["glm5.2"] += 1
-                unique_per_model["glm5.2"] += 1
-            else:
-                unverified_per_model["mistral"] += 1
-                unique_per_model["mistral"] += 1
+            for model_name in model_names:
+                if group.get(model_name):
+                    unverified_per_model[model_name] += 1
+                    unique_per_model[model_name] += 1
+                    break
 
     lines.append("### Consensus-Based Accuracy")
     lines.append("")
     lines.append("Findings confirmed by 2+ models are treated as real bugs. Findings reported by only one model are unverified (could be real or false positive).")
     lines.append("")
-    lines.append("| Model | Total Findings | Confirmed (2+ models) | Unverified (1 model only) | Consensus Rate |")
-    lines.append("|-------|:--------------:|:---------------------:|:--------------------------:|:--------------:|")
-    for mk in model_keys:
+    header_cols = ["Model", "Total Findings", "Confirmed (2+ models)", "Unverified (1 model only)", "Consensus Rate"]
+    lines.append("| " + " | ".join(header_cols) + " |")
+    lines.append("|" + "|".join(["-------", ":--------------:", ":---------------------:", ":--------------------------:", ":--------------:"]) + "|")
+    for mk in model_names:
         total = confirmed_per_model[mk] + unverified_per_model[mk]
         rate = f"{confirmed_per_model[mk] / total * 100:.0f}%" if total > 0 else "N/A"
         lines.append(f"| {mk} | {total} | {confirmed_per_model[mk]} | {unverified_per_model[mk]} | {rate} |")
@@ -714,15 +805,16 @@ def generate_markdown(
     if severity_disagreements:
         lines.append("Cases where 2+ models found the same issue but assigned different severities:")
         lines.append("")
-        lines.append("| Issue | gpt-oss | glm5.2 | mistral |")
-        lines.append("|-------|:-------:|:------:|:-------:|")
+        header_cols = ["Issue"] + model_names
+        lines.append("| " + " | ".join(header_cols) + " |")
+        lines.append("|" + "|".join(["-------"] + [":---:"] * len(model_names)) + "|")
         for d in severity_disagreements:
             title = d["title"][:40] + "..." if len(d["title"]) > 40 else d["title"]
             sev_map = dict(d["severities"])
-            gpt_s = sev_map.get("gpt-oss-120b", "—")
-            glm_s = sev_map.get("glm5.2", "—")
-            mis_s = sev_map.get("mistral", "—")
-            lines.append(f"| {title} | {gpt_s} | {glm_s} | {mis_s} |")
+            sev_row = []
+            for model_name in model_names:
+                sev_row.append(sev_map.get(model_name, "—"))
+            lines.append(f"| {title} | {' | '.join(sev_row)} |")
         lines.append("")
         lines.append(f"Total severity disagreements: {len(severity_disagreements)}. Lower is better — it means the model's severity assessment aligns with the consensus.")
         lines.append("")
@@ -737,7 +829,7 @@ def generate_markdown(
     lines.append("")
     lines.append("| Model | Unique Findings |")
     lines.append("|-------|:--------------:|")
-    for mk in model_keys:
+    for mk in model_names:
         lines.append(f"| {mk} | {unique_per_model[mk]} |")
     lines.append("")
     lines.append("A high unique count with a low consensus rate suggests false positives. A high unique count with a high consensus rate suggests the model found real bugs others missed.")
@@ -823,7 +915,7 @@ def generate_markdown(
     lines.append("")
     lines.append("Which skill triggers each model fired:")
     lines.append("")
-    for mk in model_keys:
+    for mk in model_names:
         tc = trigger_coverage.get(mk, {})
         trigger_count = sum(tc.values()) if tc else 0
         distinct_triggers = len(tc) if tc else 0
@@ -839,18 +931,18 @@ def generate_markdown(
     lines.append("")
     # Score: confirmed findings + skill-only criticals - severity disagreements
     # Precompute per-model disagreement counts from the severities list
-    model_disagreements = {mk: 0 for mk in model_keys}
+    model_disagreements = {mk: 0 for mk in model_names}
     for d in severity_disagreements:
         sev_map = dict(d["severities"])
         unique_sevs = set(sev_map.values())
         if len(unique_sevs) > 1:
-            for mk in model_keys:
+            for mk in model_names:
                 if mk in sev_map:
                     model_disagreements[mk] += 1
 
     scores = {}
-    for mk in model_keys:
-        confirmed = confirmed_per_model[mk]
+    for mk in model_names:
+        confirmed_critical = confirmed_critical_per_model[mk]
         soc = 0
         boc = 0
         for svb in skill_vs_baseline:
@@ -861,15 +953,17 @@ def generate_markdown(
         soc_score = soc if isinstance(soc, int) else 0
         boc_score = boc if isinstance(boc, int) else 0
         # Net critical impact: reward skill-only discoveries, penalize baseline-only (coverage gaps)
-        scores[mk] = confirmed + soc_score - boc_score - model_disagreements[mk]
+        # Use confirmed_critical to match units with soc/boc (all CRITICAL-only)
+        scores[mk] = confirmed_critical + soc_score - boc_score - model_disagreements[mk]
 
     winner = max(scores, key=scores.get)
-    lines.append(f"Based on consensus-confirmed findings, net critical impact (skill-only minus baseline-only), and severity calibration:")
+    lines.append(f"Based on consensus-confirmed CRITICAL findings, net critical impact (skill-only minus baseline-only), and severity calibration:")
     lines.append("")
-    lines.append("| Model | Confirmed | Skill-Only CRITICAL | Baseline-Only CRITICAL | Net Critical | Severity Disagreements | Score |")
-    lines.append("|-------|:---------:|:-------------------:|:----------------------:|:-------------:|:----------------------:|:-----:|")
-    for mk in model_keys:
-        confirmed = confirmed_per_model[mk]
+    header_cols = ["Model", "Confirmed CRITICAL", "Skill-Only CRITICAL", "Baseline-Only CRITICAL", "Net Critical", "Severity Disagreements", "Score"]
+    lines.append("| " + " | ".join(header_cols) + " |")
+    lines.append("|" + "|".join(["-------", ":------------------:", ":-------------------:", ":----------------------:", ":-------------:", ":----------------------:", ":-----:"]) + "|")
+    for mk in model_names:
+        confirmed_critical = confirmed_critical_per_model[mk]
         soc = 0
         boc = 0
         for svb in skill_vs_baseline:
@@ -881,10 +975,11 @@ def generate_markdown(
         boc_int = boc if isinstance(boc, int) else 0
         net = soc_int - boc_int
         net_str = f"{net:+d}" if net != 0 else "0"
-        lines.append(f"| {mk} | {confirmed} | {soc} | {boc} | {net_str} | {model_disagreements[mk]} | {scores[mk]} |")
+        lines.append(f"| {mk} | {confirmed_critical} | {soc} | {boc} | {net_str} | {model_disagreements[mk]} | {scores[mk]} |")
     lines.append("")
-    lines.append("**Scoring:** `confirmed + skill_only_critical - baseline_only_critical - severity_disagreements`. "
-                 "The baseline-only penalty makes coverage gaps visible: a model that suppresses real bugs the baseline caught scores lower, even if it found other bugs the baseline missed.")
+    lines.append("**Scoring:** `confirmed_critical + skill_only_critical - baseline_only_critical - severity_disagreements`. "
+                 "All terms are CRITICAL-only for unit consistency. The baseline-only penalty makes coverage gaps visible: "
+                 "a model that suppresses real bugs the baseline caught scores lower, even if it found other bugs the baseline missed.")
     lines.append("")
 
     # Honest read: dynamic narrative based on scores
@@ -893,7 +988,7 @@ def generate_markdown(
     lines.append("**Honest read:** ", )
     # Build per-model summary for the honest read
     model_summaries = []
-    for mk in model_keys:
+    for mk in model_names:
         confirmed = confirmed_per_model[mk]
         soc = 0
         boc = 0
@@ -988,16 +1083,20 @@ def main():
         skill_vs_baseline_comparisons.append(comparison)
 
     # Generate consensus matrix (with-skill only)
-    gpt_findings = all_findings.get("gpt-oss-120b_skill", [])
-    glm_findings = all_findings.get("glm5.2_skill", [])
-    mistral_findings = all_findings.get("mistral_skill", [])
+    # Build dict of model_name -> findings for data-driven matching
+    skill_findings_by_model = {}
+    for model_name, skill_file, _ in MODELS:
+        findings = all_findings.get(f"{model_name}_skill", [])
+        skill_findings_by_model[model_name] = findings
 
-    matched_groups = match_findings_across_models(gpt_findings, glm_findings, mistral_findings)
+    matched_groups = match_findings_across_models(skill_findings_by_model)
 
     # Find severity disagreements
-    severity_disagreements = find_severity_disagreements(matched_groups)
+    model_names = [m[0] for m in MODELS]
+    severity_disagreements = find_severity_disagreements(matched_groups, model_names)
 
     # Generate markdown
+    model_names = [m[0] for m in MODELS]
     markdown = generate_markdown(
         report_dir=report_dir,
         metrics=all_metrics,
@@ -1006,6 +1105,7 @@ def main():
         trigger_coverage=all_triggers,
         skill_vs_baseline=skill_vs_baseline_comparisons,
         missing_files=missing_files,
+        model_names=model_names,
     )
 
     # Write output
