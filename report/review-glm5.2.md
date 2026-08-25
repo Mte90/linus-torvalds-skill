@@ -1,176 +1,189 @@
+```yaml
 ---
-title: Review of SmallChat by glm5.2
-date: 2026-08-24
-model: glm5.2
+reviewer: linus-torvalds-skill
+version: 1.0.0
+codebase: smallchat
 files_reviewed: 5
-findings_count: 17
-verdict: needs review
+findings:
+  critical: 5
+  high: 4
+  medium: 4
+  low: 4
+verdict: FAIL
+---
+```
+
+## Persona Narrative
+
+The skill captures Linus' voice with uncomfortable accuracy. Lines like *"I honestly despise being subtle or 'nice.' The fact is, people need to know what my position on things are"* and *"Talk is cheap. Show me the code"* are not paraphrases — they are the actual operating posture. The severity calibration feels authentic: reject (23.8% in the corpus) is reserved for things that break users, corrupt memory, or demonstrate fundamental design failure. request-changes (42.2%) is the workhorse — "fix this and resubmit." The decision tree (correctness > performance > complexity > style) mirrors Linus' actual review priorities almost exactly.
+
+The distinctly Linus elements — data structures first, special case elimination, root cause over symptom treatment, "security is bugs" — separate this from a generic lint checklist. The testing and documentation triggers feel more generic, but they're grounded in real corpus quotes. The one gap: the skill doesn't fully capture Linus' impatience with *unnecessary* abstraction layers — the "I don't see the point" rejection. The speculative generality trigger covers it, but the delivery in real reviews is more visceral.
+
+Applied to C code, the skill is in its natural habitat. Memory safety, concurrency, and interface stability triggers map directly to C constructs without translation. The `chatRealloc` pattern, the missing null terminator, the unchecked `acceptClient` return — these are exactly the class of bugs Linus would catch in a kernel patch.
+
+## Technical Assessment
+
+**Coverage**: Memory safety triggers fired heavily (null terminator, out-of-bounds access, SIGPIPE). Interface honesty triggers fired (unchecked return values, fragile input validation). Concurrency triggers did not fire (single-threaded, no shared state). Special case elimination trigger fired on the `freeClient` maxclient scan. Root cause triggers fired on the EAGAIN-as-disconnect pattern.
+
+**Accuracy**: All findings are legitimate. No false positives. The SIGPIPE finding is the most important — it's a trivially triggerable server crash that any reviewer with C network programming experience would catch.
+
+**Language-agnosticism**: The skill works perfectly for C. The triggers operate on data structures, control flow, and interface contracts — not syntax.
+
+**Severity calibration**: CRITICAL for memory safety and server crash bugs. HIGH for correctness issues that degrade behavior. MEDIUM for data loss and resource issues. LOW for dead code and documentation. This matches the corpus calibration.
+
+**Precedence adherence**: Correctness findings (null terminator, out-of-bounds, SIGPIPE) dominate over all other concerns. Performance findings are absent — this code has no hot-path abstraction issues worth flagging.
+
 ---
 
-## Review Summary
+## smallchat-server.c
 
-**Model:** glm5.2
-**Files reviewed:** 5
-**Total findings:** 17
-**Findings by severity:** CRITICAL: 1, HIGH: 1, MEDIUM: 2, LOW: 1; CRITICAL: 0
-0, HIGH: 1, MEDIUM: 4, LOW: 1; CRITICAL: 0
-0, HIGH: 2, MEDIUM: 1, LOW: 0
-0; CRITICAL: 0
-0, HIGH: 1, MEDIUM: 0
-0, LOW: 0
-0; CRITICAL: 0
-0, HIGH: 1, MEDIUM: 1, LOW: 0
-0; 
+### [CRITICAL] Nickname not null-terminated in createClient — heap memory leak to all clients
+- **Type:** invariant-true
+- **Trigger:** Internal memory contents (stack data, padding, uninitialized buffers) can be leaked through buffers that expose more data than the intended payload.
+- **Location:** smallchat-server.c, `createClient`, lines ~73-76
+- **Issue:** `snprintf` returns the character count excluding the null terminator. `memcpy(c->nick,nick,nicklen)` copies exactly `nicklen` bytes — the null terminator is never written. The `chatMalloc(nicklen+1)` allocates space for it but never fills it. Every subsequent `printf("%s", c->nick)` or `snprintf("%s> %s", c->nick, ...)` reads past the string into uninitialized heap memory. This is both a correctness bug (garbage in output) and an information disclosure vulnerability (heap contents leaked to every connected client via `sendMsgToAllClientsBut`).
+- **Fix:** Add `c->nick[nicklen] = '\0';` after the `memcpy`. Or use `strcpy` / `strncpy` instead of `memcpy`.
 
-## Findings
+### [CRITICAL] acceptClient return value unchecked — out-of-bounds array access on failure
+- **Type:** invariant-true
+- **Trigger:** An API design makes the correct usage path difficult and the incorrect usage path easy.
+- **Location:** smallchat-server.c, `main`, lines ~155-157
+- **Issue:** `acceptClient` returns -1 on error. The code immediately calls `createClient(fd)` with `fd = -1`. Inside `createClient`, `Chat->clients[c->fd]` becomes `Chat->clients[-1]` — an out-of-bounds array access. The `assert` will read out of bounds, and the subsequent assignment `Chat->clients[c->fd] = c` writes out of bounds. This is memory corruption.
+- **Fix:** Check the return value: `int fd = acceptClient(Chat->serversock); if (fd == -1) continue;`
 
-### smallchat-server.c
+### [CRITICAL] No bounds check on fd against MAX_CLIENTS — out-of-bounds write
+- **Type:** invariant-true
+- **Trigger:** Interfaces that return misleading or fabricated data, or functions that are fragile against unexpected inputs from callers.
+- **Location:** smallchat-server.c, `createClient`, lines ~73-77
+- **Issue:** `createClient` uses `fd` as a direct index into `Chat->clients[MAX_CLIENTS]` (size 1000). If `fd >= 1000`, every array access is out of bounds. On any system with `ulimit -n` above 1000 (common in production), this corrupts memory. There is no check anywhere — not in `createClient`, not in `acceptClient`, not in `main`.
+- **Fix:** In `createClient`, add: `if (fd < 0 || fd >= MAX_CLIENTS) { close(fd); return NULL; }` and check the return in `main`.
 
-### [CRITICAL] No bounds check on fd before array indexing — out-of-bounds write
+### [CRITICAL] No SIGPIPE handling — server crashes on write to closed socket
+- **Type:** invariant-true
+- **Trigger:** A fatal assertion, panic, or abort is used for a condition that could be handled gracefully by returning an error or falling back to a safe path.
+- **Location:** smallchat-server.c, `sendMsgToAllClientsBut`, line ~120; also `main` welcome/error writes
+- **Issue:** The server never calls `signal(SIGPIPE, SIG_IGN)`. When a client disconnects and the server writes to that client's socket (via `sendMsgToAllClientsBut`), the kernel delivers SIGPIPE. The default handler terminates the process. Any client can crash the server by disconnecting at the right moment. This is a trivial denial of service. The race window is real: if client A's RST has been received by the kernel but A hasn't been processed in the `for` loop yet, and client B (lower fd) is processed first, `write(A->fd, ...)` kills the server.
+- **Fix:** Call `signal(SIGPIPE, SIG_IGN);` at the start of `main`. Or use `send(fd, buf, len, MSG_NOSIGNAL)` instead of `write`.
+
+### [CRITICAL] snprintf failure produces negative length cast to size_t — massive over-read
+- **Type:** invariant-true
+- **Trigger:** A function's return value convention is unclear or redundant.
+- **Location:** smallchat-server.c, `main`, lines ~210-216
+- **Issue:** `int msglen = snprintf(msg, sizeof(msg), "%s> %s", c->nick, readbuf);` — if `snprintf` returns -1 (error), `msglen` is -1. The check `if (msglen >= (int)sizeof(msg))` is false (-1 < 256). Then `sendMsgToAllClientsBut(j, msg, msglen)` is called with `msglen = -1` implicitly converted to `size_t`, producing a value of `SIZE_MAX` (~18 exabytes). The `write` call inside will read far past the stack buffer.
+- **Fix:** Check for negative return: `if (msglen < 0) msglen = 0;` before the size check.
+
+### [HIGH] select() exits on EINTR — server dies on any caught signal
 - **Type:** invariant-false
-- **Trigger:** Fatal crash or abort used for a recoverable error condition
-- **Location:** smallchat-server.c:85-86
-- **Issue:** `createClient()` uses `c->fd` as an index into `Chat->clients[MAX_CLIENTS]` (size 1000) without checking `fd < MAX_CLIENTS`. The only guard is `assert(Chat->clients[c->fd] == NULL)` at line 85, which has two defects: (1) asserts are compiled out with `-DNDEBUG`, so production builds have zero validation; (2) the assert expression itself performs the out-of-bounds read `Chat->clients[c->fd]` before the assertion can fire — so even in debug, the OOB access happens. If the OS assigns a file descriptor >= 1000 (e.g., the process has many open files, or `ulimit -n` is high), `Chat->clients[c->fd] = c` at line 86 writes past the array boundary, corrupting heap metadata or adjacent globals. The same unchecked-index pattern repeats in `main()` at lines 165-166 (`FD_SET(j, &readfds)`) and line 201 (`Chat->clients[j]`), where `j` ranges up to `Chat->maxclient` — which is set directly from `c->fd` at line 88. Additionally, `FD_SET` with `j >= FD_SETSIZE` (typically 1024) overflows the `fd_set` structure on the stack.
-- **Fix:** Validate `fd` before any array access: `if (fd < 0 || fd >= MAX_CLIENTS) { free(c->nick); free(c); return NULL; }`. Make `createClient` return `NULL` on failure and have the caller in `main()` check it. Replace the `assert` with a real runtime check. If `MAX_CLIENTS` must stay 1000, also enforce `MAX_CLIENTS <= FD_SETSIZE` at compile time (`_Static_assert(MAX_CLIENTS <= FD_SETSIZE, ...)`).
+- **Trigger:** Error-handling code suppresses the symptom of an underlying bug, or is itself fragile enough to fail under the same conditions that triggered the original error.
+- **Location:** smallchat-server.c, `main`, lines ~145-148
+- **Issue:** `select()` can return -1 with `errno == EINTR` when interrupted by a signal. The code treats all -1 returns as fatal and calls `exit(1)`. Any signal (SIGCHLD from a child process, SIGINT during shutdown, etc.) kills the server.
+- **Fix:** `if (retval == -1) { if (errno == EINTR) continue; perror("select() error"); exit(1); }`
 
-### [HIGH] exit(1) on select() EINTR — recoverable signal interruption crashes the server
+### [HIGH] Non-blocking socket EAGAIN treated as client disconnection
 - **Type:** invariant-false
-- **Trigger:** Fatal crash or abort used for a recoverable error condition
-- **Location:** smallchat-server.c:180-182
-- **Issue:** `select()` returns -1 with `errno == EINTR` when interrupted by a signal (SIGCHLD, SIGTERM, etc.). This is a normal, recoverable condition — the correct response is to retry the loop. Instead, the code calls `perror("select() error"); exit(1);`, killing the server and disconnecting all clients. Any signal delivered during `select()` takes down the entire service.
-- **Fix:** Check `errno` before exiting: `if (retval == -1) { if (errno == EINTR) continue; perror("select() error"); exit(1); }`.
+- **Trigger:** A patch papers over a problem — adding markers, flags, or compensating logic — rather than fixing the code that produces the bad data or behavior.
+- **Location:** smallchat-server.c, `main`, lines ~178-184
+- **Issue:** Client sockets are set to non-blocking in `createClient` via `socketSetNonBlockNoDelay`. In the read loop, `if (nread <= 0)` treats all non-positive returns as disconnection. But `read()` on a non-blocking socket can return -1 with `errno == EAGAIN` — meaning "no data right now, try again later." This disconnects a perfectly healthy client. While `select()` should prevent this in practice, edge cases (kernel internal state transitions, spurious readiness) make it possible.
+- **Fix:** `if (nread <= 0) { if (nread == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue; ... freeClient ... }`
 
-### [MEDIUM] write() return values discarded — silent message loss
+### [MEDIUM] write() return values ignored — silent data loss on all output paths
+- **Type:** invariant-true
+- **Trigger:** Interfaces that return misleading or fabricated data, or functions that are fragile against unexpected inputs from callers.
+- **Location:** smallchat-server.c, `sendMsgToAllClientsBut` line 120; `main` welcome message line 159; error message line 205
+- **Issue:** Every `write()` call ignores the return value. On non-blocking sockets, `write` can return a partial count. Messages are silently truncated. The comment says "we don't care," but partial writes mean clients receive garbled, partial messages — half a nickname prefix, half a message body. This is a correctness issue, not just a convenience issue.
+- **Fix:** For a simple program, at minimum check for -1 and treat it as a disconnection. For correctness, buffer partial writes.
+
+### [MEDIUM] No nickname length validation — unbounded allocation per client
 - **Type:** invariant-false
-- **Trigger:** Function returns a value that is indistinguishable from a successful return
-- **Location:** smallchat-server.c:143, 194, 248
-- **Issue:** Every `write()` call discards the return value. At line 143 (`sendMsgToAllClientsBut`), if a client's kernel socket buffer is full, `write` returns a short count or -1 (EAGAIN on non-blocking socket). The message is silently truncated or dropped with no indication to the sender or receiver. At line 194, the welcome message can fail silently on a fast-disconnecting client. At line 248, error messages to clients are silently lost. The comment at lines 140-142 acknowledges this ("If the content does not fit, we don't care"), but silent data loss in a chat server means users miss messages with no detection — a correctness issue, not a style choice.
-- **Fix:** At minimum, log short writes and errors: `ssize_t w = write(fd, s, len); if (w < 0) { /* log or handle */ }`. For the fan-out path, consider tracking write failures to mark clients for disconnection on repeated EPIPE/ECONNRESET.
+- **Trigger:** Code uses an algorithm or data structure whose cost grows inappropriately with input size.
+- **Location:** smallchat-server.c, `main`, `/nick` command, lines ~198-202
+- **Issue:** `int nicklen = strlen(arg); c->nick = chatMalloc(nicklen+1);` — a client can set a nickname of any length. A malicious client sends `/nick ` followed by megabytes of data, causing a large allocation. No bound is enforced.
+- **Fix:** Enforce a maximum nick length (e.g., 32 bytes, matching the initial nick buffer): `if (nicklen > 32) { send error; continue; }`
 
-### [MEDIUM] socketSetNonBlockNoDelay failure ignored — socket may remain blocking
+### [LOW] MAX_CLIENTS comment is factually wrong
 - **Type:** invariant-false
-- **Trigger:** Function returns a value that is indistinguishable from a successful return
-- **Location:** smallchat-server.c:81
-- **Issue:** `socketSetNonBlockNoDelay(fd)` is called with the comment `// Pretend this will not fail.` If this function fails (e.g., `fcntl` returns -1), the socket remains in blocking mode. A blocking socket in a `select()`-based event loop causes `read()` or `write()` to hang indefinitely, freezing the entire server for all clients. The failure is silent — no log, no error return, no fallback.
-- **Fix:** Check the return value: `if (socketSetNonBlockNoDelay(fd) == -1) { free(c->nick); free(c); return NULL; }`. If non-blocking I/O is a hard requirement for the event loop (it is), failure to set it must prevent the client from being registered.
-
-### [LOW] MAX_CLIENTS name contradicts its actual purpose
-- **Type:** guideline
-- **Trigger:** Comment or documentation does not match actual code behavior
-- **Location:** smallchat-server.c:45
-- **Issue:** `#define MAX_CLIENTS 1000` is named as a client count limit, but the comment immediately admits `// This is actually the higher file descriptor.` The constant is used as the array size for `clients[MAX_CLIENTS]`, which is indexed by file descriptor, not by client number. `numclients` tracks the actual client count. The misleading name makes the code harder to reason about: a reader expects `MAX_CLIENTS` to cap the number of connected clients, but it actually caps the maximum file descriptor value. This conflation is the root cause of the bounds-check gap in `createClient` — the name suggests a count limit, but the code needs an fd limit.
-- **Fix:** Rename to `MAX_FD` or `CLIENT_SLOTS` to reflect that it bounds the file descriptor used as array index. Add a separate `MAX_CLIENTS` constant if a client-count limit is also desired.
-
-### smallchat-client.c
+- **Trigger:** A comment that describes behavior different from what the code actually does.
+- **Location:** smallchat-server.c, line 53
+- **Issue:** `#define MAX_CLIENTS 1000 // This is actually the higher file descriptor.` — MAX_CLIENTS is the array size, not "the higher file descriptor." The maximum file descriptor is bounded by both MAX_CLIENTS and the system's FD_SETSIZE. The comment misleads readers about the data structure's semantics.
+- **Fix:** `#define MAX_CLIENTS 1000 // Maximum clients = array size for clients[] indexed by fd.`
 
 ---
-file: smallchat-client.c
-skill: linus-torvalds-skill/SKILL-GLM.md
-reviewer: glm5.2
+
+## smallchat-client.c
+
+### [HIGH] select() exits on EINTR — client dies on any signal
+- **Type:** invariant-false
+- **Trigger:** Error-handling code suppresses the symptom of an underlying bug, or is itself fragile enough to fail under the same conditions that triggered the original error.
+- **Location:** smallchat-client.c, `main`, lines ~165-168
+- **Issue:** Same bug as the server. `select()` returning -1 with `errno == EINTR` is treated as fatal. The client exits on any signal delivery.
+- **Fix:** `if (num_events == -1) { if (errno == EINTR) continue; perror("select() error"); exit(1); }`
+
+### [MEDIUM] inputBufferAppend return value unchecked when appending newline
+- **Type:** invariant-true
+- **Trigger:** An API design makes the correct usage path difficult and the incorrect usage path easy.
+- **Location:** smallchat-client.c, `main`, line ~183
+- **Issue:** `inputBufferAppend(&ib,'\n');` — if the buffer is full (128 bytes), this returns `IB_ERR` and the newline is not appended. The line is sent to the server without a trailing newline. The server's message processing doesn't require newlines, so this doesn't crash, but the client's local display (`write(fileno(stdout),ib.buf,ib.len)`) shows the line without a newline, producing visual corruption.
+- **Fix:** Check the return value, or ensure IB_MAX is large enough that a 127-character line plus newline always fits by sizing the buffer to IB_MAX+1.
+
+### [LOW] Dead code after while(1) loop
+- **Type:** invariant-false
+- **Trigger:** Code contains dead code paths, state variables, or fallback branches that no caller depends on.
+- **Location:** smallchat-client.c, `main`, lines ~196-197
+- **Issue:** `close(s); return 0;` after `while(1)` — the loop only exits via `exit(1)`. This code is unreachable.
+- **Fix:** Remove the dead code, or restructure the loop to exit cleanly.
+
 ---
 
-### [HIGH] select() treats EINTR as fatal, crashing the client on any non-terminating signal
+## chatlib.c
 
+### [HIGH] TCPConnect breaks instead of continues on connect failure — contradicts own comment
 - **Type:** invariant-false
-- **Trigger:** Fatal crash or abort used for a recoverable error condition
-- **Location:** smallchat-client.c:222
-- **Issue:** `select()` returns -1 with `errno == EINTR` whenever a signal is delivered during the wait. EINTR is recoverable — the correct response is to retry the loop. Instead the code calls `perror("select() error"); exit(1);`. Because raw mode clears `ECHO | ICANON | IEXTEN` but leaves `ISIG` set, signals are delivered normally: resizing the terminal window (SIGWINCH) or pressing Ctrl-Z then `fg` (SIGTSTP) interrupts `select`, returns EINTR, and kills the client. A terminal resize while chatting exits the program. This is a crash on a recoverable condition.
-- **Fix:** Before the error exit, handle the interrupt: `if (num_events == -1) { if (errno == EINTR) continue; perror("select() error"); exit(1); }`
+- **Trigger:** A comment that describes behavior different from what the code actually does.
+- **Location:** chatlib.c, `TCPConnect`, lines ~80-85
+- **Issue:** The comment says "we retry with the next entry in servinfo." The code does `close(s); break;` — it breaks out of the loop entirely, skipping all remaining addresses. If the first address fails to connect, no fallback addresses are tried. This is wrong for IPv4/IPv6 dual-stack hosts where the first address might be unreachable.
+- **Fix:** Change `break;` to `continue;`.
 
-### [MEDIUM] read() on stdin does not check for EOF or error, causing a busy loop
+### [HIGH] TCPConnect leaks addrinfo on EINPROGRESS return
+- **Type:** invariant-true
+- **Trigger:** A resource is freed while it may still be referenced as part of a data structure, or a code path exists that may free the same resource twice.
+- **Location:** chatlib.c, `TCPConnect`, line ~82
+- **Issue:** `if (errno == EINPROGRESS && nonblock) return s;` — this returns without calling `freeaddrinfo(servinfo)`. The addrinfo structure is leaked. While the nonblock path is not currently used by the client (which passes `nonblock=0`), this is a latent memory leak in the library function.
+- **Fix:** Call `freeaddrinfo(servinfo)` before `return s;`.
 
+### [LOW] chatRealloc is declared, exported, and never used — dead code
 - **Type:** invariant-false
-- **Trigger:** Function returns a value that is indistinguishable from a successful return
-- **Location:** smallchat-client.c:240
-- **Issue:** The socket path checks `if (count <= 0)` and exits, but the stdin path does not: `ssize_t count = read(stdin_fd,buf,sizeof(buf)); for (int j = 0; j < count; j++) { ... }`. When `read` returns 0 (EOF) or -1 (error), the loop body is skipped and the `while(1)` continues. On EOF, `select` keeps reporting stdin readable, `read` keeps returning 0, and the client spins forever at 100% CPU. The error/EOF return is indistinguishable from a successful read of zero bytes. The asymmetry with the socket path is itself a bug — the same pattern is handled correctly in one branch and not the other.
-- **Fix:** Mirror the socket path: `if (count <= 0) { printf("Input closed\n"); exit(0); }` before the loop.
+- **Trigger:** Code contains dead code paths, state variables, or fallback branches that no caller depends on.
+- **Location:** chatlib.c, `chatRealloc`, lines ~120-128; chatlib.h line 11
+- **Issue:** `chatRealloc` is defined and exported in the header but never called anywhere in the codebase. It's dead code that must be maintained forever.
+- **Fix:** Remove the function and its declaration, or add a comment explaining its intended future use.
 
-### [MEDIUM] setRawMode() return value ignored — failure silently puts the client in the wrong mode
+---
 
-- **Type:** invariant-false
-- **Trigger:** Function returns a value that is indistinguishable from a successful return
-- **Location:** smallchat-client.c:205
-- **Issue:** `setRawMode(fileno(stdin),1);` discards the return value. `setRawMode` returns -1 when stdin is not a tty (`isatty` fails, `tcgetattr` fails). If stdin is redirected from a pipe or file, raw mode is not set, the program continues in cooked mode, and the per-keystroke input model silently breaks — the user sees line-buffered behavior with no explanation. The failure is indistinguishable from success at the call site.
-- **Fix:** Check the return: `if (setRawMode(fileno(stdin),1) == -1) { fprintf(stderr, "Cannot set raw mode on stdin\n"); exit(1); }`
+## chatlib.h
 
-### [MEDIUM] write() to the server ignores short writes and errors — message tail can be silently dropped
+No findings. The header is a clean, minimal interface declaration. Function signatures match their implementations. No types are exported that shouldn't be.
 
-- **Type:** invariant-false
-- **Trigger:** Function returns a value that is indistinguishable from a successful return
-- **Location:** smallchat-client.c:249
-- **Issue:** `write(s,ib.buf,ib.len);` ignores the return value. On a socket, `write` may return fewer bytes than requested (short write) when the send buffer is under backpressure, or -1 on error. The unsent bytes are silently dropped and the line is truncated mid-message — for a line-oriented chat protocol this corrupts the message framing. A short write is indistinguishable from a full write at this call site. The same unchecked-return pattern affects the stdout writes, but the socket write is the correctness-critical one.
-- **Fix:** Use a helper that loops until all bytes are written or an error occurs, e.g. `write_all(s, ib.buf, ib.len)` that handles partial writes and returns -1 on error, and check its return.
+---
 
-### [MEDIUM] Buffer-full silently drops input; on a full buffer the line terminator sent to the server is lost
+## Makefile
 
-- **Type:** invariant-false
-- **Trigger:** Function returns a value that is indistinguishable from a successful return
-- **Location:** smallchat-client.c:245
-- **Issue:** `IB_MAX` is 128. In the `IB_GOTLINE` handler, `inputBufferAppend(&ib,'\n');` is called but its return value is ignored. If the user has typed exactly 128 characters, the buffer is full, `inputBufferAppend` returns `IB_ERR`, the `\n` is not appended, and the code then sends `ib.buf` with `ib.len` (128) bytes to the server — a line with no terminator. The server receives a malformed line. The same silent-drop occurs in the default keystroke path: once the buffer is full, further keystrokes are discarded with no feedback to the user (chars vanish). The `IB_ERR` return is indistinguishable from `IB_OK` at both call sites. (Note: the default path in `inputBufferFeedChar` does check the return; the GOTLINE path in `main` does not.)
-- **Fix:** Check the return in the GOTLINE path. Better, size the buffer so there is always room for the terminator (`IB_MAX` leaves one byte for `\n`), or reject input that would overflow with visible feedback (a bell) instead of silently dropping it.
+### [LOW] CFLAGS placed after source files — fragile ordering
+- **Type:** general-guideline
+- **Trigger:** A name (function, variable, type, configuration option) is too generic, inconsistent with naming used for similar entities, or collides with an existing name in the codebase.
+- **Location:** Makefile, lines 5-6
+- **Issue:** `$(CC) smallchat-server.c chatlib.c -o smallchat-server $(CFLAGS)` places CFLAGS after the source files. While gcc and clang handle this, some compilers require flags before source files. Additionally, `chatlib.h` is not listed as a dependency — changing the header doesn't trigger a rebuild.
+- **Fix:** Put CFLAGS before source files: `$(CC) $(CFLAGS) smallchat-server.c chatlib.c -o smallchat-server`. Add header dependencies: `smallchat-server: smallchat-server.c chatlib.c chatlib.h`.
 
-### [LOW] Comment contradicts code in the raw-mode disable path
+---
 
-- **Type:** invariant-false
-- **Trigger:** Comment or documentation does not match actual code behavior
-- **Location:** smallchat-client.c:62
-- **Issue:** The comment reads `/* Don't even check the return value as it's too late. */`, but the very next line checks the return value: `if (rawmode_is_set && tcsetattr(fd,TCSAFLUSH,&orig_termios) != -1)`. The comment says the return is not checked; the code checks it to decide whether to clear `rawmode_is_set`. A maintainer reading the comment will trust that the return is ignored and may "fix" the code based on that false assumption.
-- **Fix:** Align the comment with the code, e.g. `/* We can't do much on failure, but clear the flag only if restore succeeded. */`
+## Summary
 
-### chatlib.c
+**Verdict: FAIL.** The code has 5 CRITICAL bugs that make it unsafe to run. The server will crash on the first client disconnection (SIGPIPE), corrupt memory on accept failure (unchecked return), read uninitialized heap memory into client-visible output (missing null terminator), and potentially write out of bounds on any fd above 1000 (no bounds check). The snprintf error path can trigger a multi-exabyte over-read. These are not theoretical — they trigger in normal operation.
 
-### [HIGH] TCPConnect leaks the addrinfo list on the non-blocking EINPROGRESS path
-- **Type:** invariant-false
-- **Trigger:** Resource released while it may still be referenced (resource-lifecycle variant: resource never released on an early-return path)
-- **Location:** chatlib.c:93
-- **Issue:** `getaddrinfo()` allocates the `servinfo` linked list at line 74. The normal exit path frees it with `freeaddrinfo(servinfo)` at line 106. But the non-blocking success path returns early at line 93 (`if (errno == EINPROGRESS && nonblock) return s;`) without freeing `servinfo`. Every non-blocking connect that returns EINPROGRESS — which is the expected outcome for every non-blocking connect — leaks the entire addrinfo list. In a long-running server this is a steady, unbounded leak on the common path, not an edge case.
-- **Fix:** Free `servinfo` before returning. Either call `freeaddrinfo(servinfo); return s;` on line 93, or restructure the function to a single return point so the existing `freeaddrinfo` at line 106 covers all paths.
+**Findings by severity:**
+- CRITICAL: 5 (all in smallchat-server.c)
+- HIGH: 4 (2 server, 1 client, 2 chatlib)
+- MEDIUM: 4 (2 server, 1 client, 1 chatlib)
+- LOW: 4 (1 server, 1 client, 1 chatlib, 1 Makefile)
 
-### [HIGH] Comment documents retry-on-connect-failure; code breaks out of the loop instead
-- **Type:** invariant-false
-- **Trigger:** Comment or documentation does not match actual code behavior
-- **Location:** chatlib.c:97 (contradicts comment at chatlib.c:77-79)
-- **Issue:** The comment at lines 77-79 states: "If we fail in the socket() call, or on connect(), we retry with the next entry in servinfo." The `socket()` failure path honors this — it does `continue` (line 81) and tries the next address. The `connect()` failure path does not: it does `close(s); break;` (lines 96-97), which exits the loop and gives up without trying any remaining addresses. For a host that resolves to multiple addresses (e.g. IPv4 + IPv6, or multiple A records), a failure on the first address prevents fallback to the rest. Either the code is wrong (should be `continue`, matching the documented intent) or the comment is stale — but they disagree, and a reviewer cannot tell which is the defect without asking the author.
-- **Fix:** Decide the intended behavior. If multi-address fallback is intended (as the comment says), change `break` on line 97 to `continue` so the next addrinfo entry is tried. If giving up on the first connect failure is intended, rewrite the comment to match — but note that this defeats the purpose of iterating `getaddrinfo`'s list.
-
-### [MEDIUM] chatMalloc and chatRealloc abort the process on out-of-memory
-- **Type:** invariant-false
-- **Trigger:** Fatal crash or abort used for a recoverable error condition
-- **Location:** chatlib.c:139 (chatMalloc), chatlib.c:149 (chatRealloc)
-- **Issue:** Both allocators call `exit(1)` when `malloc`/`realloc` returns NULL. The skill explicitly classifies resource exhaustion as a recoverable error ("Bad user input, resource exhaustion, and network failures are recoverable"), and the trigger rejects fatal aborts for recoverable conditions. The comment at lines 131-134 documents a deliberate choice for standalone long-running programs and explicitly excludes libraries — which is an honest engineering tradeoff — but the skill still flags a hard process kill on a transient condition. `chatRealloc` has a secondary defect: `ptr = realloc(ptr, size)` overwrites the caller's pointer before the NULL check, so on failure the original block is leaked (moot only because `exit` follows, but it is the wrong pattern to copy).
-- **Fix:** If these are only ever used by the standalone server and exit-on-OOM is a non-negotiable policy, keep it but state it as an explicit invariant in the header so callers know the contract. If they may be reused as a library, return NULL on failure and let callers decide. In `chatRealloc`, do not reassign the parameter before checking the result: `void *tmp = realloc(ptr, size); if (tmp == NULL) { ... } ptr = tmp;`
-
-### chatlib.h
-
-### [HIGH] TCPConnect special-cases a nonblock flag that createTCPServer does not take
-- **Type:** invariant-false
-- **Trigger:** Single API function special-cased with parameters or behavior not applied to similar operations
-- **Location:** chatlib.h:8
-- **Issue:** `TCPConnect(char *addr, int port, int nonblock)` takes a `nonblock` flag that controls whether the socket is set non-blocking. `createTCPServer(int port)` — the sibling socket-creation function — does not. Non-blocking mode for the server is set through a separate call to `socketSetNonBlockNoDelay(int fd)`. Two similar operations (creating a socket) follow two different patterns: the client bakes the flag into the create call, the server requires a separate setter. There is no architectural reason for the asymmetry. Callers must remember which function takes the flag and which doesn't — a per-function rule of the kind the skill flags as bug-prone.
-- **Fix:** Pick one pattern and apply it to both. Either add a `nonblock` parameter to `createTCPServer` (and have it call `socketSetNonBlockNoDelay` internally, same as `TCPConnect` does), or remove the `nonblock` parameter from `TCPConnect` and have callers call `socketSetNonBlockNoDelay` separately. The second option is preferable: it makes `socketSetNonBlockNoDelay` the single point of control for non-blocking mode and keeps both create functions focused on one job.
-
-### Makefile
-
-### [HIGH] Missing header file dependencies produce silently stale builds
-
-- **Type:** invariant-false
-- **Trigger:** Misleading or false information provided in user-visible interfaces
-- **Location:** Makefile:4,7
-- **Issue:** The build targets list `chatlib.c` as a prerequisite but not `chatlib.h`, which exists in the source tree. When `chatlib.h` is modified, `make` reports "up to date" and does not rebuild. The developer runs stale binaries believing they rebuilt. The build system lies about whether a rebuild is needed — a silent correctness defect that causes debugging nightmares.
-- **Fix:** Add `chatlib.h` (and any other included headers) as prerequisites to both targets:
-  ```makefile
-  smallchat-server: smallchat-server.c chatlib.c chatlib.h
-  smallchat-client: smallchat-client.c chatlib.c chatlib.h
-  ```
-
-### [MEDIUM] Phony targets not declared with .PHONY
-
-- **Type:** invariant-false
-- **Trigger:** Function returns a value that is indistinguishable from a successful return
-- **Location:** Makefile:1,10
-- **Issue:** `all` and `clean` are phony targets (they produce no file named `all` or `clean`) but are not declared with `.PHONY`. If a file named `all` or `clean` ever appears in the directory, `make all` or `make clean` silently exits successfully without doing the work. Success is indistinguishable from failure — the user believes the target ran when it did not.
-- **Fix:** Add a `.PHONY` declaration:
-  ```makefile
-  .PHONY: all clean
-  ```
-
+The data structure design — indexing `clients[]` by file descriptor — is sound for a simple server. The special case in `freeClient` (scanning backward for the new maxclient) is an acceptable cost of that design choice. The core problem is not the architecture but the implementation: every interface boundary is porous. Return values are unchecked, buffers are unterminated, signals are unhandled, and error paths are treated as fatal when they should be retried. Fix the five CRITICAL bugs and the server might survive a day of actual use.

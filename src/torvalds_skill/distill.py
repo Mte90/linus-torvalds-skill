@@ -16,10 +16,13 @@ METHOD, not his C/kernel-specific knowledge.
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 import time
 import urllib.request
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import config
@@ -36,6 +39,26 @@ from .distill_sanitize import (
     sanitize_skill,
     _strip_markdown_tables,
 )
+
+
+# Module-level data file cache: {path: (mtime, data)}
+_data_cache: dict[tuple, tuple[float, object]] = {}
+
+
+def _load_json_cached(path: Path) -> dict:
+    """Load a JSON file with mtime-based caching.
+    
+    Returns cached data if the file hasn't changed since last load.
+    """
+    mtime = path.stat().st_mtime
+    cache_key = (str(path.resolve()),)
+    if cache_key in _data_cache:
+        cached_mtime, cached_data = _data_cache[cache_key]
+        if cached_mtime == mtime:
+            return cached_data
+    data = json.loads(path.read_text(encoding="utf-8"))
+    _data_cache[cache_key] = (mtime, data)
+    return data
 
 
 def _format_calibration_for_prompt(calibration: dict, category: str = None) -> str:
@@ -136,8 +159,9 @@ def _format_moves_for_prompt(patterns: list) -> str:
 def _load_interview_data(project_root: Path) -> str:
     """Load all interview transcripts from data/interviews/ directory.
 
-    Reads all .md files, concatenates them with headers, and truncates
-    to ~120,000 chars (~13% of corpus) to avoid blowing the context window.
+    Reads all .md files line-by-line, concatenates them with headers, and truncates
+    to ~200,000 chars to avoid blowing the context window. Reads line-by-line
+    to avoid OOM when files are very large.
 
     Returns the concatenated string, or empty string if the directory doesn't exist.
     """
@@ -151,21 +175,48 @@ def _load_interview_data(project_root: Path) -> str:
 
     # Sort files for deterministic ordering
     for md_file in sorted(interviews_dir.glob("*.md")):
-        content = md_file.read_text(encoding="utf-8")
         header = f"## Interview: {md_file.name}\n\n"
-        file_content = header + content + "\n\n"
-        file_chars = len(file_content)
-
-        # Stop if adding this file would exceed the limit
-        if total_chars + file_chars > max_chars and total_chars > 0:
-            # Add partial content if we haven't added anything yet
+        header_chars = len(header)
+        
+        # Check if header alone would exceed limit
+        if total_chars + header_chars > max_chars:
+            # Add partial header if we haven't started yet
             if total_chars == 0:
-                lines.append(file_content[:max_chars])
+                remaining = max_chars - total_chars
+                if remaining > 0:
+                    lines.append(header[:remaining])
                 total_chars = max_chars
             break
-
-        lines.append(file_content)
-        total_chars += file_chars
+        
+        # Read line-by-line to avoid loading entire file into memory
+        with open(md_file, "r", encoding="utf-8") as f:
+            file_lines = []
+            file_chars = header_chars
+            
+            for line in f:
+                line_chars = len(line)
+                if total_chars + file_chars + line_chars > max_chars:
+                    # Add partial line if it fits, then stop
+                    remaining = max_chars - total_chars - file_chars
+                    if remaining > 0:
+                        file_lines.append(line[:remaining])
+                    # We've hit the limit
+                    break
+                file_lines.append(line)
+                file_chars += line_chars
+            
+            file_content = header + "".join(file_lines) + "\n\n"
+            
+            # If this is the first file and we have content, add it
+            if total_chars == 0 or total_chars + len(file_content) <= max_chars:
+                lines.append(file_content)
+                total_chars += len(file_content)
+            elif total_chars == 0:
+                # First file but too large - add partial
+                remaining = max_chars - total_chars
+                if remaining > 0:
+                    lines.append(file_content[:remaining])
+                total_chars = max_chars
 
     return "".join(lines)
 
@@ -262,12 +313,58 @@ def _distill_category(category: str, patterns: list, model: str = None) -> str:
             pattern_count=len(patterns),
         )
         
-        fragment = _call_llm(user_prompt, model=model, system_prompt=category_system_prompt)
+        fragment = _call_llm(user_prompt, model=model, system_prompt=category_system_prompt, wall_clock_override=config.WALL_CLOCK_CATEGORY)
         return fragment
     except Exception as e:
         print(f"  error distilling category {category}: {e}", flush=True)
         return ""
 
+
+def _run_categories_parallel(categories: list, patterns_by_category: dict, call_fn, model: str = None, max_workers: int = 3) -> tuple[dict, list]:
+    """Run category distillation in parallel using ThreadPoolExecutor.
+    
+    Args:
+        categories: List of category names in original order
+        patterns_by_category: Dict mapping category name to pattern list
+        call_fn: Function to call for each category (e.g., _distill_category)
+        model: Model name to pass to call_fn
+        max_workers: Maximum number of parallel workers
+    
+    Returns:
+        Tuple of (fragments dict ordered by category, list of failed categories)
+    """
+    # Pre-initialize fragments in original category order
+    fragments = {cat: None for cat in categories}
+    failed_categories = []
+    completed_count = 0
+    total = len(categories)
+    
+    # Use as_completed for progress reporting, but assemble in original order
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks, mapping futures to category names
+        future_to_category = {
+            executor.submit(call_fn, cat, patterns_by_category[cat], model): cat
+            for cat in categories
+        }
+        
+        # Track completion in any order for progress
+        for future in as_completed(future_to_category):
+            category = future_to_category[future]
+            completed_count += 1
+            
+            try:
+                fragment = future.result()
+                fragments[category] = fragment
+                if fragment:
+                    print(f"  [{completed_count}/{total}] {category}: done ({len(fragment)} chars)", flush=True)
+                else:
+                    print(f"  [{completed_count}/{total}] {category}: done (empty fragment)", flush=True)
+                    failed_categories.append(category)
+            except Exception as e:
+                print(f"  [{completed_count}/{total}] {category}: FAILED ({e})", flush=True)
+                failed_categories.append(category)
+    
+    return fragments, failed_categories
 
 def _synthesize_skill(fragments: dict, calibration: dict, interview_data: str, 
                       iv_data: str, model: str = None) -> str:
@@ -453,6 +550,123 @@ def _repair_missing_sections(skill_md: str, model: str = None) -> str:
     return skill_md
 
 
+def _validate_skill_structure(skill_text: str) -> list[str]:
+    """Check that all required top-level sections exist as ## Section Name headings.
+    
+    Required sections: "Reviewer Mindset", "Review Triggers", "Severity Calibration", 
+    "Severity Decision Tree", "Precedence and Priorities", "Decision Cards", 
+    "Key Definitions", "Voice and Tone"
+    
+    Returns a list of missing section names (empty list = all present).
+    Does NOT modify the skill text.
+    """
+    required = [
+        "Reviewer Mindset",
+        "Review Triggers",
+        "Severity Calibration",
+        "Severity Decision Tree",
+        "Precedence and Priorities",
+        "Decision Cards",
+        "Key Definitions",
+        "Voice and Tone",
+    ]
+    
+    missing = []
+    for section in required:
+        pattern = rf"^##\s+{re.escape(section)}\s*$"
+        if not re.search(pattern, skill_text, re.MULTILINE):
+            missing.append(section)
+    
+    return missing
+
+
+def _validate_severity_consistency(skill_text: str, calibration: dict) -> list[str]:
+    """Validate severity distribution in skill text against calibration statistics.
+    
+    1. Extracts severity labels from the skill text (looks for words like "reject", 
+       "nitpick", "critical", "warning" in trigger descriptions)
+    2. Compares the frequency of each severity against the calibration statistics
+    3. Returns a list of warning strings if any severity is dramatically 
+       over/under-represented (>2x deviation from expected ratio)
+    4. Does NOT modify the skill text — just reports warnings
+    
+    The calibration dict has structure: 
+    {"severity_by_category": {"correctness": {"reject": 45, "nitpick": 12, ...}, ...}, ...}
+    """
+    warnings = []
+    
+    if not calibration:
+        return warnings
+    
+    # Extract severity mentions from skill text
+    severity_patterns = {
+        "reject": r"\b(reject|rejection|rejecting|critical|blocker|must-fix|breaking)\b",
+        "nitpick": r"\b(nitpick|nit|cosmetic|style|minor|trivial|optional)\b",
+        "request-changes": r"\b(request.?changes|revision|improve|refactor|rework)\b",
+    }
+    
+    severity_counts = {}
+    for sev, pattern in severity_patterns.items():
+        matches = re.findall(pattern, skill_text, re.IGNORECASE)
+        severity_counts[sev] = len(matches)
+    
+    total_mentions = sum(severity_counts.values())
+    if total_mentions == 0:
+        return warnings
+    
+    # Get calibration statistics
+    severity_by_category = calibration.get("severity_by_category", {})
+    if not severity_by_category:
+        return warnings
+    
+    # Compute expected ratios from calibration
+    expected_ratios = {"reject": 0.0, "nitpick": 0.0, "request-changes": 0.0}
+    total_cal = 0
+    
+    for cat_data in severity_by_category.values():
+        # Use percentages if available
+        if "percentages" in cat_data:
+            for sev in expected_ratios.keys():
+                sev_key = sev if sev != "request-changes" else "request_changes"
+                rate_key = f"{sev_key}_rate"
+                if rate_key in cat_data:
+                    expected_ratios[sev] += cat_data[rate_key] / 100.0
+                    total_cal += 1
+    
+    if total_cal > 0:
+        for sev in expected_ratios:
+            expected_ratios[sev] /= total_cal
+    
+    # Compare actual vs expected
+    actual_ratios = {
+        sev: count / total_mentions 
+        for sev, count in severity_counts.items()
+    }
+    
+    for sev in ["reject", "nitpick", "request-changes"]:
+        actual = actual_ratios.get(sev, 0)
+        expected = expected_ratios.get(sev, 0)
+        
+        if expected > 0 and actual > 0:
+            deviation = actual / expected
+            if deviation > 2.0:
+                warnings.append(
+                    f"Severity '{sev}' over-represented: {actual*100:.1f}% in skill "
+                    f"vs {expected*100:.1f}% expected ({deviation:.1f}x deviation)"
+                )
+            elif deviation < 0.5:
+                warnings.append(
+                    f"Severity '{sev}' under-represented: {actual*100:.1f}% in skill "
+                    f"vs {expected*100:.1f}% expected ({deviation:.1f}x deviation)"
+                )
+        elif actual > 0 and expected == 0:
+            warnings.append(
+                f"Severity '{sev}' present in skill but no calibration data available"
+            )
+    
+    return warnings
+
+
 def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model: str = None,
                   calibration_path: Path = None, single_call: bool = False):
     """Read patterns.json, call LLM, sanitize, write skill markdown.
@@ -479,13 +693,13 @@ def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model
     # Load calibration data if available
     calibration = None
     if calibration_path and calibration_path.exists():
-        calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+        calibration = _load_json_cached(calibration_path)
         print(f"loaded calibration from {calibration_path}")
     else:
         print("warning: no calibration data — skill will lack severity grounding")
 
     # Load patterns
-    data = json.loads(patterns_path.read_text(encoding="utf-8"))
+    data = _load_json_cached(patterns_path)
     print(f"loaded {len(data)} patterns from {patterns_path}")
 
     # Group patterns by category
@@ -507,22 +721,51 @@ def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model
         print(f"\nStage 1: distilling {len(categories)} categories...", flush=True)
         fragments = {}
         
-        for i, cat in enumerate(categories, 1):
-            cat_patterns = by_category[cat]
-            if not cat_patterns:
-                print(f"  [{i}/{len(categories)}] {cat}: skipping (0 patterns)", flush=True)
-                fragments[cat] = ""
-                continue
-                
-            print(f"  [{i}/{len(categories)}] {cat} ({len(cat_patterns)} patterns)...", flush=True)
-            fragment = _distill_category(cat, cat_patterns, model=model)
-            fragments[cat] = fragment
+        # Determine max_workers from env var or default to 3
+        # For non-glm5.2 models, force single worker to avoid rate limits
+        env_workers = int(os.environ.get("DISTILL_MAX_WORKERS", 3))
+        if model and "glm5.2" not in model.lower():
+            max_workers = 1
+        else:
+            max_workers = env_workers
+        
+        # Filter out empty categories first
+        non_empty_categories = [cat for cat in categories if by_category[cat]]
+        empty_categories = [cat for cat in categories if not by_category[cat]]
+        
+        # Handle empty categories
+        for cat in empty_categories:
+            fragments[cat] = ""
+        
+        # Run parallel distillation for non-empty categories
+        if non_empty_categories:
+            non_empty_patterns = {cat: by_category[cat] for cat in non_empty_categories}
+            fragments, failed_categories = _run_categories_parallel(
+                non_empty_categories, non_empty_patterns, _distill_category, model=model, max_workers=max_workers
+            )
             
-            if fragment:
-                print(f"    generated {len(fragment)} chars", flush=True)
-            else:
-                print(f"    FAILED (empty fragment)", flush=True)
-
+            # Retry failed categories sequentially once
+            if failed_categories:
+                print(f"\nRetrying {len(failed_categories)} failed category/categories sequentially...", flush=True)
+                still_failed = []
+                for cat in failed_categories:
+                    print(f"  retrying {cat}...", flush=True)
+                    fragment = _distill_category(cat, by_category[cat], model=model)
+                    if fragment:
+                        fragments[cat] = fragment
+                        print(f"    retry succeeded", flush=True)
+                    else:
+                        still_failed.append(cat)
+                
+                # Warn about categories that still failed
+                if still_failed:
+                    print(f"\nWARNING: {len(still_failed)} category/categories failed after retry and will be missing from synthesis:", 
+                          file=sys.stderr)
+                    for cat in still_failed:
+                        print(f"  - {cat}", file=sys.stderr)
+        else:
+            fragments = {cat: "" for cat in categories}
+        
         # Stage 2: Synthesize final skill
         print("\nStage 2: synthesizing final skill...", flush=True)
         skill_md = _synthesize_skill(fragments, calibration, interview_data, iv_data, model=model)
@@ -532,6 +775,20 @@ def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model
     skill_md = sanitize_skill(skill_md)
     skill_md = _strip_markdown_tables(skill_md)
     skill_md = _repair_missing_sections(skill_md, model=model)
+
+    # Validation: check structure and severity consistency
+    missing_sections = _validate_skill_structure(skill_md)
+    if missing_sections:
+        print(f"  WARNING: missing sections after repair: {', '.join(missing_sections)}", 
+              file=sys.stderr)
+    
+    if calibration:
+        severity_warnings = _validate_severity_consistency(skill_md, calibration)
+        for warning in severity_warnings:
+            print(f"  WARNING: {warning}", file=sys.stderr)
+    else:
+        print("  WARNING: no calibration data — skipping severity consistency check", 
+              file=sys.stderr)
 
     # Write output
     output_path.parent.mkdir(parents=True, exist_ok=True)
