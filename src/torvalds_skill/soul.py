@@ -13,7 +13,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .distill import _call_llm, sanitize_skill
+from .distill_llm import _call_llm
+from .distill_sanitize import sanitize_skill
 
 SOUL_SYSTEM_PROMPT = """\
 You are an expert at distilling the decisional system of a senior engineer

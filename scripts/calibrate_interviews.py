@@ -78,6 +78,7 @@ STOPWORDS = {
     "support", "series", "commit", "merge", "pull", "request", "tree",
     "system", "check", "return", "error", "name", "type", "value", "data",
     "struct", "int", "char", "void", "null", "true", "false", "default",
+    "set_fs", "buf",
     "field", "list", "point", "point", "call", "calls", "called", "calling",
     "passed", "passing", "takes", "taken", "give", "given", "want", "need",
     "way", "thing", "things", "stuff", "lot", "big", "small", "long", "short",
@@ -180,7 +181,7 @@ def compute_temporal_trends(moves: list[dict]) -> dict:
 
     years = sorted(year_total.keys())
     result = {
-        "year_range": [years[0], years[-1]] if years else [],
+        "year_range": [years[0], years[-1]] if len(years) > 1 else ([years[0]] if years else []),
         "total_per_year": {str(y): year_total[y] for y in years},
         "top_category_per_year": {},
         "reject_rate_per_year": {},
@@ -211,12 +212,12 @@ def compute_corpus_stats(moves: list[dict], email_count: int, interview_count: i
         },
         "severity_distribution": {
             sev: {"count": sev_counts.get(sev, 0),
-                  "percentage": round(100 * sev_counts.get(sev, 0) / total, 1)}
+                  "percentage": round(100 * sev_counts.get(sev, 0) / total, 1) if total else 0.0}
             for sev in CANONICAL_SEVERITIES
         },
         "category_distribution": {
             cat: {"count": cat_counts.get(cat, 0),
-                  "percentage": round(100 * cat_counts.get(cat, 0) / total, 1)}
+                  "percentage": round(100 * cat_counts.get(cat, 0) / total, 1) if total else 0.0}
             for cat in CANONICAL_CATEGORIES
         },
     }

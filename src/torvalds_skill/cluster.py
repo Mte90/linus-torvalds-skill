@@ -26,6 +26,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from .models import iter_moves, CATEGORIES
+from .audit import log_decision
 
 # Moves per category in the distill prompt. 25 * 14 categories = 350 moves.
 # At ~400 chars/move that's ~140K chars (~35K tokens) — safe context for gpt-oss-120b.
@@ -99,6 +100,15 @@ def cluster_moves(moves_path: Path, output_path: Path, top_n: int = SAMPLES_PER_
         substantive = cat_moves[: max(1, int(len(cat_moves) * SUBSTANTIVE_FRACTION))]
 
         sampled = _stratified_sample(substantive, top_n, seed=42)
+        
+        log_decision(
+            "cluster",
+            category=cat,
+            seed=42,
+            bucketing="stratified_by_year_severity",
+            sample_count=len(sampled),
+            total_category_moves=len(cat_moves),
+        )
 
         samples_by_category[cat] = [
             {

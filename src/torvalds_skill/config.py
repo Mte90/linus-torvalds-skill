@@ -30,7 +30,7 @@ def _load_dotenv():
 
 _load_dotenv()
 
-API_KEY = os.environ.get("LLM_API_KEY", "")
+API_KEY = os.environ.get("REGOLO_API_KEY", "***REDACTED***")
 HOST = os.environ.get("LLM_HOST", "https://api.regolo.ai/v1")
 MODEL = os.environ.get("LLM_MODEL", "gpt-oss-120b")
 

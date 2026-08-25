@@ -22,6 +22,10 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from torvalds_skill.audit import log_decision
+
 CANONICAL_CATEGORIES = (
     "api-stability",
     "performance",
@@ -214,9 +218,23 @@ def build_calibration(moves_path: Path) -> dict:
     moves = load_moves(moves_path)
     print(f"Loaded {len(moves)} clean moves")
 
+    severity_by_category = compute_severity_by_category(moves)
+    
+    log_decision(
+        "calibrate",
+        thresholds={
+            "reject_rate": 24.0,
+            "request_changes_rate": 42.0,
+            "nitpick_rate": 7.0,
+        },
+        category_mapping=dict(CATEGORY_REMAP),
+        severity_mapping=dict(SEVERITY_REMAP),
+        categories_count=len(severity_by_category),
+    )
+
     calibration = {
         "corpus_stats": compute_corpus_stats(moves),
-        "severity_by_category": compute_severity_by_category(moves),
+        "severity_by_category": severity_by_category,
         "temporal_trends": compute_temporal_trends(moves),
     }
     return calibration

@@ -2,6 +2,17 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-08-25
+
+- **Architecture:** Added 900-line file-size limit to `AGENTS.md` — source files must not exceed 900 lines; large modules must be split into focused submodules.
+- **Refactor:** Split `src/torvalds_skill/distill.py` (1338 lines) into four focused submodules: `distill_prompts.py` (550 lines, prompt constants), `distill_llm.py` (213 lines, LLM API calls), `distill_sanitize.py` (98 lines, language-agnostic sanitization), and `distill.py` (529 lines, orchestration only). Public API unchanged; `soul.py` imports updated to new locations. All 558 tests pass.
+- **Pipeline:** Rewrote `report/run_review.sh` (734 lines bash) as `report/run_review.py` (759 lines Python) — preserves all features (chunked pipeline, baseline reviews, exponential backoff, format validation, metrics logging, comparison generation) while using `argparse`, `pathlib`, `concurrent.futures.ThreadPoolExecutor`, and `subprocess.run`. All doc references updated; `run_review.sh` deleted.
+- **Tests:** Added `tests/test_run_review.py` (635 lines, 49 tests) covering CLI parsing, model/timeout config, chunked-model parsing, prompt building, review format validation, chunk merge, metrics logging, and skip-existing logic. Full suite: 607 passed.
+- **Pipeline:** Removed `opencode` CLI dependency from the review pipeline (`report/run_review.sh`) — replaced all three `opencode run` invocations with `python3 report/llm_review.py`, a thin direct Regolo API caller (116 lines, stdlib only). Streaming chat completions, retry-once on failure, GLM-aware timeout defaults (1200s for glm models, 600s otherwise). CLI: `--model --prompt-file --out --timeout`.
+- **Pipeline:** Removed all `awk '/^---$/{found=1} found{print}'` log-extraction logic from `report/run_review.sh` — no longer needed since `llm_review.py` writes directly to the output file.
+- **Pipeline:** Eliminated the read-loop risk where the reasoning model (GLM5.2) would repeatedly issue `read` tool calls instead of producing output, by removing the agent layer entirely.
+- **Pipeline:** Updated `report/run_review.sh` header dependency comment from "opencode agent CLI" to "Python 3 with stdlib urllib/json".
+
 ## 2026-08-24
 
 - **Documentation:** Added a reproducibility rule to `AGENTS.md` — all generated `.md` artifacts are produced by scripts and must never be edited by hand; any change requires editing the generator script and re-running it. Documented each artifact with its generator and regeneration command.
@@ -19,6 +30,63 @@ All changes to the torvalds-skill project, organized by day.
 - **Skill:** Regenerated all three skill files from the updated `distill.py` prompt — `SKILL.md` (gpt-oss-120b, 5624 words), `SKILL-GLM.md` (glm5.2, 8163 words), `SKILL-Mistral.md` (mistral-small-4-119b, 7734 words). All three pass `verify_skill.py`: language-agnostic, 13/13 categories, calibration sections present, no forbidden C/kernel terms, real quotes preserved.
 - **Pipeline:** Re-ran the SmallChat review pipeline with the regenerated skills. Three bugs surfaced and were fixed: (1) `printf` numeric bug in `log_metrics` — `grep -c || echo 0` produced `"0\n0"` when grep found no matches, breaking the `%d` format specifier; fixed with `|| true`. (2) GLM5.2 chunk timeout too short at 900s for the 8K-word skill; raised to 2400s to match the non-chunked timeout. (3) Parser regex required `[SEVERITY]` brackets but gpt-oss-120b switched to `#### CRITICAL` without brackets; made brackets optional in `parse_review`.
 - **Report:** Final comparison regenerated with all six reviews. Results: mistral wins (score 5, 0 net critical, 8 confirmed findings); glm5.2 follows (score 4, -1 net critical, 9 confirmed); gpt-oss-120b last (score -1, -1 net critical, 1 confirmed). The skill narrows focus toward correctness but suppresses one critical finding per model that the baseline caught — a coverage gap worth investigating.
+
+### Pipeline fixes
+
+- **`report/run_review.sh`:** Added strict review-format blocks in `review_prompt()`, `baseline_prompt()`, and chunk prompt — prompts now include concrete format examples to prevent heading drift and inconsistent `**Location:**` syntax.
+- **`report/run_review.sh`:** Removed `run_summary_review()` function and its call site — eliminates an extra LLM call in the chunked pipeline, reducing GLM5.2 runtime by ~40 min per run.
+- **`report/run_review.sh`:** Verdict scoring now uses `confirmed_critical` field and requires keyword overlap ≥3 words (or Jaccard ≥0.5) instead of fuzzy match.
+- **`report/run_review.sh`:** Refactored model list into `MODELS` and `TIMEOUTS` associative arrays — adding a new model is now a single entry.
+- **`report/run_review.sh`:** All retry sites now implement 3-attempt exponential backoff (1×, 2×, 4×) with 0-30s random jitter.
+- **`report/build_comparison.py`:** Verdict scoring updated to match `run_review.sh` changes.
+
+### Distill prompt fixes (coverage gap)
+
+- **`src/torvalds_skill/distill.py`:** Fixed Trigger 7.2 example bias, type/severity contradiction, missing format-string trigger, and uneven error-handling trigger distribution. Word-count guidance now consistently reads 4000-7000.
+
+### Parser fixes
+
+- **`report/parse_review.py`:** Severity heading regex now accepts both `#### [CRITICAL]` and `#### CRITICAL` (brackets optional).
+- **`report/parse_review.py`:** Recognizes `**Location:**` (colon inside bold) in addition to `**Location**`.
+
+### Bug fixes
+
+- **`scripts/calibrate_interviews.py`:** Added missing STOPWORDS entries (`set_fs`, `buf`) — fixes two xfailed tests.
+- **`scripts/calibrate_interviews.py`:** Fixed `year_range` producing duplicated single-year lists like `[2020, 2020]` instead of `[2020]`.
+- **`scripts/calibrate_interviews.py`:** Guarded division in `compute_corpus_stats()` against `ZeroDivisionError` when `total == 0`.
+- **`report/run_review.sh`:** Fixed `printf` numeric-format bug in `log_metrics` where `grep -c || echo 0` emitted two lines (`0\n0`), breaking `%d` format — changed to `|| true`.
+- **`report/run_review.sh`:** Raised GLM5.2 chunk timeout from 900s to 2400s (~40 min) to match non-chunked timeout.
+
+### Tests
+
+- Added 10 new test files (390 new tests, suite now 528 tests, 0 failures, 0 xfails):
+  - `tests/test_classify_interviews.py` (110 tests) — 8 pure functions in classify_interviews.py
+  - `tests/test_validate.py` (69 tests) — move/patterns/calibration validators
+  - `tests/test_variation.py` (65 tests) — thread phase, urgency, JSON parse
+  - `tests/test_streaming.py` (27 tests) — JSONL round-trip I/O
+  - `tests/test_models.py` (28 tests) — dataclasses and parsers
+  - `tests/test_verify_skill.py` (26 tests) — normalize, forbidden terms
+  - `tests/test_interviews.py` (22 tests) — HTML extraction
+  - `tests/test_cluster_interviews.py` (16 tests) — stratified sampling
+  - `tests/test_mbox_to_jsonl.py` (14 tests) — body cleaning
+  - `tests/test_migrate_categories.py` (13 tests) — record migration
+
+### Cleanup
+
+- Removed `todo.md` (all tasks completed).
+
+### GLM5.2 fixes
+
+- **`src/torvalds_skill/distill.py`:** Increased `_call_llm` timeout from 600s to 1200s for GLM5.2 skill generation — reasoning model needs more time.
+- **`src/torvalds_skill/distill.py`:** Capped `max_tokens` at 16000 for ALL models (was 64000 for non-GLM models, causing Mistral skill bloat at 19K+ words).
+- **`src/torvalds_skill/distill.py`:** Added `_repair_missing_sections()` helper — detects missing required top-level sections (e.g., "Severity Decision Tree") in generated skill files and appends them via targeted LLM calls. Wired into `distill_skill()` workflow. Prevents full regeneration when only one section is missing.
+- **Skill:** Repaired GLM5.2 skill file using `_repair_missing_sections()` — added missing "Severity Decision Tree" section. Skill now passes all `verify_skill.py` checks (8800 words).
+
+### Prompt inlining fixes (GLM5.2 read-loop prevention)
+
+- **`report/run_review.sh`:** Inlined skill and source file content directly into chunk review prompt instead of instructing the agent to "read" them. Added explicit "Do NOT use any tools. Do NOT read any files." directive. Removed "read it fully" and "Read the skill and the source file" phrasing — prevents GLM5.2 from getting stuck in read-tool loops.
+- **`report/run_review.sh`:** Same inlining fix applied to `review_prompt()` (non-chunked with-skill review). Skill content and all 5 source files inlined. Tool use forbidden.
+- **`report/run_review.sh`:** Same inlining fix applied to `baseline_prompt()`. All 5 source files inlined. Tool use forbidden.
 
 ## 2026-08-21
 

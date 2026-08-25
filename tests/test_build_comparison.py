@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "report"))
 
 from build_comparison import parse_review, parse_review_file, Finding
+from build_comparison import parse_review, parse_review_file, Finding, generate_scorecard
 
 
 class TestParseReview:
@@ -165,6 +166,158 @@ class TestParseReviewFile:
         """Nonexistent path should not crash."""
         result = parse_review_file(Path("/tmp/does_not_exist_12345.md"))
         assert result == []
+
+
+class TestGenerateScorecard:
+    """Tests for the generate_scorecard function."""
+    
+    def test_skill_adds_value_verdict(self):
+        """Models with skill-only criticals > 0 and baseline_only = 0 should get 'Skill adds value'."""
+        data = [
+            {
+                "model": "gpt-oss-120b",
+                "skill_total": 10,
+                "skill_critical": 2,
+                "skill_only_critical": 2,
+                "baseline_only_critical": 0,
+            }
+        ]
+        result = generate_scorecard(data)
+        assert "Skill adds value" in result
+        assert "gpt-oss-120b" in result
+        assert "2" in result  # skill_only_critical count
+    
+    def test_no_change_verdict(self):
+        """Models with skill-only = 0 and baseline-only = 0 should get 'No change'."""
+        data = [
+            {
+                "model": "glm5.2",
+                "skill_total": 17,
+                "skill_critical": 1,
+                "skill_only_critical": 0,
+                "baseline_only_critical": 0,
+            }
+        ]
+        result = generate_scorecard(data)
+        assert "No change" in result
+        assert "glm5.2" in result
+    
+    def test_skill_reduces_coverage_verdict(self):
+        """Models with baseline_only > skill_only should get 'Skill reduces coverage'."""
+        data = [
+            {
+                "model": "test-model",
+                "skill_total": 5,
+                "skill_critical": 1,
+                "skill_only_critical": 1,
+                "baseline_only_critical": 3,
+            }
+        ]
+        result = generate_scorecard(data)
+        assert "Skill reduces coverage" in result
+    
+    def test_baseline_pending_verdict(self):
+        """Models with N/A baseline should get 'Baseline pending'."""
+        data = [
+            {
+                "model": "mistral",
+                "skill_total": 16,
+                "skill_critical": 3,
+                "skill_only_critical": "N/A",
+                "baseline_only_critical": "N/A",
+            }
+        ]
+        result = generate_scorecard(data)
+        assert "Baseline pending" in result
+    
+    def test_summary_sentence_generation(self):
+        """Summary should mention the model with most skill-only criticals."""
+        data = [
+            {
+                "model": "gpt-oss-120b",
+                "skill_total": 10,
+                "skill_critical": 2,
+                "skill_only_critical": 2,
+                "baseline_only_critical": 0,
+            },
+            {
+                "model": "glm5.2",
+                "skill_total": 17,
+                "skill_critical": 1,
+                "skill_only_critical": 1,
+                "baseline_only_critical": 1,
+            },
+        ]
+        result = generate_scorecard(data)
+        # gpt-oss-120b has the most skill-only criticals (2)
+        assert "gpt-oss-120b" in result
+        assert "gained 2 critical finding(s)" in result
+    
+    def test_summary_neutral_coverage(self):
+        """Summary should indicate neutral coverage when no model has skill-only criticals."""
+        data = [
+            {
+                "model": "model-a",
+                "skill_total": 5,
+                "skill_critical": 1,
+                "skill_only_critical": 0,
+                "baseline_only_critical": 0,
+            }
+        ]
+        result = generate_scorecard(data)
+        assert "neutral critical coverage" in result
+    
+    def test_table_structure(self):
+        """Scorecard should have proper markdown table structure."""
+        data = [
+            {
+                "model": "test-model",
+                "skill_total": 10,
+                "skill_critical": 2,
+                "skill_only_critical": 1,
+                "baseline_only_critical": 0,
+            }
+        ]
+        result = generate_scorecard(data)
+        # Check for table header
+        assert "| Model | Total Findings | Critical Findings | Skill-Only Critical | Verdict |" in result
+        # Check for separator row
+        assert "|-------|---------------|-------------------|---------------------|---------|" in result
+        # Check for data row
+        assert "| test-model | 10 | 2 | 1 |" in result
+    
+    def test_multiple_models(self):
+        """Scorecard should handle multiple models correctly."""
+        data = [
+            {
+                "model": "model-a",
+                "skill_total": 10,
+                "skill_critical": 2,
+                "skill_only_critical": 2,
+                "baseline_only_critical": 0,
+            },
+            {
+                "model": "model-b",
+                "skill_total": 15,
+                "skill_critical": 3,
+                "skill_only_critical": 0,
+                "baseline_only_critical": 0,
+            },
+            {
+                "model": "model-c",
+                "skill_total": 8,
+                "skill_critical": 1,
+                "skill_only_critical": 1,
+                "baseline_only_critical": 3,
+            },
+        ]
+        result = generate_scorecard(data)
+        assert "model-a" in result
+        assert "model-b" in result
+        assert "model-c" in result
+        assert "Skill adds value" in result  # model-a
+        assert "No change" in result  # model-b
+        assert "Skill reduces coverage" in result  # model-c
 
 
 if __name__ == "__main__":
