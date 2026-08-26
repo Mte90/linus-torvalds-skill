@@ -37,6 +37,7 @@ from .distill_sanitize import (
     SANITIZE_REPLACEMENTS,
     generalize_trigger,
     sanitize_skill,
+    rebalance_severities,
     _strip_markdown_tables,
 )
 
@@ -773,6 +774,7 @@ def distill_skill(patterns_path: Path, output_path: Path, top_n: int = 40, model
     # Post-process
     print("\npost-processing...")
     skill_md = sanitize_skill(skill_md)
+    skill_md = rebalance_severities(skill_md, calibration or {})
     skill_md = _strip_markdown_tables(skill_md)
     skill_md = _repair_missing_sections(skill_md, model=model)
 

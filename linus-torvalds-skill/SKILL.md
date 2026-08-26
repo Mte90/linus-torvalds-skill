@@ -72,28 +72,28 @@ The triggers are organized into three **levels** that mirror how a human reviewe
   - **Type:** invariant‑false  
   - **What to look for:** Any call that aborts or panics (e.g., `panic()`, `fatal_error()`) in a code path that can be reached from user input or normal operation.  
   - **Why it’s a problem:** Recoverable conditions must be reported via an error value; crashing the process violates correctness and availability.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “I'm getting *real* tired of that **fatal assertion()** shit… Killing the machine for idiotic things like that is truly offensive…” (Email move 13, correctness)
 
 - **Trigger:** *Changing a public API/ABI without a migration path*  
   - **Type:** invariant‑false  
   - **What to look for:** Modification of function signatures, struct layouts, or exported constants that are used outside the module, without deprecation or version bump.  
   - **Why it’s a problem:** Existing users will experience silent breakage; the contract is a correctness guarantee.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “We don’t change UI. That is ALWAYS a bug. We don’t change UI.” (Email move 17, api‑stability)
 
 - **Trigger:** *Introducing a new interface that bypasses existing security checks*  
   - **Type:** invariant‑false  
   - **What to look for:** New syscalls, public functions, or network endpoints that lack the validation performed by the older path.  
   - **Why it’s a problem:** Security checks are part of the functional contract; omitting them creates exploitable gaps.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “The notion that creating a whole new namespace somehow must not have any security hooks because it’s *so* special is just ridiculous.” (Email move 2, security)
 
 - **Trigger:** *Dead code that silently changes control flow (e.g., `goto` cleanup while holding a lock)*  
   - **Type:** invariant‑false  
   - **What to look for:** Unstructured jumps that bypass resource release or leave a lock held.  
   - **Why it’s a problem:** Leads to deadlocks, resource leaks, and undefined behavior – a correctness violation.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “You still have `goto err` for cases that have the ctx locked… which causes problems for lockdep etc.” (Email move 15, concurrency)
 
 - **Trigger:** *Unbounded format‑string or buffer‑size mismatch*  
@@ -157,7 +157,7 @@ Below each theme is expanded with concrete triggers, types, detection criteria, 
   - **Type:** general‑guideline  
   - **What to look for:** Two or more functions contain the same sequence of statements, especially error‑handling or loop bodies.  
   **Why it’s a problem:** Duplication hides bugs (one copy may be updated while the other is not) and inflates maintenance cost.  
-  - **Severity:** request‑changes  
+  - **Severity:** nitpick  
   - **Example:** “Can we please not duplicate complicated logic like that? … just make a helper function for it.” (Email move 11, abstraction)
 
 - **Trigger:** Hard‑coded magic constants without documentation (e.g., “12 GB”, “256 bytes”)  
@@ -186,7 +186,7 @@ Below each theme is expanded with concrete triggers, types, detection criteria, 
   - **Type:** invariant‑false  
   - **What to look for:** Public headers that contain raw internal structs, or API functions that accept/return them directly.  
   - **Why it’s a problem:** Ties external code to internal layout, making future refactors impossible without breaking ABI.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “The patch changes the interface between the pty driver and devpts to a raw `struct inode *ptmx_inode`.” (Email move 3, abstraction)
 
 #### Theme C – Error‑Handling & Return Conventions
@@ -208,7 +208,7 @@ Below each theme is expanded with concrete triggers, types, detection criteria, 
   - **Type:** invariant‑false  
   - **What to look for:** Assertions that trigger on conditions that can be caused by external data.  
   - **Why it’s a problem:** Turns a recoverable error into a kernel panic or process abort.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “I’m really tired of that **fatal assertion()**… Killing the machine for idiotic things like that is truly offensive.” (Email move 13, correctness)
 
 #### Theme D – Concurrency & Synchronization
@@ -274,7 +274,7 @@ Below each theme is expanded with concrete triggers, types, detection criteria, 
   - **Type:** invariant‑false  
   - **What to look for:** Public headers that contain kernel‑only structs or macros without `#ifdef __KERNEL__` guards.  
   - **Why it’s a problem:** Gives user‑space programs knowledge of kernel layout, facilitating attacks.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “Your `<linux/cred.h>` file exposes `struct ucred` to user space … Why?” (Email move 16, api‑stability)
 
 #### Theme G – Complexity & Unnecessary Abstractions
@@ -289,7 +289,7 @@ Below each theme is expanded with concrete triggers, types, detection criteria, 
   - **Type:** general‑guideline  
   - **What to look for:** New compile‑time flags that affect only a niche code path.  
   - **Why it’s a problem:** Increases build‑system complexity and can hide bugs behind conditional compilation.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “Why add a `DEBUG_RODATA` support that would require code changes in many parts of the kernel?” (Email move 19, complexity)
 
 - **Trigger:** Special‑casing a rarely‑used path (e.g., `SYSTEM_BOOTING` flag)  
@@ -326,14 +326,14 @@ Below each theme is expanded with concrete triggers, types, detection criteria, 
   - **Type:** general‑guideline (but may be reject if impact is measurable)  
   - **What to look for:** Calls through an interface or function pointer inside a per‑packet or per‑byte loop.  
   - **Why it’s a problem:** Indirect calls prevent inlining and can dominate CPU time; a direct call or macro is often cheaper.  
-  - **Severity:** request‑changes  
+  - **Severity:** nitpick  
   - **Example:** “Calling a virtual function inside an inner loop without understanding its cost is precisely the type of programmer …” (Interview: blakecrosley‑philosophy.md)
 
 - **Trigger:** Adding an extra function that does nothing but forward arguments  
   - **Type:** general‑guideline  
   - **What to look for:** Wrapper that simply calls another function with the same signature and no added logic.  
   - **Why it’s a problem:** Increases call‑overhead and bloats the binary without benefit.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “And I’m not pulling stupid code. The one‑liner rto just disables an optimization that isn’t an optimization is the right thing to do.” (Email move 15, performance)
 
 - **Trigger:** Using a heavyweight instruction (MMX) for a trivial operation  
@@ -355,14 +355,14 @@ Below each theme is expanded with concrete triggers, types, detection criteria, 
   - **Type:** invariant‑false  
   - **What to look for:** Patch description that admits “committed less than an hour before sending PR”.  
   - **Why it’s a problem:** Unverified changes are likely to regress; testing is a prerequisite for acceptance.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “All of these commits were committed less than an hour before sending me the pull request, so I question the kind of testing they got.” (Email move 18, process)
 
 - **Trigger:** Adding a new public flag without a migration plan (e.g., `GRND_EXPLICIT`)  
   - **Type:** invariant‑false  
   - **What to look for:** New bit added to an existing flag set without deprecation of the old behavior.  
   - **Why it’s a problem:** Existing callers may ignore the flag, leading to inconsistent behavior across versions.  
-  - **Severity:** reject  
+  - **Severity:** request-changes  
   - **Example:** “Adding a new flag bit (GRND_EXPLICIT) to the existing getrandom flags.” (Email move 11, api‑stability)
 
 ---

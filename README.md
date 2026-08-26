@@ -21,6 +21,23 @@ With the skill, the same model reviews like Linus—focusing on invariants, corr
 > - **Issue:** `nicklen = snprintf(...); c->nick = chatMalloc(nicklen+1); memcpy(c->nick,nick,nicklen);` copies `nicklen` bytes **without** the terminating `'\0'`. Subsequent uses of `c->nick` read past the buffer, causing undefined behaviour and possible crashes.
 > - **Fix:** Copy `nicklen+1` bytes or explicitly set `c->nick[nicklen] = '\0'` after `memcpy`.
 
+## Validation: SmallChat Comparison
+
+The skill was validated on [antirez/smallchat](https://github.com/antirez/smallchat) (706 LOC, C). Three models (gpt-oss-120b, glm5.2, mistral) each reviewed the codebase twice — once with the skill, once without (baseline). The full results are in [`report/comparison.md`](report/comparison.md).
+
+The comparison is not a count of findings. It cross-references bugs at the issue level so you can see which defects each model caught, which it missed, and whether the skill was responsible. Six sections matter:
+
+1. **Stakeholder Scorecard** — one-row-per-model summary: total findings, criticals, skill-only criticals, verdict.
+2. **Finding Consensus Matrix** — every finding from all three reviews mapped to the underlying issue, with per-model ✓/✗ and severity. Shows where models agree and where one model sees a bug the others miss.
+3. **Severity Disagreement Table** — cases where 2+ models found the same issue but assigned different severities. Exposes calibration drift.
+4. **With-Skill vs Baseline Comparison** — per model: baseline total, with-skill total, critical overlap, skill-only criticals, baseline-only criticals, and net skill impact.
+5. **Per-Model Bug Comparison** — bug-by-bug tables: same bugs (with severity change), baseline-only (skill missed), skill-only (skill added). The baseline-only table includes a **Skill trigger covers?** column showing whether the skill has a trigger that should have caught the missed bug — distinguishing a skill gap (trigger exists, model didn't fire it) from out-of-scope (no trigger covers that bug type).
+6. **Verdict** — per-model score from consensus-confirmed criticals, net critical impact, and severity disagreements.
+
+**Latest result:** glm5.2 gained +2 net critical findings with the skill (4 new, 2 lost). gpt-oss-120b and mistral showed net negative critical coverage — the skill narrowed focus too aggressively and suppressed criticals the baseline caught. The trigger-coverage column shows which missed bugs were in-scope (skill gap) vs out-of-scope.
+
+Replicate with `python3 report/run_review.py && python3 report/build_comparison.py`.
+
 ## Quick Start
 
 

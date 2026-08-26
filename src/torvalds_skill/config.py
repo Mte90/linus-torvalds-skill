@@ -49,6 +49,9 @@ WALL_CLOCK_LONG = int(os.environ.get("LLM_WALL_CLOCK_LONG", "900"))  # other mod
 WALL_CLOCK_DEFAULT = int(os.environ.get("LLM_WALL_CLOCK_DEFAULT", "300"))  # other models: 5 min
 WALL_CLOCK_CATEGORY = int(os.environ.get("LLM_WALL_CLOCK_CATEGORY", "300"))  # per-category distill: 5 min
 
+# GLM5.2 reasoning models need a larger token budget so reasoning AND content fit
+GLM_MAX_TOKENS = int(os.environ.get("GLM_MAX_TOKENS", "16000"))
+
 
 def headers() -> dict:
     return {

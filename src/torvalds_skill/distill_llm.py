@@ -415,6 +415,11 @@ def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt
             "max_tokens": 16000,
             "stream": True,
         }
+        # Reasoning models must keep their thinking phase (user requirement):
+        # never disable it. Instead, give GLM a larger token budget so
+        # reasoning AND content both fit without truncation.
+        if is_glm:
+            payload["max_tokens"] = config.GLM_MAX_TOKENS
         
         # Per-read timeout: catches dead connections (no bytes for 120s).
         read_timeout = config.READ_TIMEOUT
@@ -438,6 +443,7 @@ def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt
                 conn = _get_connection(host)
                 
                 content_parts = []
+                reasoning_parts = []
                 with _WallClockTimeout(wall_clock):
                     # Send request using the pooled connection
                     conn.request("POST", path, body=body, headers=config.headers())
@@ -452,9 +458,10 @@ def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt
                         raise RuntimeError(f"HTTP {resp.status} {resp.reason}: {err_body}")
 
                     # Read SSE stream line by line (preserves streaming behavior).
-                    # Reasoning models (GLM5.2) stream delta.reasoning_content before
-                    # delta.content; capture both so the token budget spent on
-                    # reasoning is not silently discarded when content never arrives.
+                    # Reasoning models stream delta.reasoning_content during their
+                    # thinking phase. Keep it SEPARATE from content: mixing it in
+                    # prepends the entire chain-of-thought to the answer. It is
+                    # used only as salvage when no content was produced at all.
                     for raw in resp:
                         line = raw.decode("utf-8").strip()
                         if not line or not line.startswith("data: "):
@@ -470,11 +477,13 @@ def _call_llm(prompt: str, retries: int = None, model: str = None, system_prompt
                         else:
                             reasoning = delta.get("reasoning_content")
                             if reasoning:
-                                content_parts.append(reasoning)
+                                reasoning_parts.append(reasoning)
 
                     resp.close()
-                
+
                 result = "".join(content_parts)
+                if not result.strip() and reasoning_parts:
+                    result = "".join(reasoning_parts)
                 if not result.strip():
                     last_err = RuntimeError("empty_response")
                     break

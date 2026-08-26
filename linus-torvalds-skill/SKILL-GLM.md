@@ -63,14 +63,14 @@ These triggers represent conditions that must always hold. Violations are reject
   - **Type**: precedence-rule
   - **What to look for**: New functions, endpoints, or entry points that duplicate the purpose of an existing interface with a minor variation.
   - **Why it's a problem**: Every new public interface expands the maintenance surface, fragments the API, and creates confusion about which path to use. Extending an existing interface keeps the surface area small.
-  - **Severity**: reject
+  - **Severity**: nitpick
   - **Example**: "But yes, in general I agree that that also most likely means that a separate system call for 'open_pidfd()' isn't worth it."
 
 - **Trigger**: A change introduces a new error return for an existing interface, returns a value ambiguous between success and failure, or rejects commonly used inputs.
   - **Type**: invariant-true
   - **What to look for**: New error codes added to existing functions, return values that could mean either success or failure, or input validation that rejects values commonly passed by real callers.
   - **Why it's a problem**: Interface contracts are agreements. Adding a new error code changes the contract for every caller. Ambiguous returns make the interface unusable. Rejecting commonly used inputs breaks real users for theoretical purity.
-  - **Severity**: reject
+  - **Severity**: request-changes
   - **Example**: "Returning zero from a write is basically insanity. It's not a valid error case."
 
 #### Theme 2: Memory Safety and Object Lifetime
@@ -116,7 +116,7 @@ These triggers represent conditions that must always hold. Violations are reject
   - **Type**: invariant-false
   - **What to look for**: Flag variables set by one thread and read by another without memory barriers, atomics with explicit ordering, or lock-based synchronization.
   - **Why it's a problem**: CPUs may reorder memory accesses independently of compiler ordering. Without explicit barriers or acquire/release semantics, there is no guarantee that writes made before setting a flag are visible to another thread after reading that flag.
-  - **Severity**: reject
+  - **Severity**: request-changes
   - **Example**: "The reason it is buggy has absolutely nothing to do with whether the read is done or not, it has to do with the fact that the CPU may re-order the reads regardless of whether the read is done in some specific order by the compiler or not!"
 
 - **Trigger**: Code acquires multiple locks of the same type without a defined, consistent global ordering.
@@ -306,7 +306,7 @@ These triggers address implementation-level patterns that affect readability, ma
   - **Type**: precedence-rule
   - **What to look for**: Solutions that introduce unnecessary indirection, abstraction layers, or configuration options when a direct approach would work.
   - **Why it's a problem**: When two solutions meet the requirement, the simpler one is strictly better. Simpler code is easier to verify, easier to maintain, and less likely to contain bugs. Adding complexity beyond what the problem demands is a liability.
-  - **Severity**: request-changes
+  - **Severity**: nitpick
   - **Example**: "Your patch is horribly ugly. How about this (much simpler) patch instead? It just sets the 'max' to zero if pos in NULL in the caller. That just seems a much better/saner approach."
 
 - **Trigger**: A patch adds support for sizes, ranges, options, or architectural changes that exceed current actual usage, justified by "we might need this later."
@@ -442,7 +442,7 @@ These triggers address implementation-level patterns that affect readability, ma
   - **Type**: general-guideline
   - **What to look for**: Hard failures on unrecognized input, environment assumptions that could be handled by falling back to a slower/simpler path.
   - **Why it's a problem**: Assumptions about input format, environment, or system state are routinely violated in practice. When an assumption fails, the system should continue to function using a fallback path — not crash. Forward compatibility depends on treating unrecognized input as "handle with the general case."
-  - **Severity**: request-changes
+  - **Severity**: nitpick
   - **Example**: "The code should be _very_ robust, in that if anything doesn't match expectations, it will fail and fall back on the old code."
 
 - **Trigger**: A function returns an error code for a condition the caller has no way to recover from or respond to.
