@@ -81,6 +81,12 @@ class Finding:
             self.line = _extract_first_line(line_part)
             return
 
+        # Format: bare filename (e.g. "smallchat-server.c") — no line number
+        bare_file_match = re.match(r"^([\w./-]+\.\w+)$", loc)
+        if bare_file_match:
+            self.file = normalize_filename(bare_file_match.group(1))
+            return
+
         # Format: "lines 85, 127-128" or "line 45" (mistral style — no file)
         line_match = re.search(r"\d+", loc)
         if line_match:
@@ -202,6 +208,47 @@ def parse_baseline_review(content: str) -> list[Finding]:
     return parse_review(content, track_section_file=True)
 
 
+def _finding_richness(f: Finding) -> int:
+    """Score how many fields a finding has populated (for dedup tie-breaking)."""
+    return sum(1 for v in (f.location, f.trigger, f.finding_type, f.file, f.line) if v)
+
+
+def _dedup_findings(findings: list[Finding]) -> list[Finding]:
+    """Collapse duplicate findings within a single review.
+
+    Two findings are duplicates when they share the same file AND:
+    - title similarity >= 0.35 (same bug, slightly different wording), or
+    - title similarity >= 0.20 AND lines within ±3 (same location, similar title).
+    Line proximity alone is insufficient — in small files, different bugs
+    can be within ±10 lines of each other.
+    The richer finding (more populated fields) wins; ties keep the first.
+    """
+    if len(findings) <= 1:
+        return list(findings)
+
+    kept: list[Finding] = []
+    for f in findings:
+        dup_idx = None
+        for ki, kf in enumerate(kept):
+            same_file = f.file and kf.file and f.file == kf.file
+            if not same_file:
+                continue
+            title_sim = _title_similarity(f.title, kf.title)
+            line_close = (
+                f.line and kf.line and abs(f.line - kf.line) <= 3
+            )
+            if title_sim >= 0.30 or (title_sim >= 0.20 and line_close):
+                dup_idx = ki
+                break
+        if dup_idx is None:
+            kept.append(f)
+        else:
+            rival = kept[dup_idx]
+            if _finding_richness(f) > _finding_richness(rival):
+                kept[dup_idx] = f
+    return kept
+
+
 def parse_review_file(filepath: Path) -> list[Finding]:
     """Parse a review file, auto-detecting format based on filename."""
     if not filepath.exists():
@@ -216,16 +263,17 @@ def parse_review_file(filepath: Path) -> list[Finding]:
 
     # Dispatch to appropriate parser (all now use unified parse_review)
     if "baseline" in filename:
-        return parse_baseline_review(content)
+        findings = parse_baseline_review(content)
     elif "gpt-oss" in filename:
-        return parse_gpt_oss_review(content)
+        findings = parse_gpt_oss_review(content)
     elif "glm5.2" in filename or "glm52" in filename:
-        return parse_glm52_review(content)
+        findings = parse_glm52_review(content)
     elif "mistral" in filename:
-        return parse_mistral_review(content)
+        findings = parse_mistral_review(content)
     else:
-        # Try unified parser
-        return parse_review(content, track_section_file=True)
+        findings = parse_review(content, track_section_file=True)
+
+    return _dedup_findings(findings)
 
 
 def count_severities(findings: list[Finding]) -> dict[str, int]:
@@ -387,7 +435,7 @@ def match_findings_across_models(
                     if (file2, finding2, other_model) in used_findings:
                         continue
                     # Match by title similarity (cross-file fallback)
-                    if _title_similarity(finding1.title, finding2.title) >= 0.4:
+                    if _title_similarity(finding1.title, finding2.title) >= 0.30:
                         group = {
                             "file": finding1.file or finding2.file or "unspecified",
                             **{m: None for m in model_names},
@@ -404,12 +452,21 @@ def match_findings_across_models(
 
 
 def _title_similarity(title1: str, title2: str) -> float:
-    """Calculate string similarity between two titles using SequenceMatcher.
-    
-    Returns a float between 0.0 and 1.0, where 1.0 means identical.
-    Uses difflib.SequenceMatcher for fuzzy string comparison.
+    """Calculate semantic similarity between two finding titles.
+
+    Uses token-based Jaccard similarity on content words (stopwords removed).
+    More robust than character-sequence matching for short technical titles
+    that share domain terms (e.g., 'createClient') but describe different bugs.
     """
-    return difflib.SequenceMatcher(None, title1.lower(), title2.lower()).ratio()
+    stopwords = {
+        "the", "a", "an", "is", "are", "and", "or", "but", "in", "on",
+        "at", "to", "for", "of", "with", "not", "no", "—", "that", "this",
+    }
+    words1 = set(re.findall(r"\b\w+\b", title1.lower())) - stopwords
+    words2 = set(re.findall(r"\b\w+\b", title2.lower())) - stopwords
+    if not words1 or not words2:
+        return 0.0
+    return len(words1 & words2) / len(words1 | words2)
 
 
 def _keyword_overlap(title1: str, title2: str) -> bool:
@@ -421,7 +478,7 @@ def _keyword_overlap(title1: str, title2: str) -> bool:
     - SequenceMatcher similarity >= 0.35
     """
     # First check sequence similarity (new fuzzy matching)
-    if _title_similarity(title1, title2) >= 0.35:
+    if _title_similarity(title1, title2) >= 0.30:
         return True
     
     words1 = set(re.findall(r"\b\w+\b", title1.lower()))
@@ -481,10 +538,153 @@ def extract_triggers(findings: list[Finding]) -> dict[str, int]:
     return dict(triggers)
 
 
+def _match_findings_fuzzy(
+    skill_findings: list[Finding],
+    baseline_findings: list[Finding],
+) -> tuple[list[dict], list[Finding], list[Finding]]:
+    """Fuzzy-match findings between skill and baseline.
+    
+    Returns:
+        - matched_pairs: list of {"baseline": Finding|None, "skill": Finding|None, "title": str, "file": str}
+        - baseline_only: findings only in baseline (skill missed)
+        - skill_only: findings only with skill (skill added)
+    
+    Matching rules:
+        - Same file AND line within ±10 lines → match
+        - Same file AND title similarity >= 0.30 → match
+        - Different file but title similarity >= 0.5 (cross-file fallback) → match
+    Each baseline finding can match at most one skill finding (greedy best-score).
+    """
+    matched_pairs = []
+    matched_skill = set()
+    matched_baseline = set()
+    
+    # Build candidate pairs with scores
+    candidates = []
+    for si, skill_f in enumerate(skill_findings):
+        if not skill_f.file or not skill_f.line:
+            continue
+        for bj, baseline_f in enumerate(baseline_findings):
+            if not baseline_f.file or not baseline_f.line:
+                continue
+            score = 0
+            # Same file AND line within ±10 lines → match
+            if skill_f.file == baseline_f.file and abs(skill_f.line - baseline_f.line) <= 10:
+                score = 1.0
+            # Same file AND title similarity >= 0.30 → match
+            elif skill_f.file == baseline_f.file and _title_similarity(skill_f.title, baseline_f.title) >= 0.30:
+                score = 0.8
+            # Different file but title similarity >= 0.5 (cross-file fallback) → match
+            elif _title_similarity(skill_f.title, baseline_f.title) >= 0.5:
+                score = 0.6
+            if score >= 0.6:
+                candidates.append((score, si, bj, skill_f, baseline_f))
+    
+    # Sort by score descending (greedy best-score matching)
+    candidates.sort(key=lambda x: -x[0])
+    
+    # Greedy matching: each baseline can only match one skill finding
+    for score, si, bj, skill_f, baseline_f in candidates:
+        if si in matched_skill or bj in matched_baseline:
+            continue
+        matched_skill.add(si)
+        matched_baseline.add(bj)
+        matched_pairs.append({
+            "baseline": baseline_f,
+            "skill": skill_f,
+            "title": skill_f.title,
+            "file": skill_f.file or baseline_f.file or "unspecified",
+        })
+    
+    # Build baseline_only and skill_only lists
+    baseline_only = [baseline_findings[bj] for bj in range(len(baseline_findings)) if bj not in matched_baseline]
+    skill_only = [skill_findings[si] for si in range(len(skill_findings)) if si not in matched_skill]
+    
+    return matched_pairs, baseline_only, skill_only
+
+
+def extract_skill_triggers(skill_path: Path) -> list[str]:
+    """Extract all trigger texts from the skill markdown file.
+    
+    Extracts from two formats:
+    - **Trigger:** *<trigger text>* (Level 1 and Level 3 triggers)
+    - **Triggers (3‑6 each)**: 1. *<trigger text>* – ... <br>2. *<trigger text>* – ... (Level 2)
+    
+    Returns deduplicated list of trigger description strings.
+    """
+    if not skill_path.exists():
+        return []
+    
+    content = skill_path.read_text(encoding="utf-8", errors="replace")
+    triggers = set()
+    
+    # Format 1: **Trigger:** *<trigger text>*
+    for match in re.finditer(r"\*\*Trigger:\*\*\s*\*([^*]+)\*", content):
+        trigger_text = match.group(1).strip()
+        if trigger_text:
+            triggers.add(trigger_text)
+    
+    # Format 2: **Triggers (3‑6 each)**: 1. *<trigger text>* – ... <br>2. *<trigger text>* – ...
+    for match in re.finditer(r"\*\*Triggers \(3‑6 each\)\*\*:\s*(.+?)(?=\n\s*\n|\n\s*-\s*\*\*Theme|\n\s*####|\Z)", content, re.DOTALL):
+        triggers_block = match.group(1)
+        # Split on <br>
+        for part in triggers_block.split("<br>"):
+            # Match numbered triggers: N. *<trigger text>*
+            for trig_match in re.finditer(r"\d+\.\s*\*([^*]+)\*", part):
+                trigger_text = trig_match.group(1).strip()
+                # Strip the " – <example>" suffix if present
+                trigger_text = re.sub(r"\s*–.*$", "", trigger_text)
+                if trigger_text:
+                    triggers.add(trigger_text)
+    
+    return list(triggers)
+
+
+def match_finding_to_trigger(finding: Finding, triggers: list[str]) -> tuple[str | None, float]:
+    """Find the best-matching skill trigger for a finding.
+    
+    Uses keyword overlap to find semantically relevant triggers.
+    Returns:
+        (matched_trigger_text, similarity_score) or (None, 0.0) if no triggers
+    """
+    if not triggers:
+        return None, 0.0
+    
+    # Extract keywords from finding title (content words, not stopwords)
+    stopwords = {
+        "the", "a", "an", "is", "are", "and", "or", "but", "in", "on",
+        "at", "to", "for", "of", "with", "not", "no", "that", "this",
+        "when", "while", "without", "into", "from", "by", "as", "be",
+    }
+    finding_words = set(re.findall(r"\b[a-zA-Z]{3,}\b", finding.title.lower())) - stopwords
+    
+    best_trigger = None
+    best_score = 0.0
+    
+    for trigger in triggers:
+        trigger_words = set(re.findall(r"\b[a-zA-Z]{3,}\b", trigger.lower())) - stopwords
+        if not trigger_words:
+            continue
+        # Jaccard similarity on content words
+        intersection = finding_words & trigger_words
+        union = finding_words | trigger_words
+        if union:
+            score = len(intersection) / len(union)
+            if score > best_score:
+                best_score = score
+                best_trigger = trigger
+    
+    # Threshold for "covered": at least some keyword overlap
+    if best_score >= 0.05:  # Very lenient - just needs some overlap
+        return best_trigger, best_score
+    return None, best_score
+
+
 def compare_skill_vs_baseline(
     skill_findings: list[Finding],
     baseline_findings: list[Finding] | None,
     model_name: str,
+    skill_triggers: list[str] | None = None,
 ) -> dict:
     """Compare with-skill vs baseline findings for a model.
 
@@ -504,14 +704,16 @@ def compare_skill_vs_baseline(
             "critical_overlap": "N/A",
             "skill_only_critical": "N/A",
             "baseline_only_critical": "N/A",
+            "matched_pairs": [],
+            "baseline_only_all": [],
+            "skill_only_all": [],
         }
 
     baseline_critical = [f for f in baseline_findings if f.severity == "CRITICAL"]
 
-    # Fuzzy matching: same bug may have different line numbers or slightly different titles
-    # Track matched pairs (each baseline can only match one skill finding)
-    matched_skill = set()
-    matched_baseline = set()
+    # Fuzzy matching for CRITICAL findings (existing logic, unchanged)
+    matched_skill_critical = set()
+    matched_baseline_critical = set()
     
     for si, skill_f in enumerate(skill_critical):
         if not skill_f.file or not skill_f.line:
@@ -520,7 +722,7 @@ def compare_skill_vs_baseline(
         best_score = -1
         best_j = None
         for bj, baseline_f in enumerate(baseline_critical):
-            if bj in matched_baseline:
+            if bj in matched_baseline_critical:
                 continue
             if not baseline_f.file or not baseline_f.line:
                 continue
@@ -529,7 +731,7 @@ def compare_skill_vs_baseline(
             if skill_f.file == baseline_f.file and abs(skill_f.line - baseline_f.line) <= 10:
                 score = 1.0
             # Same file AND title similarity >= 0.35 → match
-            elif skill_f.file == baseline_f.file and _title_similarity(skill_f.title, baseline_f.title) >= 0.35:
+            elif skill_f.file == baseline_f.file and _title_similarity(skill_f.title, baseline_f.title) >= 0.30:
                 score = 0.8
             # Different file but title similarity >= 0.5 (cross-file fallback) → match
             elif _title_similarity(skill_f.title, baseline_f.title) >= 0.5:
@@ -539,13 +741,37 @@ def compare_skill_vs_baseline(
                 best_j = bj
         # Match if we found a good candidate
         if best_score >= 0.6 and best_j is not None:
-            matched_skill.add(si)
-            matched_baseline.add(best_j)
+            matched_skill_critical.add(si)
+            matched_baseline_critical.add(best_j)
     
     # Compute overlap/skill_only/baseline_only from matched pairs
-    overlap_count = len(matched_skill)
-    skill_only_count = len(skill_critical) - len(matched_skill)
-    baseline_only_count = len(baseline_critical) - len(matched_baseline)
+    overlap_count = len(matched_skill_critical)
+    skill_only_count = len(skill_critical) - len(matched_skill_critical)
+    baseline_only_count = len(baseline_critical) - len(matched_baseline_critical)
+
+    # Match ALL findings (not just criticals) using the same fuzzy matching logic
+    matched_pairs_all, baseline_only_all, skill_only_all = _match_findings_fuzzy(
+        skill_findings, baseline_findings
+    )
+    
+    # Match findings to skill triggers for coverage analysis
+    baseline_only_with_coverage = []
+    for f in baseline_only_all:
+        matched_trigger, similarity = match_finding_to_trigger(f, skill_triggers or [])
+        baseline_only_with_coverage.append({
+            "finding": f,
+            "matched_trigger": matched_trigger,
+            "similarity": similarity,
+        })
+    
+    skill_only_with_coverage = []
+    for f in skill_only_all:
+        matched_trigger, similarity = match_finding_to_trigger(f, skill_triggers or [])
+        skill_only_with_coverage.append({
+            "finding": f,
+            "matched_trigger": matched_trigger,
+            "similarity": similarity,
+        })
 
     return {
         "model": model_name,
@@ -556,6 +782,11 @@ def compare_skill_vs_baseline(
         "critical_overlap": overlap_count,
         "skill_only_critical": skill_only_count,
         "baseline_only_critical": baseline_only_count,
+        "matched_pairs": matched_pairs_all,
+        "baseline_only_all": baseline_only_all,
+        "skill_only_all": skill_only_all,
+        "baseline_only_with_coverage": baseline_only_with_coverage,
+        "skill_only_with_coverage": skill_only_with_coverage,
     }
 
 
@@ -566,6 +797,10 @@ def main():
     script_dir = Path(__file__).parent
     report_dir = script_dir
     repo_root = script_dir.parent
+
+    # Extract skill triggers once
+    skill_path = repo_root / "linus-torvalds-skill" / "SKILL.md"
+    skill_triggers = extract_skill_triggers(skill_path)
 
     # Track missing files
     missing_files = []
@@ -616,7 +851,7 @@ def main():
         # Compare skill vs baseline
         skill_findings = all_findings.get(f"{model_name}_skill", [])
         baseline_findings = all_findings.get(f"{model_name}_baseline")
-        comparison = compare_skill_vs_baseline(skill_findings, baseline_findings, model_name)
+        comparison = compare_skill_vs_baseline(skill_findings, baseline_findings, model_name, skill_triggers)
         skill_vs_baseline_comparisons.append(comparison)
 
     # Generate consensus matrix (with-skill only)

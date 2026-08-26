@@ -196,10 +196,11 @@ End with a Summary: verdict, findings by severity, whether the code passes.
 
 Rules:
 - Cover ALL source files.
-- Each finding maps to a specific skill trigger.
+- Report every real bug you find. Map each finding to the closest matching skill trigger when one exists; if none matches, set Trigger: (unmatched) — do NOT suppress real bugs.
+- Use the skill's severity calibration and precedence hierarchy to rank findings.
 - Precedence: correctness > performance > complexity > style > API stability.
 - Be concrete: cite line numbers, name functions, quote code.
-- Don't invent problems. If clean on a trigger, say so.
+- Don't invent problems. If a file is genuinely clean, say "No findings."
 - English.
 
 Write the final report to: {out_file}
@@ -235,7 +236,8 @@ Review the source above using the skill rules. For each finding use:
 - Severity values are: CRITICAL, HIGH, MEDIUM, LOW (uppercase only)
 
 Severity: CRITICAL | HIGH | MEDIUM | LOW
-If clean, say "No findings." Don't invent problems.
+Report every real bug you find. Map each finding to the closest matching skill trigger when one exists; if none matches, set Trigger: (unmatched) — do NOT suppress real bugs.
+If a file is genuinely clean, say "No findings." Don't invent problems.
 Write findings to: {chunk_file}
 """
 
@@ -299,6 +301,8 @@ def run_llm_call(model_label: str, prompt_file: Path, out_file: Path, timeout_se
             capture_output=True,
             text=True,
         )
+        if result.returncode != 0 and result.stderr:
+            print(f"  [{model_label}] stderr: {result.stderr[:300]}", file=sys.stderr)
         return result.returncode, result.stdout
     except subprocess.TimeoutExpired:
         return 124, "Timeout expired"

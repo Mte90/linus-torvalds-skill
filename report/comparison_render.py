@@ -292,6 +292,88 @@ def generate_markdown(
     # Qualitative analysis — generated from data
     lines.append("---")
     lines.append("")
+    lines.append("## Per-Model Bug Comparison (Baseline vs With-Skill)")
+    lines.append("")
+    lines.append("Bug-by-bug comparison for each model: which bugs were found by both, only baseline, or only skill.")
+    lines.append("")
+
+    for comparison in skill_vs_baseline:
+        model = comparison["model"]
+        lines.append(f"### {model}")
+        lines.append("")
+        
+        # Check if baseline is available
+        if comparison["baseline_total"] == "N/A":
+            lines.append("*Baseline not available for this model.*")
+            lines.append("")
+            continue
+        
+        matched_pairs = comparison.get("matched_pairs", [])
+        baseline_only = comparison.get("baseline_only_all", [])
+        skill_only = comparison.get("skill_only_all", [])
+        
+        # Table 1: Same bugs (found in both)
+        lines.append("**Same bugs (found in both):**")
+        lines.append("")
+        if matched_pairs:
+            lines.append("| Issue | File | Baseline | Skill | Severity changed? |")
+            lines.append("|-------|------|----------|-------|-------------------|")
+            for pair in matched_pairs:
+                skill_f = pair["skill"]
+                baseline_f = pair["baseline"]
+                if skill_f and baseline_f:
+                    issue = skill_f.title[:60] + "..." if len(skill_f.title) > 60 else skill_f.title
+                    file = skill_f.file or "—"
+                    baseline_sev = baseline_f.severity
+                    skill_sev = skill_f.severity
+                    if baseline_sev != skill_sev:
+                        sev_changed = f"YES: {baseline_sev}→{skill_sev}"
+                    else:
+                        sev_changed = "no"
+                    lines.append(f"| {issue} | {file} | {baseline_sev} | {skill_sev} | {sev_changed} |")
+        else:
+            lines.append("*None.*")
+        lines.append("")
+        
+        # Table 2: Baseline-only (skill missed)
+        lines.append("**Baseline-only (skill missed):**")
+        lines.append("")
+        if baseline_only:
+            lines.append("| Issue | File | Severity | Skill trigger covers? |")
+            lines.append("|-------|------|----------|-----------------------|")
+            # Use new coverage data if available
+            coverage_data = {item["finding"].title: item for item in comparison.get("baseline_only_with_coverage", [])}
+            for f in baseline_only:
+                issue = f.title[:60] + "..." if len(f.title) > 60 else f.title
+                file = f.file or "—"
+                # Look up coverage data
+                cov = coverage_data.get(f.title)
+                if cov and cov["matched_trigger"]:
+                    trigger_display = cov["matched_trigger"][:50] + "..." if len(cov["matched_trigger"]) > 50 else cov["matched_trigger"]
+                else:
+                    trigger_display = "out of scope"
+                lines.append(f"| {issue} | {file} | {f.severity} | {trigger_display} |")
+        else:
+            lines.append("*None.*")
+        lines.append("")
+        
+        # Table 3: Skill-only (skill added)
+        lines.append("**Skill-only (skill added):**")
+        lines.append("")
+        if skill_only:
+            lines.append("| Issue | File | Severity | Trigger |")
+            lines.append("|-------|------|----------|---------|")
+            for f in skill_only:
+                issue = f.title[:60] + "..." if len(f.title) > 60 else f.title
+                file = f.file or "—"
+                trigger = f.trigger[:40] + "..." if f.trigger and len(f.trigger) > 40 else (f.trigger or "—")
+                lines.append(f"| {issue} | {file} | {f.severity} | {trigger} |")
+        else:
+            lines.append("*None.*")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
     lines.append("## Qualitative Analysis")
     lines.append("")
 

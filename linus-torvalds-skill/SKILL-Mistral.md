@@ -61,7 +61,7 @@ Review triggers are grouped into three tiers that mirror how a human expert revi
   - **Type**: invariant-false
   - **What to look for**: Changes that break existing documented behavior or public APIs
   - **Why it's a problem**: Users depend on stable interfaces; breaking them causes regressions
-  - **Severity**: reject
+  - **Severity**: request-changes
   - **Example**: “In other words, a kernel interface to user land changed. THAT IS ALWAYS A BUG. We don't change UI.” (Category: api-stability, Move 17)
 
 - **Trigger**: Unsafe or untrusted boundary crossing without validation
@@ -132,7 +132,7 @@ Review triggers are grouped into three tiers that mirror how a human expert revi
   - **Type**: invariant-false
   - **What to look for**: Modifying a function’s return value, arguments, or semantics without ensuring all callers are updated
   - **Why it's a problem**: Callers depend on the documented contract; breaking it causes regressions
-  - **Severity**: reject
+  - **Severity**: request-changes
   - **Example**: “if you're changing next_thread() anyway, please just change it to be a completely new thing that returns NULL at the end, which is what everybody really seems to want, and don't add a new __next_thread() helper.” (Category: api-stability, Move 20)
 
 - **Trigger**: Adding new global symbols or public interfaces without clear justification
@@ -146,14 +146,14 @@ Review triggers are grouped into three tiers that mirror how a human expert revi
   - **Type**: general-guideline
   - **What to look for**: Adding a flag or parameter to one function (e.g., mkdir) while leaving similar functions unchanged
   - **Why it's a problem**: Inconsistent interfaces make code harder to use and maintain
-  - **Severity**: reject
+  - **Severity**: request-changes
   - **Example**: “Why the *hell* would mkdir() be so magical as to need something like that? ... What makes mkdir() so magical? Also, what about all the other ops?” (Category: api-stability, Move 24)
 
 - **Trigger**: Breaking ABI compatibility by changing data layout or alignment
   - **Type**: invariant-false
   - **What to look for**: Changes to struct layouts, padding, or alignment that break binary compatibility
   - **Why it's a problem**: Users depend on stable ABIs; breaking them causes regressions
-  - **Severity**: reject
+  - **Severity**: request-changes
   - **Example**: “Adding a new u64 field to siginfo breaks the ABI because of alignment differences on 32‑bit targets” (Category: api-stability, Move 21)
 
 #### Theme: Concurrency and Synchronization
@@ -229,7 +229,7 @@ Review triggers are grouped into three tiers that mirror how a human expert revi
   - **Type**: invariant-false
   - **What to look for**: fatal assertion() or similar fatal assertions in production code for conditions that can happen in normal operation
   - **Why it's a problem**: Crashes the system for recoverable errors
-  - **Severity**: reject
+  - **Severity**: request-changes
   - **Example**: “I'm getting *real* tired of that fatal assertion() shit... Killing the machine for idiotic things like that is truly offensive... Either that fatal assertion() cannot possibly happen, in which case it should damn well not exist in the first place.” (Category: error-handling, Move 13)
 
 - **Trigger**: Inconsistent error code conventions within the same module
@@ -243,7 +243,7 @@ Review triggers are grouped into three tiers that mirror how a human expert revi
   - **Type**: invariant-false
   - **What to look for**: Catching errors and not logging or propagating them
   - **Why it's a problem**: Hides bugs and makes debugging impossible
-  - **Severity**: reject
+  - **Severity**: request-changes
   - **Example**: “The whole "sysfs_create_file()" thing is an example of that. If it fails, it fails. The caller can't do anythign about it anyway...” (Category: error-handling, Move 8)
 
 ---
@@ -270,7 +270,7 @@ Review triggers are grouped into three tiers that mirror how a human expert revi
   - **Type**: general-guideline
   - **What to look for**: Literal constants (e.g., 0377, '\377') instead of named constants
   - **Why it's a problem**: Magic numbers make code hard to understand and maintain
-  - **Severity**: nitpick
+  - **Severity**: request-changes
   - **Example**: “Wouldn't that be much nicer and simpler as just if (c == 255 && I_PARMRK(tty)) instead?” (Category: style, Move 8)
 
 #### Theme: Comments and Documentation
@@ -293,7 +293,7 @@ Review triggers are grouped into three tiers that mirror how a human expert revi
   - **Type**: general-guideline
   - **What to look for**: Commit messages that don’t explain what the change does or why it’s needed
   - **Why it's a problem**: Makes it hard to review and maintain the change
-  - **Severity**: nitpick
+  - **Severity**: request-changes
   - **Example**: “I have to say, that commit message is pretty bad too. It doesn't actually explain why this is needed.” (Category: documentation, Move 18)
 
 #### Theme: Code Organization and Style
@@ -302,7 +302,7 @@ Review triggers are grouped into three tiers that mirror how a human expert revi
   - **Type**: general-guideline
   - **What to look for**: goto cleanup labels or manual resource cleanup instead of language-level constructs
   - **Why it's a problem**: Manual cleanup is error-prone and hard to maintain
-  - **Severity**: nitpick
+  - **Severity**: request-changes
   - **Example**: “Do what I did: add a "err_unlock" label, and make anybody after the lock primitive_lock() call it. No broken shortcuts.” (Category: concurrency, Move 15)
 
 - **Trigger**: Dead or unnecessary code constructs
