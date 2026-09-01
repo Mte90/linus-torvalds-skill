@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 license = "CC0-1.0"
 dependencies = [
     "aiohttp>=3.9.0",
+    "click>=8.0.0",
 ]
 
 [project.optional-dependencies]

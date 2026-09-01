@@ -678,6 +678,110 @@ def match_finding_to_trigger(finding: Finding, triggers: list[str]) -> tuple[str
     if best_score >= 0.05:  # Very lenient - just needs some overlap
         return best_trigger, best_score
     return None, best_score
+def analyze_trigger_effectiveness(
+    baseline_findings: list[Finding],
+    skill_findings: list[Finding],
+) -> dict:
+    """Analyze per-trigger effectiveness metrics.
+    
+    For each trigger, computes:
+    - Times fired: how many skill findings mapped to this trigger
+    - True positives: how many of those also matched a baseline finding
+    - Precision: true positives / times fired (how often the trigger finds real bugs)
+    - Recall: true positives / total baseline findings (how much of baseline coverage this trigger captures)
+    
+    Args:
+        baseline_findings: Findings from the baseline run
+        skill_findings: Findings from the skill run (each should have trigger mapped)
+    
+    Returns:
+        Dict with keys:
+        - triggers: list of dicts with keys: trigger, fires, true_positives, precision, recall
+        - summary: dict with keys: total_triggers, total_fires, overall_precision, overall_recall
+    """
+    if not skill_findings:
+        return {
+            "triggers": [],
+            "summary": {
+                "total_triggers": 0,
+                "total_fires": 0,
+                "overall_precision": 0.0,
+                "overall_recall": 0.0,
+            },
+        }
+    
+    # Map each baseline finding to a unique key for matching
+    baseline_keys = set()
+    for bf in baseline_findings:
+        if bf.file and bf.line:
+            baseline_keys.add((bf.file, bf.line))
+        elif bf.title:
+            # Fallback: use title as key if no location
+            baseline_keys.add(("__title__", bf.title))
+    
+    # Group skill findings by trigger
+    trigger_fires: dict[str | None, list[Finding]] = defaultdict(list)
+    for sf in skill_findings:
+        trigger_key = sf.trigger if sf.trigger else "unmatched"
+        trigger_fires[trigger_key].append(sf)
+    
+    # Compute per-trigger metrics
+    trigger_metrics = []
+    total_true_positives = 0
+    total_fires = 0
+    
+    for trigger, fires in trigger_fires.items():
+        fires_count = len(fires)
+        total_fires += fires_count
+        
+        # Count true positives (skill finding matched a baseline finding)
+        true_positives = 0
+        for sf in fires:
+            # Check if this skill finding matches any baseline finding
+            if sf.file and sf.line:
+                if (sf.file, sf.line) in baseline_keys:
+                    true_positives += 1
+            elif sf.title:
+                # Fallback: check by title similarity
+                for bf in baseline_findings:
+                    if _title_similarity(sf.title, bf.title) >= 0.30:
+                        true_positives += 1
+                        break
+        
+        total_true_positives += true_positives
+        
+        # Precision: true positives / times fired
+        precision = true_positives / fires_count if fires_count > 0 else 0.0
+        
+        # Recall: true positives / total baseline findings
+        # This measures how much of the baseline coverage this trigger captures
+        recall = true_positives / len(baseline_findings) if baseline_findings else 0.0
+        
+        trigger_display = trigger if trigger else "unmatched"
+        trigger_metrics.append({
+            "trigger": trigger_display,
+            "fires": fires_count,
+            "true_positives": true_positives,
+            "precision": precision,
+            "recall": recall,
+        })
+    
+    # Sort by true positives descending (most effective triggers first)
+    trigger_metrics.sort(key=lambda x: (-x["true_positives"], -x["fires"]))
+    
+    # Overall metrics
+    overall_precision = total_true_positives / total_fires if total_fires > 0 else 0.0
+    overall_recall = total_true_positives / len(baseline_findings) if baseline_findings else 0.0
+    
+    return {
+        "triggers": trigger_metrics,
+        "summary": {
+            "total_triggers": len(trigger_metrics),
+            "total_fires": total_fires,
+            "overall_precision": overall_precision,
+            "overall_recall": overall_recall,
+        },
+    }
 
 
 def compare_skill_vs_baseline(
@@ -810,6 +914,7 @@ def main():
     all_findings = {}
     all_triggers = {}
     skill_vs_baseline_comparisons = []
+    trigger_effectiveness = {}
 
     for model_name, skill_file, baseline_file in MODELS:
         skill_path = report_dir / skill_file
@@ -853,6 +958,22 @@ def main():
         baseline_findings = all_findings.get(f"{model_name}_baseline")
         comparison = compare_skill_vs_baseline(skill_findings, baseline_findings, model_name, skill_triggers)
         skill_vs_baseline_comparisons.append(comparison)
+        
+        # Compute trigger effectiveness for this model
+        if baseline_findings is not None:
+            trigger_effectiveness[model_name] = analyze_trigger_effectiveness(
+                baseline_findings, skill_findings
+            )
+        else:
+            trigger_effectiveness[model_name] = {
+                "triggers": [],
+                "summary": {
+                    "total_triggers": 0,
+                    "total_fires": 0,
+                    "overall_precision": 0.0,
+                    "overall_recall": 0.0,
+                },
+            }
 
     # Generate consensus matrix (with-skill only)
     # Build dict of model_name -> findings for data-driven matching
@@ -878,6 +999,7 @@ def main():
         skill_vs_baseline=skill_vs_baseline_comparisons,
         missing_files=missing_files,
         model_names=model_names,
+        trigger_effectiveness=trigger_effectiveness,
     )
 
     # Write output

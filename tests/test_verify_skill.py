@@ -7,7 +7,11 @@ tables, quotes, and text normalization.
 import pytest
 from pathlib import Path
 
-from scripts.verify_skill import normalize, check_forbidden_terms, check_no_tables, check_interview_quotes
+from scripts.verify_skill import (
+    normalize, check_forbidden_terms, check_no_tables, check_interview_quotes,
+    score_skill_quality, _score_trigger_diversity, _score_severity_distribution,
+    _score_language_agnosticism, _score_section_coverage
+)
 
 
 class TestNormalize:
@@ -257,3 +261,272 @@ From his (TED 2016) presentation.
 """)
         count, patterns = check_interview_quotes(skill_file)
         assert count >= 3
+
+
+class TestScoreSkillQuality:
+    """Test the quality scoring function."""
+
+    def test_score_nonexistent_file(self, tmp_path):
+        """Non-existent file should return zero scores."""
+        result = score_skill_quality(tmp_path / "nonexistent.md")
+        assert result["total"] == 0
+        assert result["trigger_diversity"] == 0
+        assert result["severity_distribution"] == 0
+        assert result["language_agnosticism"] == 0
+        assert result["section_coverage"] == 0
+
+    def test_score_empty_file(self, tmp_path):
+        """Empty file should score poorly."""
+        skill_file = tmp_path / "empty.md"
+        skill_file.write_text("")
+        result = score_skill_quality(skill_file)
+        # Empty file: language_agnosticism = 25 (no forbidden terms), section_coverage = 0
+        assert result["total"] == 25  # Only language_agnosticism passes
+        assert result["language_agnosticism"] == 25  # Empty file has no forbidden terms
+        assert result["section_coverage"] == 0  # No sections present
+
+    def test_score_complete_skill(self, tmp_path):
+        """Complete skill file should score well."""
+        skill_file = tmp_path / "complete.md"
+        skill_file.write_text("""# Reviewer Mindset
+
+Some content here.
+
+## Review Triggers
+
+- **Trigger:** Test trigger one
+  - **Type:** general-guideline
+  - **Severity:** request-changes
+
+- **Trigger:** Test trigger two
+  - **Type:** invariant-false
+  - **Severity:** reject
+
+- **Trigger:** Test trigger three
+  - **Type:** general-guideline
+  - **Severity:** nitpick
+
+## Precedence and Priorities
+
+Content about precedence.
+
+## Decision Cards
+
+Some decision cards.
+
+## Key Definitions
+
+Definitions here.
+
+## Anti-Patterns
+
+Anti-patterns listed.
+
+## Voice and Tone
+
+Tone guidelines.
+
+## Severity Calibration
+
+Calibration info with reject, request-changes, nitpick, approve.
+
+## Severity Decision Tree
+
+Decision tree content.
+
+As Linus said: "I use kmalloc all the time" (Interview: test.md)
+"Another quote here for good measure" (TED 2016)
+"Third quote to pass threshold" (Linux Journal 2021)
+"Fourth quote for safety" (Hacker News 2020)
+"Fifth quote to be sure" (O'Reilly 2019)
+"Sixth quote for coverage" (Forbes 2018)
+"Seventh quote for completeness" (Wired 2017)
+"Eighth quote for good measure" (Interview: another.md)
+"Ninth quote for safety" (Interview: third.md)
+"Tenth quote to pass" (Interview: fourth.md)
+"Eleventh quote for good" (Interview: fifth.md)
+"Twelfth quote for measure" (Interview: sixth.md)
+"Thirteenth quote for good" (Interview: seventh.md)
+"Fourteenth quote for measure" (Interview: eighth.md)
+"Fifteenth quote for good" (Interview: ninth.md)
+"Sixteenth quote for measure" (Interview: tenth.md)
+"Seventeenth quote for good" (Interview: eleventh.md)
+"Eighteenth quote for measure" (Interview: twelfth.md)
+"Nineteenth quote for good" (Interview: thirteenth.md)
+"Twentieth quote for measure" (Interview: fourteenth.md)
+"Twenty-first quote for good" (Interview: fifteenth.md)
+"Twenty-second quote for measure" (Interview: sixteenth.md)
+"Twenty-third quote for good" (Interview: seventeenth.md)
+"Twenty-fourth quote for measure" (Interview: eighteenth.md)
+"Twenty-fifth quote for good" (Interview: nineteenth.md)
+"Twenty-sixth quote for measure" (Interview: twentieth.md)
+"Twenty-seventh quote for good" (Interview: twenty-first.md)
+"Twenty-eighth quote for measure" (Interview: twenty-second.md)
+"Twenty-ninth quote for good" (Interview: twenty-third.md)
+"Thirtieth quote for measure" (Interview: twenty-fourth.md)
+"Thirty-first quote for good" (Interview: twenty-fifth.md)
+"Thirty-second quote for measure" (Interview: twenty-sixth.md)
+"Thirty-third quote for good" (Interview: twenty-seventh.md)
+"Thirty-fourth quote for measure" (Interview: twenty-eighth.md)
+"Thirty-fifth quote for good" (Interview: twenty-ninth.md)
+"Thirty-sixth quote for measure" (Interview: thirtieth.md)
+"Thirty-seventh quote for good" (Interview: thirty-first.md)
+"Thirty-eighth quote for measure" (Interview: thirty-second.md)
+"Thirty-ninth quote for good" (Interview: thirty-third.md)
+"Fortieth quote for measure" (Interview: thirty-fourth.md)
+"Forty-first quote for good" (Interview: thirty-fifth.md)
+"Forty-second quote for measure" (Interview: thirty-sixth.md)
+"Forty-third quote for good" (Interview: thirty-seventh.md)
+"Forty-fourth quote for measure" (Interview: thirty-eighth.md)
+"Forty-fifth quote for good" (Interview: thirty-ninth.md)
+"Forty-sixth quote for measure" (Interview: fortieth.md)
+"Forty-seventh quote for good" (Interview: forty-first.md)
+"Forty-eighth quote for measure" (Interview: forty-second.md)
+"Forty-ninth quote for good" (Interview: forty-third.md)
+"Fiftieth quote for measure" (Interview: forty-fourth.md)
+Testing, correctness, complexity, performance, concurrency, documentation, style, process, api-stability, error-handling, memory-safety, abstraction, security.
+""")
+        result = score_skill_quality(skill_file)
+        
+        # Should have good scores
+        assert result["total"] > 50  # At least moderate score
+        assert result["section_coverage"] == 25  # All sections present
+        assert result["language_agnosticism"] == 25  # No forbidden terms (they're in quotes)
+
+
+class TestScoreTriggerDiversity:
+    """Test trigger diversity scoring."""
+
+    def test_no_triggers(self):
+        """Text without triggers should score low."""
+        score, details = _score_trigger_diversity("Just some text without triggers")
+        assert score == 0
+        assert details["total_triggers"] == 0
+
+    def test_few_triggers(self):
+        """Text with few triggers should score proportionally."""
+        text = """
+        - **Trigger:** First trigger
+        - **Trigger:** Second trigger
+        - **Trigger:** Third trigger
+        """
+        score, details = _score_trigger_diversity(text)
+        assert details["explicit_triggers_found"] == 3
+        assert score > 0
+        assert score < 25
+
+    def test_many_triggers(self):
+        """Text with 15+ triggers should cap at 25."""
+        triggers = "\n".join([f"- **Trigger:** Trigger {i}" for i in range(20)])
+        score, details = _score_trigger_diversity(triggers)
+        assert details["explicit_triggers_found"] == 20
+        assert score == 25
+
+    def test_theme_based_estimation(self):
+        """Theme trigger patterns should be estimated."""
+        text = """
+        - **Theme**: Test Theme
+        Triggers (3-6 each): 1. First trigger. 2. Second trigger.
+        """
+        score, details = _score_trigger_diversity(text)
+        assert details["estimated_from_themes"] >= 3
+
+
+class TestScoreSeverityDistribution:
+    """Test severity distribution scoring."""
+
+    def test_no_severity_mentions(self, tmp_path):
+        """Text without severity mentions should score 0."""
+        # Temporarily create calibration.json
+        calibration_file = Path(__file__).parent.parent / "data" / "calibration.json"
+        if not calibration_file.exists():
+            pytest.skip("calibration.json not found")
+        
+        score, details = _score_severity_distribution("just some text")
+        assert score == 0
+        assert "error" in details
+
+    def test_severity_mentions(self, tmp_path):
+        """Text with severity mentions should score based on distribution."""
+        calibration_file = Path(__file__).parent.parent / "data" / "calibration.json"
+        if not calibration_file.exists():
+            pytest.skip("calibration.json not found")
+        
+        # Text with balanced severity mentions
+        text = "reject request-changes nitpick approve discussion"
+        score, details = _score_severity_distribution(text)
+        assert score >= 0
+        assert score <= 25
+        assert details["total_mentions"] == 5
+
+
+class TestScoreLanguageAgnosticism:
+    """Test language-agnosticism scoring."""
+
+    def test_clean_file(self, tmp_path):
+        """File without forbidden terms should score 25."""
+        skill_file = tmp_path / "clean.md"
+        skill_file.write_text("""# Review Mindset
+
+This is a clean skill file.
+""")
+        score, details = _score_language_agnosticism(skill_file)
+        assert score == 25
+        assert details["passed"] is True
+
+    def test_forbidden_terms(self, tmp_path):
+        """File with forbidden terms should score 0."""
+        skill_file = tmp_path / "bad.md"
+        skill_file.write_text("""# Review Mindset
+
+Use kmalloc for allocations.
+""")
+        score, details = _score_language_agnosticism(skill_file)
+        assert score == 0
+        assert details["passed"] is False
+        assert details["violations"] > 0
+
+
+class TestScoreSectionCoverage:
+    """Test section coverage scoring."""
+
+    def test_all_sections_present(self):
+        """Text with all sections should score 25."""
+        text = """
+        Reviewer Mindset
+        Review Triggers
+        Precedence and Priorities
+        Decision Cards
+        Key Definitions
+        Anti-Patterns
+        Voice and Tone
+        Severity Calibration
+        Severity Decision Tree
+        """
+        score, details = _score_section_coverage(text)
+        assert score == 25
+        assert details["missing"] == 0
+
+    def test_missing_sections(self):
+        """Text with missing sections should be penalized."""
+        text = """
+        Reviewer Mindset
+        Review Triggers
+        """
+        score, details = _score_section_coverage(text)
+        assert score == 0  # 25 - (7 * 5) = 25 - 35 = -10, but max(0, ...) = 0
+        assert details["missing"] == 7
+
+    def test_partial_sections(self):
+        """Text with some sections should score proportionally."""
+        text = """
+        Reviewer Mindset
+        Review Triggers
+        Precedence and Priorities
+        Decision Cards
+        Key Definitions
+        """
+        score, details = _score_section_coverage(text)
+        assert score == 5  # 25 - (4 * 5) = 5
+        assert details["present"] == 5
+        assert details["missing"] == 4

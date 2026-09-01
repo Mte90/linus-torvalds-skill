@@ -42,6 +42,206 @@ Rules:
 Return ONLY valid JSON, no markdown fences, in this exact format:
 {"moves": [{"trigger": "...", "principle": "...", "response": "...", "severity": "...", "category": "..."}]}"""
 
+BATCH_SYSTEM_PROMPT = """\
+You are analyzing emails from Linus Torvalds on the Linux kernel mailing list.
+
+Your job: extract the "review moves" — the actionable reviewing principles expressed in EACH email.
+
+A review move has five fields:
+- trigger: what in the code, patch, or proposal prompted this response (specific, concrete)
+- principle: the general reviewing rule being applied (abstract it away from C/kernel specifics — make it language-agnostic so it applies to any code review)
+- response: how Torvalds phrases his feedback (use his actual words where possible — the tone IS the signal)
+- severity: one of "reject", "request-changes", "nitpick", "approve", "discussion"
+- category: one of: api-stability, performance, correctness, complexity, style, process, error-handling, concurrency, memory-safety, abstraction, testing, documentation, other
+
+Rules:
+- You will receive {batch_size} emails. For EACH email, extract the review moves.
+- Return a JSON array with one object per email, in the same order as the input.
+- Each object must have the same structure as a single-email extraction: {{"moves": [...]}}
+- If an email has no review moves, return an empty moves array for that email.
+- One email may contain zero, one, or many review moves.
+- If an email has no review content (e.g. it's a merge confirmation, a scheduling note, or pure discussion with no reviewing principle), return an empty moves array for that email.
+- The principle MUST be abstracted away from C/kernel specifics.
+- Keep the response field in Torvalds' own words — do not paraphrase the tone away.
+- Be conservative: only extract a move if there is a clear, identifiable reviewing principle.
+
+Return ONLY valid JSON, no markdown fences, in this exact format:
+[{{"moves": [...]}}, {{"moves": [...]}}, ...]  // one object per email, in order"""
+
+
+def _parse_batch_response(content: str, batch_size: int) -> list[dict]:
+    """Parse JSON array response from batched LLM call.
+    
+    Args:
+        content: Raw LLM response text (may include markdown fences)
+        batch_size: Expected number of emails in the batch
+        
+    Returns:
+        List of parsed dicts, one per email
+        
+    Raises:
+        json.JSONDecodeError: If response is not valid JSON
+        ValueError: If array length doesn't match batch_size
+    """
+    text = content.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    text = text.strip()
+    
+    parsed = json.loads(text)
+    
+    if not isinstance(parsed, list):
+        raise ValueError(f"Expected JSON array, got {type(parsed).__name__}")
+    
+    if len(parsed) != batch_size:
+        raise ValueError(
+            f"Expected {batch_size} results, got {len(parsed)}"
+        )
+    
+    return parsed
+
+
+async def _call_llm_batch_async(
+    session: aiohttp.ClientSession,
+    emails: list[EmailRecord],
+    semaphore: asyncio.Semaphore,
+    batch_size: int,
+    retries: int = None,
+) -> list[dict]:
+    """Call the LLM API for a batch of emails asynchronously. Returns list of parsed JSON dicts."""
+    retries = retries if retries is not None else config.MAX_RETRIES
+    
+    # Build batch user content
+    batch_content = ""
+    for i, email in enumerate(emails):
+        batch_content += (
+            f"\n\n=== EMAIL {i + 1}/{batch_size} ===\n"
+            f"Subject: {email.subject}\n"
+            f"Date: {email.date}\n\n"
+            f"{email.body[:8000]}\n"
+        )
+    
+    payload = {
+        "model": config.MODEL,
+        "messages": [
+            {"role": "system", "content": BATCH_SYSTEM_PROMPT.format(batch_size=batch_size)},
+            {"role": "user", "content": batch_content},
+        ],
+        "temperature": 0.1,
+    }
+
+    last_err: Any = None
+    for attempt in range(retries):
+        async with semaphore:
+            try:
+                async with session.post(
+                    config.CHAT_URL,
+                    json=payload,
+                    headers=config.headers(),
+                    timeout=aiohttp.ClientTimeout(total=config.REQUEST_TIMEOUT),
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        return _parse_batch_response(content, batch_size)
+                    elif resp.status == 429:
+                        last_err = f"HTTP 429 (rate limit)"
+                        wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(0, config.RETRY_DELAY)
+                        await asyncio.sleep(wait)
+                    elif resp.status >= 500:
+                        last_err = f"HTTP {resp.status}"
+                        wait = config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
+                        await asyncio.sleep(wait)
+                    else:
+                        last_err = f"HTTP {resp.status}"
+                        raise RuntimeError(f"LLM API error: {resp.status}")
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                last_err = e
+                wait = config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
+                await asyncio.sleep(wait)
+            except (json.JSONDecodeError, KeyError, IndexError, ValueError) as e:
+                last_err = e
+                await asyncio.sleep(config.RETRY_DELAY)
+
+    raise RuntimeError(f"LLM batch call failed after {retries} retries: {last_err}")
+
+
+async def extract_moves_batch_async(
+    session: aiohttp.ClientSession,
+    emails: list[EmailRecord],
+    semaphore: asyncio.Semaphore,
+    batch_size: int = 1,
+    batch_retry: bool = True,
+) -> list[dict]:
+    """Extract moves from a batch of emails with optional batching and retry.
+    
+    Args:
+        session: aiohttp ClientSession
+        emails: List of email records to process
+        semaphore: asyncio.Semaphore for concurrency control
+        batch_size: Number of emails per LLM call (1 = sequential)
+        batch_retry: If True, retry failed batches with individual emails
+        
+    Returns:
+        List of extraction results, one per email
+    """
+    results = []
+    total = len(emails)
+    
+    # Process emails in batches
+    for batch_start in range(0, total, batch_size):
+        batch_end = min(batch_start + batch_size, total)
+        batch_emails = emails[batch_start:batch_end]
+        actual_batch_size = len(batch_emails)
+        
+        # If batch_size is 1, use sequential extraction
+        if actual_batch_size == 1:
+            result = await extract_moves_async(session, batch_emails[0], semaphore)
+            results.append(result)
+            continue
+        
+        # Try batch extraction
+        try:
+            batch_results = await _call_llm_batch_async(
+                session, batch_emails, semaphore, actual_batch_size
+            )
+            
+            # Convert batch results to individual result format
+            for i, email in enumerate(batch_emails):
+                batch_result = batch_results[i]
+                moves = batch_result.get("moves", [])
+                results.append({
+                    "email_message_id": email.message_id,
+                    "email_date": email.date,
+                    "email_subject": email.subject,
+                    "moves": moves,
+                })
+                
+        except (json.JSONDecodeError, ValueError, RuntimeError) as e:
+            # Batch failed
+            if batch_retry:
+                # Fall back to sequential extraction for failed batch
+                for email in batch_emails:
+                    result = await extract_moves_async(session, email, semaphore)
+                    results.append(result)
+            else:
+                # Return error results for all emails in batch
+                for email in batch_emails:
+                    results.append({
+                        "email_message_id": email.message_id,
+                        "email_date": email.date,
+                        "email_subject": email.subject,
+                        "moves": [],
+                        "error": f"batch_failed: {str(e)}",
+                    })
+    
+    return results
+
 
 async def _call_llm_async(
     session: aiohttp.ClientSession,
@@ -258,6 +458,8 @@ async def extract_async(
     model: str = "gpt-oss-120b",
     max_workers: int = 20,
     resume: bool = False,
+    batch_size: int = 1,
+    batch_retry: bool = True,
 ) -> int:
     """
     Extract review moves from emails using async LLM calls.
@@ -268,6 +470,8 @@ async def extract_async(
         model: Model name to use (default: gpt-oss-120b)
         max_workers: Maximum concurrent LLM calls (default: 20)
         resume: If True, resume from checkpoint
+        batch_size: Number of emails per LLM call (1 = sequential)
+        batch_retry: If True, retry failed batches with individual emails
 
     Returns:
         Count of extracted moves
@@ -295,17 +499,27 @@ async def extract_async(
 
     output_mode = "a" if resume else "w"
     async with aiohttp.ClientSession() as session:
-        tasks = []
-        for email in emails:
-            delay = random.uniform(0.5, 2.0)
-            task = asyncio.create_task(
-                process_email_with_delay(session, email, semaphore, delay)
+        # Use batch processing if batch_size > 1
+        if batch_size > 1:
+            results = await extract_moves_batch_async(
+                session, emails, semaphore, batch_size, batch_retry
             )
-            tasks.append(task)
-
-        with open(output_file, output_mode, encoding="utf-8") as f:
+        else:
+            # Sequential processing (original behavior)
+            tasks = []
+            for email in emails:
+                delay = random.uniform(0.5, 2.0)
+                task = asyncio.create_task(
+                    process_email_with_delay(session, email, semaphore, delay)
+                )
+                tasks.append(task)
+            results = []
             for coro in asyncio.as_completed(tasks):
                 email, result = await coro
+                results.append(result)
+
+        with open(output_file, output_mode, encoding="utf-8") as f:
+            for result in results:
                 f.write(json.dumps(result, ensure_ascii=False) + "\n")
                 f.flush()
                 done += 1
@@ -398,8 +612,28 @@ if __name__ == "__main__":
         action="store_true",
         help="Resume from checkpoint, skipping already-processed emails"
     )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Number of emails per LLM call (default: 1 = sequential)"
+    )
+    parser.add_argument(
+        "--batch-retry",
+        action="store_true",
+        default=True,
+        help="Retry failed batches with individual emails (default: True)"
+    )
+    parser.add_argument(
+        "--no-batch-retry",
+        action="store_true",
+        help="Disable retry for failed batches"
+    )
 
     args = parser.parse_args()
+
+    # Disable batch retry if --no-batch-retry is specified
+    batch_retry = args.batch_retry and not args.no_batch_retry
 
     count = asyncio.run(
         extract_async(
@@ -408,6 +642,8 @@ if __name__ == "__main__":
             args.model,
             args.max_workers,
             args.resume,
+            args.batch_size,
+            batch_retry,
         )
     )
     print(f"Extracted {count} moves total")

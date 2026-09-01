@@ -17,6 +17,8 @@ from torvalds_skill.distill import (
     _validate_skill_structure,
     _validate_severity_consistency,
     _load_interview_data,
+    _format_model_calibration_note,
+    MODEL_SEVERITY_BIAS,
 )
 from torvalds_skill.distill_prompts import DISTILL_SYSTEM_PROMPT
 from torvalds_skill.distill_llm import _detect_truncation, _WallClockTimeout
@@ -793,3 +795,110 @@ class TestWallClockOverride:
         
         # Verify the override value was used
         assert 123 in captured_wall_clock
+
+
+class TestModelSeverityBias:
+    """Tests for MODEL_SEVERITY_BIAS and _format_model_calibration_note()."""
+    
+    def test_bias_dict_contains_expected_models(self):
+        """Verify MODEL_SEVERITY_BIAS contains all three expected models."""
+        assert "gpt-oss-120b" in MODEL_SEVERITY_BIAS
+        assert "glm5.2" in MODEL_SEVERITY_BIAS
+        assert "mistral-small-4-119b" in MODEL_SEVERITY_BIAS
+    
+    def test_gpt_oss_bias_is_balanced(self):
+        """Verify gpt-oss-120b has balanced bias description."""
+        bias = MODEL_SEVERITY_BIAS["gpt-oss-120b"]
+        assert "balanced" in bias.lower()
+    
+    def test_glm52_bias_over_rates(self):
+        """Verify glm5.2 has over-rates severity bias description."""
+        bias = MODEL_SEVERITY_BIAS["glm5.2"]
+        assert "over-rates" in bias.lower() or "over rates" in bias.lower()
+        assert "downgrade" in bias.lower()
+    
+    def test_mistral_bias_under_rates(self):
+        """Verify mistral-small-4-119b has under-rates severity bias description."""
+        bias = MODEL_SEVERITY_BIAS["mistral-small-4-119b"]
+        assert "under-rates" in bias.lower() or "under rates" in bias.lower()
+        assert "upgrade" in bias.lower()
+
+
+class TestFormatModelCalibrationNote:
+    """Tests for _format_model_calibration_note() function."""
+    
+    def test_glm52_includes_calibration_note(self):
+        """Verify glm5.2 gets the over-rates calibration note."""
+        note = _format_model_calibration_note("glm5.2")
+        assert "MODEL CALIBRATION NOTE" in note
+        assert "glm5.2" in note
+        assert "over-rates" in note.lower() or "over rates" in note.lower()
+        assert "downgrade" in note.lower()
+        assert "borderline" in note.lower()
+    
+    def test_mistral_includes_calibration_note(self):
+        """Verify mistral-small-4-119b gets the under-rates calibration note."""
+        note = _format_model_calibration_note("mistral-small-4-119b")
+        assert "MODEL CALIBRATION NOTE" in note
+        assert "mistral" in note.lower()
+        assert "under-rates" in note.lower() or "under rates" in note.lower()
+        assert "upgrade" in note.lower()
+        assert "borderline" in note.lower()
+    
+    def test_gpt_oss_includes_calibration_note(self):
+        """Verify gpt-oss-120b gets the balanced calibration note."""
+        note = _format_model_calibration_note("gpt-oss-120b")
+        assert "MODEL CALIBRATION NOTE" in note
+        assert "gpt-oss" in note.lower()
+        assert "balanced" in note.lower()
+    
+    def test_unknown_model_gets_balanced_default(self):
+        """Verify unknown models get a balanced default note."""
+        note = _format_model_calibration_note("unknown-model-xyz")
+        assert "MODEL CALIBRATION NOTE" in note
+        assert "unknown-model-xyz" in note
+        assert "balanced" in note.lower()
+        assert "no known systematic bias" in note.lower()
+    
+    def test_none_model_gets_balanced_default(self):
+        """Verify None model gets a balanced default note."""
+        note = _format_model_calibration_note(None)
+        assert "MODEL CALIBRATION NOTE" in note
+        assert "unknown model" in note.lower()
+        assert "balanced" in note.lower()
+    
+    def test_different_models_get_different_notes(self):
+        """Verify different models get different calibration notes."""
+        glm_note = _format_model_calibration_note("glm5.2")
+        mistral_note = _format_model_calibration_note("mistral-small-4-119b")
+        gpt_note = _format_model_calibration_note("gpt-oss-120b")
+        
+        # All notes should be different
+        assert glm_note != mistral_note
+        assert glm_note != gpt_note
+        assert mistral_note != gpt_note
+        
+        # Each should contain their specific bias description
+        assert "downgrade" in glm_note.lower()
+        assert "upgrade" in mistral_note.lower()
+        assert "no systematic bias" in gpt_note.lower()
+    
+    def test_calibration_note_format(self):
+        """Verify the calibration note has the expected structure."""
+        note = _format_model_calibration_note("glm5.2")
+        
+        # Should have start and end markers
+        assert "=== MODEL CALIBRATION NOTE ===" in note
+        assert "=== END MODEL CALIBRATION NOTE ===" in note
+        
+        # Should mention the model name
+        assert "glm5.2" in note
+        
+        # Should mention known bias
+        assert "Known bias" in note
+        
+        # Should instruct to counteract bias
+        assert "counteracts" in note.lower() or "counteract" in note.lower()
+        
+        # Should mention borderline cases
+        assert "borderline" in note.lower()

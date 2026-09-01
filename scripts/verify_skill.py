@@ -17,6 +17,7 @@ Exit 0 = pass, 1 = fail.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -24,6 +25,7 @@ from pathlib import Path
 
 DEFAULT_SKILL_PATH = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
 PATTERNS_PATH = Path(__file__).parent.parent / "data" / "patterns.json"
+CALIBRATION_PATH = Path(__file__).parent.parent / "data" / "calibration.json"
 
 REQUIRED_SECTIONS = [
     "Reviewer Mindset",
@@ -188,10 +190,300 @@ def normalize(text: str) -> str:
     return text
 
 
-def main() -> int:
-    all_pass = True
+def score_skill_quality(skill_path: Path) -> dict:
+    """Calculate a deterministic 0-100 quality score for a skill file.
+    
+    The score is based on four dimensions:
+    1. Trigger diversity (0-25): Number of distinct triggers
+    2. Severity distribution (0-25): How well it matches calibrated targets
+    3. Language-agnosticism (0-25): Pass = 25, fail = 0
+    4. Section coverage (0-25): All required sections present
+    
+    Args:
+        skill_path: Path to the skill file
+        
+    Returns:
+        dict with keys: total, trigger_diversity, severity_distribution,
+                       language_agnosticism, section_coverage, details
+    """
+    if not skill_path.exists():
+        return {
+            "total": 0,
+            "trigger_diversity": 0,
+            "severity_distribution": 0,
+            "language_agnosticism": 0,
+            "section_coverage": 0,
+            "details": {"error": f"File not found: {skill_path}"}
+        }
+    
+    raw_text = skill_path.read_text(encoding="utf-8")
+    text = normalize(raw_text)
+    text_lower = text.lower()
+    
+    # 1. Trigger diversity (0-25 points)
+    trigger_score, trigger_details = _score_trigger_diversity(text)
+    
+    # 2. Severity distribution (0-25 points)
+    severity_score, severity_details = _score_severity_distribution(text_lower)
+    
+    # 3. Language-agnosticism (0-25 points)
+    lang_score, lang_details = _score_language_agnosticism(skill_path)
+    
+    # 4. Section coverage (0-25 points)
+    section_score, section_details = _score_section_coverage(text)
+    
+    total = trigger_score + severity_score + lang_score + section_score
+    
+    return {
+        "total": total,
+        "trigger_diversity": trigger_score,
+        "severity_distribution": severity_score,
+        "language_agnosticism": lang_score,
+        "section_coverage": section_score,
+        "details": {
+            "trigger_diversity": trigger_details,
+            "severity_distribution": severity_details,
+            "language_agnosticism": lang_details,
+            "section_coverage": section_details,
+        }
+    }
 
-    skill_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SKILL_PATH
+
+def _score_trigger_diversity(text: str) -> tuple[int, dict]:
+    """Score trigger diversity (0-25 points).
+    
+    More distinct triggers = higher score. Cap at 25 points for 15+ distinct triggers.
+    
+    Returns:
+        (score, details_dict)
+    """
+    # Extract triggers by looking for "**Trigger:**" or "- **Trigger:**" patterns
+    trigger_pattern = re.compile(r'\*\*Trigger:\*\*\s*([^\n]+)', re.IGNORECASE)
+    triggers = trigger_pattern.findall(text)
+    
+    # Also look for "- **Trigger:**" markdown pattern
+    trigger_pattern2 = re.compile(r'-\s*\*\*Trigger:\*\*\s*([^\n]+)', re.IGNORECASE)
+    triggers2 = trigger_pattern2.findall(text)
+    
+    # Combine and deduplicate
+    all_triggers = set()
+    for t in triggers + triggers2:
+        t = t.strip()
+        if t:
+            all_triggers.add(t.lower())
+    
+    # Also count theme-based triggers from the "Triggers (3-6 each)" patterns
+    theme_trigger_pattern = re.compile(r'\((\d+)\s*-\s*(\d+)\s+each\)', re.IGNORECASE)
+    theme_matches = theme_trigger_pattern.findall(text)
+    estimated_triggers = 0
+    for min_t, max_t in theme_matches:
+        estimated_triggers += (int(min_t) + int(max_t)) // 2
+    
+    # Total distinct triggers = explicit + estimated from themes
+    explicit_count = len(all_triggers)
+    total_triggers = max(explicit_count, estimated_triggers)
+    
+    # Score: 0-25 points, cap at 15+ triggers
+    if total_triggers >= 15:
+        score = 25
+    else:
+        score = int((total_triggers / 15) * 25)
+    
+    details = {
+        "explicit_triggers_found": explicit_count,
+        "estimated_from_themes": estimated_triggers,
+        "total_triggers": total_triggers,
+        "max_recommended": 15,
+    }
+    
+    return score, details
+
+
+def _score_severity_distribution(text_lower: str) -> tuple[int, dict]:
+    """Score severity distribution match (0-25 points).
+    
+    Compares the skill file's severity mentions against the calibrated target
+    from calibration.json using percentage difference.
+    
+    Returns:
+        (score, details_dict)
+    """
+    # Load calibration data
+    if not CALIBRATION_PATH.exists():
+        return 0, {"error": "calibration.json not found"}
+    
+    calibration = json.loads(CALIBRATION_PATH.read_text(encoding="utf-8"))
+    target = calibration.get("corpus_stats", {}).get("severity_distribution", {})
+    
+    # Count severity mentions in the skill file
+    severity_keywords = ["reject", "request-changes", "nitpick", "approve", "discussion"]
+    counts = {sev: 0 for sev in severity_keywords}
+    
+    for sev in severity_keywords:
+        # Count occurrences of the severity keyword
+        counts[sev] = len(re.findall(r'\b' + sev.replace('-', r'[-\s]') + r'\b', text_lower))
+    
+    total_mentions = sum(counts.values())
+    if total_mentions == 0:
+        return 0, {"error": "No severity mentions found", "counts": counts}
+    
+    # Calculate actual percentages
+    actual_percentages = {sev: (count / total_mentions) * 100 for sev, count in counts.items()}
+    
+    # Get target percentages
+    target_percentages = {}
+    for sev in severity_keywords:
+        if sev in target:
+            target_percentages[sev] = target[sev].get("percentage", 0)
+        else:
+            target_percentages[sev] = 0
+    
+    # Calculate average absolute difference
+    total_diff = 0
+    diffs = {}
+    for sev in severity_keywords:
+        diff = abs(actual_percentages.get(sev, 0) - target_percentages.get(sev, 0))
+        diffs[sev] = diff
+        total_diff += diff
+    
+    avg_diff = total_diff / len(severity_keywords) if severity_keywords else 0
+    
+    # Score: 25 points for perfect match, decreasing with difference
+    # 0% diff = 25 points, 50%+ diff = 0 points
+    score = max(0, int(25 * (1 - avg_diff / 50)))
+    
+    details = {
+        "actual_percentages": {k: round(v, 1) for k, v in actual_percentages.items()},
+        "target_percentages": {k: round(v, 1) for k, v in target_percentages.items()},
+        "differences": {k: round(v, 1) for k, v in diffs.items()},
+        "average_difference": round(avg_diff, 1),
+        "total_mentions": total_mentions,
+    }
+    
+    return score, details
+
+
+def _score_language_agnosticism(skill_path: Path) -> tuple[int, dict]:
+    """Score language-agnosticism (0-25 points).
+    
+    Pass = 25 points, fail = 0 points.
+    Uses the existing check_forbidden_terms() function.
+    
+    Returns:
+        (score, details_dict)
+    """
+    violations = check_forbidden_terms(skill_path)
+    
+    if len(violations) == 0:
+        return 25, {"passed": True, "violations": 0}
+    else:
+        return 0, {
+            "passed": False,
+            "violations": len(violations),
+            "sample_violations": violations[:5]  # First 5 violations
+        }
+
+
+def _score_section_coverage(text: str) -> tuple[int, dict]:
+    """Score section coverage (0-25 points).
+    
+    All required sections present = 25. Each missing section = -5 points.
+    
+    Returns:
+        (score, details_dict)
+    """
+    text_lower = text.lower()
+    missing_sections = []
+    present_sections = []
+    
+    for section in REQUIRED_SECTIONS:
+        if section.lower() in text_lower:
+            present_sections.append(section)
+        else:
+            missing_sections.append(section)
+    
+    base_score = 25
+    penalty = len(missing_sections) * 5
+    score = max(0, base_score - penalty)
+    
+    details = {
+        "required_sections": len(REQUIRED_SECTIONS),
+        "present": len(present_sections),
+        "missing": len(missing_sections),
+        "missing_sections": missing_sections,
+    }
+    
+    return score, details
+
+
+def _print_score_report(score_result: dict, skill_path: Path) -> None:
+    """Print a formatted quality score report."""
+    print(f"\n=== Quality Score Report: {skill_path.name} ===")
+    print()
+    print(f"Total Score: {score_result['total']}/100")
+    print()
+    print("Breakdown:")
+    print(f"  - Trigger Diversity:      {score_result['trigger_diversity']:3d}/25")
+    print(f"  - Severity Distribution:  {score_result['severity_distribution']:3d}/25")
+    print(f"  - Language Aagnosticism:  {score_result['language_agnosticism']:3d}/25")
+    print(f"  - Section Coverage:       {score_result['section_coverage']:3d}/25")
+    print()
+    print("Details:")
+    
+    details = score_result.get("details", {})
+    
+    # Trigger diversity details
+    td = details.get("trigger_diversity", {})
+    if "error" not in td:
+        print(f"  Trigger Diversity:")
+        print(f"    Explicit triggers: {td.get('explicit_triggers_found', 0)}")
+        print(f"    Estimated from themes: {td.get('estimated_from_themes', 0)}")
+        print(f"    Total: {td.get('total_triggers', 0)}")
+    
+    # Severity distribution details
+    sd = details.get("severity_distribution", {})
+    if "error" not in sd:
+        print(f"  Severity Distribution:")
+        print(f"    Average difference from target: {sd.get('average_difference', 0)}%")
+        print(f"    Total mentions: {sd.get('total_mentions', 0)}")
+    
+    # Language-agnosticism details
+    la = details.get("language_agnosticism", {})
+    print(f"  Language Aagnosticism:")
+    print(f"    Passed: {la.get('passed', False)}")
+    print(f"    Violations: {la.get('violations', 0)}")
+    
+    # Section coverage details
+    sc = details.get("section_coverage", {})
+    print(f"  Section Coverage:")
+    print(f"    Present: {sc.get('present', 0)}/{sc.get('required_sections', 0)}")
+    if sc.get('missing_sections'):
+        print(f"    Missing: {', '.join(sc['missing_sections'])}")
+    
+    print()
+
+
+def main() -> int:
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Verify skill file quality")
+    parser.add_argument("skill_path", type=Path, nargs="?", default=DEFAULT_SKILL_PATH,
+                       help="Path to the skill file to verify")
+    parser.add_argument("--score", action="store_true",
+                       help="Print quality score instead of verification")
+    args = parser.parse_args()
+    
+    skill_path = args.skill_path
+    
+    # Handle --score flag
+    if args.score:
+        if not skill_path.exists():
+            print(f"FAIL: {skill_path} does not exist")
+            return 1
+        score_result = score_skill_quality(skill_path)
+        _print_score_report(score_result, skill_path)
+        return 0
+    
+    all_pass = True
 
     if not skill_path.exists():
         print(f"FAIL: {skill_path} does not exist")
@@ -210,7 +502,7 @@ def main() -> int:
     # 2. Word count
     all_pass &= check(
         "Word count in range (1500-10000)",
-1500 <= word_count <= 15000,
+        1500 <= word_count <= 15000,
         f"{word_count} words",
     )
 

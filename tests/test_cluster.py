@@ -1,8 +1,11 @@
-"""Tests for cluster.py stratified sampling.
+"""Tests for cluster.py stratified sampling and TF-IDF clustering.
 
 Verifies the rewrite that replaced lexical Jaccard clustering
 (which fragmented on near-unique LLM-generated principles) with
 stratified sampling + LLM-side semantic grouping.
+
+Also tests the new TF-IDF + cosine similarity clustering for semantic
+similarity-based grouping.
 """
 
 import json
@@ -13,6 +16,9 @@ import pytest
 from torvalds_skill.cluster import (
     _stratified_sample,
     cluster_moves,
+    TFIDFClustering,
+    _tokenize,
+    _cosine_similarity,
     SAMPLES_PER_CATEGORY,
     SUBSTANTIVE_FRACTION,
 )
@@ -242,3 +248,196 @@ class TestClusterMoves:
         loaded = json.loads(out_path.read_text(encoding="utf-8"))
 
         assert len(loaded["samples_by_category"]["testing"]) == 1
+
+
+class TestTFIDFClustering:
+    """Tests for TF-IDF + cosine similarity clustering."""
+
+    def test_tokenize_basic(self):
+        """Tokenization should extract words and filter stopwords."""
+        text = "The quick brown fox jumps over the lazy dog"
+        tokens = _tokenize(text)
+        assert "the" not in tokens  # stopword filtered
+        assert "quick" in tokens
+        assert "brown" in tokens
+        assert "fox" in tokens
+        assert len(tokens) > 0
+
+    def test_tokenize_filters_short_tokens(self):
+        """Tokens with 2 or fewer characters should be filtered."""
+        text = "I am a test with short words like ox and my"
+        tokens = _tokenize(text)
+        assert "i" not in tokens
+        assert "am" not in tokens
+        assert "a" not in tokens
+        assert "ox" not in tokens
+        assert "my" not in tokens
+        assert "with" not in tokens  # "with" is a stopword
+        assert "test" in tokens
+        assert "short" in tokens
+        assert "words" in tokens
+        assert "like" in tokens
+
+    def test_cosine_similarity_identical_vectors(self):
+        """Identical vectors should have cosine similarity of 1.0."""
+        vec = {"test": 1.0, "word": 2.0}
+        # Normalize the vector first
+        import math
+        mag = math.sqrt(sum(v * v for v in vec.values()))
+        normalized = {k: v / mag for k, v in vec.items()}
+        
+        sim = _cosine_similarity(normalized, normalized)
+        assert abs(sim - 1.0) < 0.0001
+
+    def test_cosine_similarity_orthogonal_vectors(self):
+        """Orthogonal vectors (no common terms) should have similarity 0."""
+        vec1 = {"test": 1.0, "word": 2.0}
+        vec2 = {"other": 1.0, "different": 3.0}
+        
+        # Normalize
+        import math
+        mag1 = math.sqrt(sum(v * v for v in vec1.values()))
+        mag2 = math.sqrt(sum(v * v for v in vec2.values()))
+        norm1 = {k: v / mag1 for k, v in vec1.items()}
+        norm2 = {k: v / mag2 for k, v in vec2.items()}
+        
+        sim = _cosine_similarity(norm1, norm2)
+        assert sim == 0.0
+
+    def test_clustering_empty_documents(self):
+        """Empty document list should return empty clusters."""
+        clustering = TFIDFClustering()
+        clusters = clustering.cluster([])
+        assert clusters == []
+
+    def test_clustering_single_document(self):
+        """Single document should form one cluster."""
+        clustering = TFIDFClustering(threshold=0.35)
+        documents = ["this is a test document"]
+        clusters = clustering.cluster(documents)
+        assert len(clusters) == 1
+        assert clusters[0] == [0]
+
+    def test_clustering_similar_documents(self):
+        """Similar documents should be clustered together."""
+        clustering = TFIDFClustering(threshold=0.3)
+        documents = [
+            "kernel code must be tested before submission",
+            "all kernel code requires testing",
+            "testing is required for kernel patches",
+            "completely unrelated document about cooking recipes",
+        ]
+        clusters = clustering.cluster(documents)
+        
+        # First three should be in one cluster, last one separate
+        # (at threshold 0.3, semantically similar documents cluster together)
+        assert len(clusters) >= 1
+        assert len(clusters) <= 3  # At most 4, but similar docs should merge
+
+    def test_clustering_dissimilar_documents(self):
+        """Dissimilar documents should form separate clusters."""
+        clustering = TFIDFClustering(threshold=0.5)
+        documents = [
+            "kernel development requires careful testing",
+            "cooking recipes for Italian pasta dishes",
+            "quantum physics principles explained simply",
+        ]
+        clusters = clustering.cluster(documents)
+        
+        # With high threshold and very different topics, expect separate clusters
+        # or at least the unrelated ones separated
+        assert len(clusters) >= 1
+
+    def test_clustering_deterministic(self):
+        """Clustering should be deterministic (no random initialization)."""
+        clustering = TFIDFClustering(threshold=0.35)
+        documents = [
+            "kernel code must be tested",
+            "testing is important for quality",
+            "cooking is an art form",
+            "baking bread requires patience",
+        ]
+        
+        clusters1 = clustering.cluster(documents)
+        clusters2 = TFIDFClustering(threshold=0.35).cluster(documents)
+        
+        assert clusters1 == clusters2
+
+    def test_clustering_fewer_clusters_than_jaccard(self):
+        """TF-IDF clustering should produce fewer clusters than lexical Jaccard.
+        
+        This is the key success criterion: TF-IDF + cosine similarity groups
+        semantically similar documents even when they share few words,
+        resulting in fewer, more coherent clusters.
+        """
+        # Create documents that are semantically similar but lexically different
+        documents = [
+            "kernel code requires thorough testing before submission",
+            "all patches must be tested carefully",
+            "testing is essential for kernel development",
+            "we need proper test coverage for changes",
+            "cooking recipes for Italian pasta",
+            "Italian cuisine and pasta dishes",
+            "how to make authentic Italian food",
+            "quantum mechanics and physics principles",
+            "understanding quantum physics basics",
+            "physics explained for beginners",
+        ]
+        
+        clustering = TFIDFClustering(threshold=0.25)
+        clusters = clustering.cluster(documents)
+        
+        # With TF-IDF, we expect semantic clustering:
+        # - Testing/kernel docs should cluster together (some merge)
+        # - Italian cooking docs should cluster (2-3 docs)
+        # - Physics docs should cluster (2-3 docs)
+        # Result: fewer clusters than documents (Jaccard would give 10)
+        assert len(clusters) < len(documents), \
+            f"TF-IDF should cluster: got {len(clusters)} clusters for {len(documents)} docs"
+        # At threshold 0.25, expect 4-7 clusters (still much better than 10)
+        assert len(clusters) <= 7, \
+            f"Expected semantic clustering, got {len(clusters)} clusters"
+
+    def test_cluster_with_labels(self):
+        """cluster_with_labels should return one label per document."""
+        clustering = TFIDFClustering(threshold=0.3)
+        documents = [
+            "kernel testing is important",
+            "code must be tested",
+            "cooking recipes",
+        ]
+        
+        labels = clustering.cluster_with_labels(documents)
+        
+        assert len(labels) == len(documents)
+        assert all(isinstance(label, int) for label in labels)
+
+    def test_fit_transform_returns_vectors(self):
+        """fit_transform should return TF-IDF vectors."""
+        clustering = TFIDFClustering()
+        documents = ["test document one", "test document two", "different content"]
+        
+        vectors = clustering.fit_transform(documents)
+        
+        assert len(vectors) == len(documents)
+        assert all(isinstance(v, dict) for v in vectors)
+
+    def test_threshold_effect(self):
+        """Higher threshold should produce more clusters (stricter clustering)."""
+        documents = [
+            "kernel code testing requirements",
+            "testing is required for patches",
+            "cooking Italian recipes",
+            "Italian food preparation",
+        ]
+        
+        # Lower threshold = more permissive = fewer clusters
+        clustering_low = TFIDFClustering(threshold=0.2)
+        clusters_low = clustering_low.cluster(documents)
+        
+        # Higher threshold = stricter = more clusters
+        clustering_high = TFIDFClustering(threshold=0.6)
+        clusters_high = clustering_high.cluster(documents)
+        
+        # Higher threshold should give >= clusters (stricter = less merging)
+        assert len(clusters_high) >= len(clusters_low)

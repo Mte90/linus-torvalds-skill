@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "report"))
 
 from build_comparison import Finding, compare_skill_vs_baseline, _title_similarity
+from build_comparison import analyze_trigger_effectiveness
 
 
 def test_title_similarity_sigpipe():

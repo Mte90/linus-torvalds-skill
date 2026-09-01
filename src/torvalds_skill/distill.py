@@ -46,6 +46,15 @@ from .distill_sanitize import (
 _data_cache: dict[tuple, tuple[float, object]] = {}
 
 
+# Model-specific severity bias calibration
+# These biases are observed from empirical testing across multiple distillation runs
+MODEL_SEVERITY_BIAS = {
+    "gpt-oss-120b": "balanced — no systematic bias detected",
+    "glm5.2": "over-rates severity — tends to assign 'reject' to borderline cases; deliberately downgrade borderline cases by one level",
+    "mistral-small-4-119b": "under-rates severity — tends to assign 'nitpick' to borderline cases; deliberately upgrade borderline cases by one level",
+}
+
+
 def _load_json_cached(path: Path) -> dict:
     """Load a JSON file with mtime-based caching.
     
@@ -62,7 +71,40 @@ def _load_json_cached(path: Path) -> dict:
     return data
 
 
-def _format_calibration_for_prompt(calibration: dict, category: str = None) -> str:
+def _format_model_calibration_note(model: str) -> str:
+    """Generate a model-specific calibration note for the distillation prompt.
+    
+    Args:
+        model: Model name (e.g., "gpt-oss-120b", "glm5.2", "mistral-small-4-119b")
+    
+    Returns:
+        Formatted calibration note string, or empty string if model is unknown
+    """
+    # Normalize model name for lookup
+    model_lower = model.lower() if model else ""
+    
+    # Find matching bias description
+    bias_description = None
+    for known_model, bias in MODEL_SEVERITY_BIAS.items():
+        if known_model.lower() in model_lower or model_lower in known_model.lower():
+            bias_description = bias
+            break
+    
+    # Default to "balanced" for unknown models
+    if bias_description is None:
+        bias_description = "balanced — no known systematic bias; apply calibration data as-is"
+    
+    note = (
+        "=== MODEL CALIBRATION NOTE ===\n"
+        f"You are running as {model or 'unknown model'}. Known bias: {bias_description}.\n"
+        "Apply the calibration data above with this bias in mind. When a case is borderline,\n"
+        "adjust in the direction that counteracts the known bias.\n"
+        "=== END MODEL CALIBRATION NOTE ==="
+    )
+    return note
+
+
+def _format_calibration_for_prompt(calibration: dict, category: str = None, model: str = None) -> str:
     """Format calibration.json into a prompt section grounding severity in real stats.
     
     If category is provided, filter to show only that category's stats.
@@ -101,6 +143,12 @@ def _format_calibration_for_prompt(calibration: dict, category: str = None) -> s
     lines.append("")
     lines.append("=== END CALIBRATION DATA ===")
     lines.append("")
+    
+    # Append model-specific calibration note if model is provided
+    if model:
+        lines.append(_format_model_calibration_note(model))
+        lines.append("")
+    
     return "\n".join(lines)
 
 
@@ -404,7 +452,7 @@ def _synthesize_skill(fragments: dict, calibration: dict, interview_data: str,
     
     # Add calibration data
     if calibration:
-        lines.append(_format_calibration_for_prompt(calibration))
+        lines.append(_format_calibration_for_prompt(calibration, model=model))
         lines.append("")
     
     # Add interview data
@@ -464,7 +512,7 @@ def _distill_single_call(patterns: list, calibration: dict, interview_data: str,
     lines.append("")
 
     if calibration:
-        lines.append(_format_calibration_for_prompt(calibration))
+        lines.append(_format_calibration_for_prompt(calibration, model=model))
         lines.append("")
 
     if interview_data:

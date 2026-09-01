@@ -79,11 +79,14 @@ def generate_markdown(
     skill_vs_baseline: list[dict],
     missing_files: list[str],
     model_names: list[str] | None = None,
+    trigger_effectiveness: dict | None = None,
 ) -> str:
     """Generate the complete comparison.md content.
     
     Args:
         model_names: List of model names. If None, defaults to hardcoded list.
+        trigger_effectiveness: Dict mapping model_name -> trigger effectiveness metrics
+            (from analyze_trigger_effectiveness). If None, skips this section.
     """
     # Generate stakeholder scorecard
     scorecard = generate_scorecard(skill_vs_baseline)
