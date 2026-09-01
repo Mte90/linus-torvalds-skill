@@ -48,9 +48,9 @@ The soul file (`soul/*.md`) is **NOT** part of the review pipeline. It was remov
 - Review pipeline: use `CHUNKED_MODELS="glm5.2"` to chunk the review by source file.
 
 ### API Configuration
-- **Host**: `api.regolo.ai`
-- **Default model**: `gpt-oss-120b`
-- **API key**: `***REDACTED***`
+- **Host**: configurable via `LLM_HOST` or `OPENAI_BASE_URL` (default: `api.regolo.ai`)
+- **Default model**: `gpt-oss-120b` (override via `LLM_MODEL`)
+- **API key**: set via `REGOLO_API_KEY`, `OPENAI_API_KEY`, or `LLM_API_KEY` in `.env` (see `.env.example`)
 
 ## Data Directory
 

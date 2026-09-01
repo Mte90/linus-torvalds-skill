@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.calibrate_interviews import (
+from torvalds_skill.calibrate_interviews import (
     CANONICAL_CATEGORIES,
     CANONICAL_SEVERITIES,
     clean_category,

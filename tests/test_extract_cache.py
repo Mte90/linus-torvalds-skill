@@ -152,11 +152,11 @@ class TestCacheMissCallsLlmAndPersists:
         assert "ts" in entry
 
 
-class TestErrorResponseNotCached:
-    """Test that error responses are not cached."""
+class TestZeroMoveResponseCached:
+    """Test that 0-move valid responses are cached."""
 
-    def test_error_response_not_cached(self, isolated_cache):
-        """Mocked LLM returns error/malformed; verify nothing written to cache."""
+    def test_zero_move_response_cached(self, isolated_cache):
+        """LLM returns valid response with 0 moves; verify it IS cached to avoid re-fetching."""
         cache_file = isolated_cache
         email = _make_email(message_id="unique-cache-test-3@example.com")
         
@@ -171,7 +171,13 @@ class TestErrorResponseNotCached:
             mock_call.assert_called_once()
             assert result["moves"] == []
         
-        assert not cache_file.exists()
+        # 0-move valid responses should be cached to avoid re-fetching
+        assert cache_file.exists()
+        lines = cache_file.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 1
+        entry = json.loads(lines[0])
+        assert "key" in entry
+        assert "response" in entry
 
     def test_error_result_not_cached(self, isolated_cache):
         """LLM call raises exception; verify nothing written to cache."""

@@ -28,6 +28,7 @@ from .distill import distill_skill
 from .classify_interviews import classify_interviews
 from .extract_interviews import extract_interviews
 from .cluster_interviews import cluster_interviews
+from .calibrate_interviews import calibrate_interviews
 from .validate import validate_all
 
 DATA = Path("data")
@@ -48,14 +49,6 @@ def _save_checkpoint(processed_ids: set[str]):
     with open(CHECKPOINT, "w", encoding="utf-8") as f:
         for msg_id in sorted(processed_ids):
             f.write(msg_id + "\n")
-
-
-def _load_checkpoint() -> set[str]:
-    """Load previously processed email IDs from checkpoint."""
-    if CHECKPOINT.exists():
-        with open(CHECKPOINT, encoding="utf-8") as f:
-            return set(line.strip() for line in f if line.strip())
-    return set()  # message_ids that returned 0 moves — skip on future runs
 
 
 def _load_skip_list() -> set:
@@ -97,6 +90,9 @@ def stage_classify():
                     "body": email.body,
                 }, ensure_ascii=False) + "\n")
                 count += 1
+    if total == 0:
+        print("  no emails in corpus")
+        return
     print(f"  {count}/{total} emails are reviews ({count/total*100:.1f}%)")
     print(f"  → {REVIEWS}")
 
@@ -144,6 +140,9 @@ def stage_extract(sample_size: int, workers: int, resume: bool):
     reviews = _sample_reviews(sample_size)
 
     mode = "a" if resume else "w"
+    if mode == "w" and MOVES.exists():
+        MOVES.unlink()
+        print(f"  truncated {MOVES}")
     done_ids = set()
     if resume and MOVES.exists():
         with open(MOVES, encoding="utf-8") as f:
@@ -281,13 +280,6 @@ def stage_interviews_pipeline(model: str, resume: bool):
 
     # Step 4: Calibrate interviews
     print("Step 4/4: Calibrating interviews...")
-    # Import calibrate_interviews from scripts (needs sys.path manipulation)
-    import sys
-    from pathlib import Path
-    scripts_dir = Path(__file__).parent.parent.parent / "scripts"
-    if str(scripts_dir) not in sys.path:
-        sys.path.insert(0, str(scripts_dir))
-    from calibrate_interviews import calibrate_interviews
     calibrate_interviews(
         "data/moves.jsonl",
         "data/interview_moves.jsonl",
@@ -324,12 +316,6 @@ def stage_cluster_interviews():
 
 def stage_calibrate_interviews():
     """Run calibrate_interviews stage."""
-    import sys
-    from pathlib import Path
-    scripts_dir = Path(__file__).parent.parent.parent / "scripts"
-    if str(scripts_dir) not in sys.path:
-        sys.path.insert(0, str(scripts_dir))
-    from calibrate_interviews import calibrate_interviews
     calibrate_interviews(
         "data/moves.jsonl",
         "data/interview_moves.jsonl",

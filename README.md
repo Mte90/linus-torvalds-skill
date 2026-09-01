@@ -41,12 +41,30 @@ Replicate with `python3 report/run_review.py && python3 report/build_comparison.
 ## Quick Start
 
 
+### Model Divergence Showcase
+
+The three skill variants are **intentionally kept separate** — not unified. Same corpus (38,293 review moves), same pipeline, three different LLMs → three demonstrably different distillations. This is the clearest evidence of how much the generation model shapes a distillation pipeline.
+
+| Variant | Model | Words | Style | Trade-off |
+|---|---|---|---|---|
+| `SKILL.md` | gpt-oss-120b | ~7,355 | Balanced, comprehensive | Recommended default |
+| `SKILL-GLM.md` | glm5.2 | ~9,616 | Most detailed, reasoning-heavy | Best for complex architecture reviews |
+| `SKILL-Mistral.md` | mistral-small-4-119b | ~6,357 | Concise, YAML-formatted | Fast, small-context models |
+
+See [docs/models.md](docs/models.md) for full variant details, token costs, and regeneration commands.
+
+**Key differences**:
+- **Shared core**: All three agree on the 7 reviewer mindsets, Level 1 invariants, and the precedence chain (Correctness > Performance > Complexity > Style)
+- **Model-specific emphases**: GLM adds 15 detailed themes with 3-6 triggers each; Mistral compresses to 3 tiers; gpt-oss balances depth with readability
+- **Severity calibration drift**: Same triggers, different severity assignments (e.g., "fatal assertion" = reject in gpt-oss, request-changes in Mistral)
+- **Structural divergence**: GLM uses numbered themes (1-15), Mistral uses YAML headers, gpt-oss uses thematic groupings (A-J)
+
 ### Use the skill in your AI coding assistant
 
-1. **Pick a skill variant** from `linus-torvalds-skill/`:
-   - `SKILL.md` — gpt-oss-120b (balanced, recommended)
-   - `SKILL-GLM.md` — glm5.2 (most detailed, reasoning model)
-   - `SKILL-Mistral.md` — mistral (concise)
+1. **Pick a skill variant** based on your needs (see Model Divergence Showcase above):
+   - `SKILL.md` — gpt-oss-120b (balanced, recommended default)
+   - `SKILL-GLM.md` — glm5.2 (most detailed, for reasoning models)
+   - `SKILL-Mistral.md` — mistral (concise, for small-context models)
 
 2. **Add it to your system prompt** or skill registry:
    - Copy the contents of `SKILL.md` into your AI assistant's system prompt, OR
@@ -92,16 +110,14 @@ Run the full pipeline only if you want to re-extract from source (costs ~$5–8 
 
 ## Configuration
 
-The pipeline and review stages require an API key from [regolo.ai](https://regolo.ai).
-
-- **`REGOLO_API_KEY`**: Required for all LLM operations. Set this via `export REGOLO_API_KEY=sk-...` or in your `.env` file.
-- **Note**: A fallback key exists in the codebase for backward compatibility, but users should provide their own for production use.
+The pipeline and review stages require an API key from [regolo.ai](https://regolo.ai) or any OpenAI-compatible endpoint.
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_HOST` | `https://api.regolo.ai/v1` | LLM API endpoint |
+| `OPENAI_API_KEY` / `REGOLO_API_KEY` / `LLM_API_KEY` | (required) | API key (first set wins) |
+| `OPENAI_BASE_URL` / `LLM_HOST` | `https://api.regolo.ai/v1` | LLM API endpoint (first set wins) |
 | `LLM_MODEL` | `gpt-oss-120b` | Model for extraction and distillation |
-| `LLM_API_KEY` | — | Legacy API key support |
+| `LLM_MAX_RETRIES` | `3` | Retry count on 429/5xx |
 
 CLI flags override env vars: `--model`, `--out`.
 

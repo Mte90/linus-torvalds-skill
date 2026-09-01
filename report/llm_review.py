@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-llm_review.py — direct Regolo API caller for review pipeline.
+llm_review.py — direct LLM API caller for review pipeline.
 
-Replaces opencode agent calls with streaming chat completions API.
+Calls any OpenAI-compatible chat completions endpoint with streaming.
 Usage: python3 report/llm_review.py --model <model> --prompt-file <path> --out <path> [--timeout <sec>]
 """
 
@@ -18,23 +18,19 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-# API configuration (mirrors src/torvalds_skill/config.py)
-API_KEY = os.environ.get("REGOLO_API_KEY", "***REDACTED***")
-HOST = "https://api.regolo.ai/v1"
-CHAT_URL = "https://api.regolo.ai/v1/chat/completions"
+# Import config from the project package (adds .env loading + env var aliases)
+import sys as _sys
+from pathlib import Path as _Path
+_SRC = _Path(__file__).resolve().parent.parent / "src"
+if str(_SRC) not in _sys.path:
+    _sys.path.insert(0, str(_SRC))
+from torvalds_skill import config as project_config
 
-# Import timeout config from project config
-try:
-    from torvalds_skill import config as project_config
-except ImportError:
-    project_config = None
+CHAT_URL = project_config.CHAT_URL
 
 
 def headers() -> dict:
-    return {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json",
-    }
+    return project_config.headers()
 
 
 class _WallClockTimeout:
@@ -65,7 +61,7 @@ class _WallClockTimeout:
 
 
 def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
-    """Call Regolo chat completions API with streaming. Returns accumulated text."""
+    """Call OpenAI-compatible chat completions API with streaming. Returns accumulated text."""
     payload = {
         "model": model,
         "messages": [
@@ -123,7 +119,7 @@ def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Call Regolo API for review generation")
+    parser = argparse.ArgumentParser(description="Call LLM API for review generation")
     parser.add_argument("--model", required=True, help="Model label (e.g., gpt-oss-120b, glm5.2)")
     parser.add_argument("--prompt-file", required=True, help="Path to prompt file")
     parser.add_argument("--out", required=True, help="Path to output file")

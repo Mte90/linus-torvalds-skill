@@ -30,8 +30,16 @@ def _load_dotenv():
 
 _load_dotenv()
 
-API_KEY = os.environ.get("REGOLO_API_KEY", "***REDACTED***")
-HOST = os.environ.get("LLM_HOST", "https://api.regolo.ai/v1")
+API_KEY = (
+    os.environ.get("OPENAI_API_KEY")
+    or os.environ.get("REGOLO_API_KEY")
+    or os.environ.get("LLM_API_KEY")
+)
+HOST = (
+    os.environ.get("OPENAI_BASE_URL")
+    or os.environ.get("LLM_HOST")
+    or "https://api.regolo.ai/v1"
+)
 MODEL = os.environ.get("LLM_MODEL", "gpt-oss-120b")
 
 CHAT_URL = urljoin(HOST + "/", "chat/completions")
@@ -41,7 +49,23 @@ MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "3"))
 RETRY_DELAY = float(os.environ.get("LLM_RETRY_DELAY", "2.0"))
 REQUEST_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "60"))  # existing, keep for non-streaming calls
 
-# Timeout configuration (seconds)
+# Per-model wall-clock timeouts
+_MODEL_TIMEOUTS = {
+    "gpt-oss-120b": 120,
+    "glm5.2": 600,
+    "glm-5.2": 600,
+    "mistral": 120,
+    "default": 120,
+}
+
+def get_model_timeout(model: str | None = None) -> int:
+    """Get per-model timeout in seconds. Env override: LLM_TIMEOUT_{MODEL}."""
+    model = (model or MODEL).lower()
+    env_key = f"LLM_TIMEOUT_{model.upper().replace('-', '_')}"
+    if env_val := os.environ.get(env_key):
+        return int(env_val)
+    return _MODEL_TIMEOUTS.get(model, _MODEL_TIMEOUTS["default"])
+
 # Streaming-specific timeouts
 READ_TIMEOUT = int(os.environ.get("LLM_READ_TIMEOUT", "120"))  # per-read socket timeout
 WALL_CLOCK_GLM = int(os.environ.get("LLM_WALL_CLOCK_GLM", "1800"))  # GLM reasoning: 30 min
@@ -54,6 +78,11 @@ GLM_MAX_TOKENS = int(os.environ.get("GLM_MAX_TOKENS", "16000"))
 
 
 def headers() -> dict:
+    if not API_KEY:
+        raise RuntimeError(
+            "No API key found. Set REGOLO_API_KEY, OPENAI_API_KEY, or LLM_API_KEY "
+            "in your environment or .env file (see .env.example)."
+        )
     return {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json",

@@ -239,13 +239,7 @@ Request timeout is 600s for GLM5.2, 120s for others. GLM5.2 also requires
 
 ## Skill variants
 
-Three variants generated from the same `patterns.json` + `calibration.json`:
-
-| File | Model | Words | Notes |
-|---|---|---|---|
-| `SKILL.md` | gpt-oss-120b | ~7,474 | Default. Best balance. |
-| `SKILL-GLM.md` | glm5.2 | ~10,103 | Reasoning model. Most thorough. Needs streaming + 600s timeout + max_tokens ≤ 16000. |
-| `SKILL-Mistral.md` | mistral-small-4-119b | ~7,853 | Fastest. |
+Three variants generated from the same `patterns.json` + `calibration.json`. See [docs/models.md](models.md) for the canonical variant table, word counts, token costs, and regeneration commands.
 
 ```bash
 # Generate a variant
@@ -258,13 +252,7 @@ A **soul document** defines the AI's persona, values, and voice — not its rule
 The soul generator uses the same `patterns.json` but a different system prompt
 focused on identity, decision hierarchy, and communication style.
 
-Three variants generated from the same `patterns.json`:
-
-| File | Model | Words | Notes |
-|---|---|---|---|
-| `soul.md` | gpt-oss-120b | ~1,440 | Default. |
-| `soul-glm.md` | glm5.2 | ~4,128 | Reasoning model. Needs streaming + 600s timeout. |
-| `soul-mistral.md` | mistral-small-4-119b | ~1,970 | Most verbose. |
+Three variants generated from the same `patterns.json`. See [docs/models.md](models.md) for the canonical soul variant table and word counts.
 
 ```bash
 python -m torvalds_skill soul
@@ -317,23 +305,23 @@ data/moves.jsonl          ~12 MB, 30,033 emails, 38,293 review moves
     ↓ cluster                        ↓ calibrate
 data/patterns.json       350 samples (297 email + 53 interview)    data/calibration.json
     ↓ distill ←──────────────────────┘
-linus-torvalds-skill/SKILL.md         ~37 KB, 7,474 words
-linus-torvalds-skill/SKILL-GLM.md    ~57 KB, 10,103 words
-linus-torvalds-skill/SKILL-Mistral.md ~36 KB, 7,853 words
+linus-torvalds-skill/SKILL.md         (see docs/models.md for word counts)
+linus-torvalds-skill/SKILL-GLM.md
+linus-torvalds-skill/SKILL-Mistral.md
     ↓ soul
-soul/soul.md             ~8 KB, 1,440 words
-soul/soul-glm.md         ~23 KB, 4,128 words
-soul/soul-mistral.md     ~11 KB, 1,970 words
+soul/soul.md
+soul/soul-glm.md
+soul/soul-mistral.md
 ```
 
 ## Configuration
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `LLM_HOST` | `https://api.regolo.ai/v1` | LLM API endpoint |
+| `OPENAI_API_KEY` / `REGOLO_API_KEY` / `LLM_API_KEY` | (required) | API key (first set wins) |
+| `OPENAI_BASE_URL` / `LLM_HOST` | `https://api.regolo.ai/v1` | LLM API endpoint (first set wins) |
 | `LLM_MODEL` | `gpt-oss-120b` | Default model |
-| `LLM_API_KEY` | (required) | API key |
-| `LLM_MAX_RETRIES` | `5` | Retry count on 429/5xx |
+| `LLM_MAX_RETRIES` | `3` | Retry count on 429/5xx |
 
 CLI flags override env vars:
 

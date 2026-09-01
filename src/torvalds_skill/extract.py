@@ -51,6 +51,7 @@ def _get_logger():
     """Get logger with file handler, idempotent."""
     global _HANDLER
     if _HANDLER is None:
+        Path("data").mkdir(parents=True, exist_ok=True)
         _HANDLER = logging.FileHandler("data/extract_errors.log")
         _HANDLER.setFormatter(
             logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
@@ -95,8 +96,7 @@ def _get_cache_logger():
 
 def _compute_cache_key(model_name: str, prompt_text: str) -> str:
     """Compute SHA-256 cache key from model name and prompt text."""
-    combined = f"{model_name}:{prompt_text}"
-    return hashlib.sha256(combined.encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{model_name}:{prompt_text}".encode("utf-8")).hexdigest()
 
 
 def _load_cache() -> dict[str, dict]:
@@ -174,7 +174,7 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
         f"{email.body[:8000]}"
     )
 
-    prompt_hash = hashlib.md5((SYSTEM_PROMPT + user_content).encode("utf-8")).hexdigest()
+    prompt_hash = hashlib.sha256((SYSTEM_PROMPT + user_content).encode("utf-8")).hexdigest()
     
     log_decision(
         "extract",
@@ -310,9 +310,8 @@ def extract_moves(email: EmailRecord) -> dict:
         result = _call_llm(email)
         moves = result.get("moves", [])
         
-        # Cache successful responses with valid moves
-        if _get_cache_enabled() and moves:
-            # Get the raw response content for caching
+        # Cache all successful responses (including 0-move valid responses)
+        if _get_cache_enabled():
             raw_response = result.get("_raw_content")
             if raw_response:
                 _save_cache_entry(cache_key, raw_response)
