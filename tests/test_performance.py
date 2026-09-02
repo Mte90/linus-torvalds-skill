@@ -161,14 +161,15 @@ class TestFallbackNotUsedOnTruncation:
             
             return mock_conn
         
-        with patch.object(distill_llm, '_get_connection', mock_get_connection):
-            with patch.object(distill_llm, '_WallClockTimeout') as mock_timeout:
-                mock_timeout.return_value.__enter__ = lambda self: self
-                mock_timeout.return_value.__exit__ = lambda self, *args: None
-                
-                # Call with primary model - should return partial result immediately
-                # without trying fallback models
-                result = distill_llm._call_llm("test prompt", retries=1, model="test-model")
+        with patch.object(config, 'API_KEY', 'test-key'):
+            with patch.object(distill_llm, '_get_connection', mock_get_connection):
+                with patch.object(distill_llm, '_WallClockTimeout') as mock_timeout:
+                    mock_timeout.return_value.__enter__ = lambda self: self
+                    mock_timeout.return_value.__exit__ = lambda self, *args: None
+                    
+                    # Call with primary model - should return partial result immediately
+                    # without trying fallback models
+                    result = distill_llm._call_llm("test prompt", retries=1, model="test-model")
         
         # Verify only the primary model was called (no fallback)
         assert len(models_called) == 1

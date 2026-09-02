@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Torvalds Skill Benchmark Dataset",
+  "description": "Ground-truth benchmark dataset for validating torvalds-skill trigger effectiveness on SmallChat codebase",
+  "type": "object",
+  "required": [
+    "id",
+    "file",
+    "line",
+    "severity",
+    "category",
+    "trigger",
+    "description",
+    "expected_severity"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^SC-[0-9]{3}$",
+      "description": "Unique benchmark identifier (e.g., SC-001)"
+    },
+    "file": {
+      "type": "string",
+      "pattern": "^(smallchat-server\\.c|smallchat-client\\.c|chatlib\\.c|chatlib\\.h|Makefile|inputbuffer\\.c|terminal\\.c|chat-common\\.c)$",
+      "description": "Source file path in SmallChat codebase"
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 706,
+      "description": "Line number where the issue occurs (1-706 for SmallChat)"
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "reject",
+        "request-changes",
+        "nitpick"
+      ],
+      "description": "Review severity level matching Linus Torvalds skill calibration"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "api-stability",
+        "performance",
+        "correctness",
+        "complexity",
+        "style",
+        "process",
+        "error-handling",
+        "concurrency",
+        "memory-safety",
+        "abstraction",
+        "testing",
+        "documentation",
+        "other"
+      ],
+      "description": "Bug category matching calibration.json categories"
+    },
+    "trigger": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Skill trigger theme that should fire for this bug"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable description of the bug (language-agnostic)"
+    },
+    "expected_severity": {
+      "type": "string",
+      "enum": [
+        "reject",
+        "request-changes",
+        "nitpick"
+      ],
+      "description": "Expected severity assignment for validation"
+    }
+  },
+  "additionalProperties": false
+}
