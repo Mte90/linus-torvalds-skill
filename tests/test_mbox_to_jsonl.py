@@ -4,8 +4,6 @@ Verifies the body cleaning function that strips quoted lines, signatures,
 and mailing-list footers.
 """
 
-import pytest
-
 from scripts.mbox_to_jsonl import clean_body
 
 
@@ -30,7 +28,7 @@ More of my response."""
         """Signature separator -- should cut off everything after."""
         raw = """This is the main body.
 
--- 
+--
 Linus Torvalds
 torvalds@linux.org"""
         result = clean_body(raw)
@@ -76,16 +74,16 @@ Line two."""
 
     def test_strips_trailing_whitespace(self):
         """Trailing whitespace should be stripped."""
-        raw = """Content here.   
-   
+        raw = """Content here.
+
 """
         result = clean_body(raw)
         assert result == "Content here."
 
     def test_strips_leading_whitespace(self):
         """Leading whitespace should be stripped."""
-        raw = """   
-   
+        raw = """
+
 Content here."""
         result = clean_body(raw)
         assert result == "Content here."
@@ -99,24 +97,24 @@ Content here."""
 
 More response.
 
--- 
+--
 Signature line
 
 _______________________________________________
 Footer mark"""
         result = clean_body(raw)
-        
+
         # Should have content
         assert "My response text." in result
         assert "More response." in result
-        
+
         # Should not have removed content
         assert ">" not in result
         assert "--" not in result
         assert "Signature line" not in result
         assert "_______________________________________________" not in result
         assert "Footer mark" not in result
-        
+
         # Should be stripped
         assert result == result.strip()
 

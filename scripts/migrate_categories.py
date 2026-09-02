@@ -57,12 +57,12 @@ def migrate_record(record: dict) -> tuple[dict, list[str]]:
     changes = []
     migrated = record.copy()
     moves = migrated.get("moves", [])
-    
+
     for i, move in enumerate(moves):
         move_changes = []
         old_category = move.get("category", "")
         old_severity = move.get("severity", "")
-        
+
         # Check for field-swap bug
         if (
             record.get("email_message_id") == FIELD_SWAP_FIX["email_message_id"]
@@ -71,19 +71,19 @@ def migrate_record(record: dict) -> tuple[dict, list[str]]:
         ):
             move["severity"] = FIELD_SWAP_FIX["correct_severity"]
             move_changes.append(
-                f"move {i+1}: severity '{old_severity}' → '{FIELD_SWAP_FIX['correct_severity']}' (field-swap fix)"
+                f"move {i + 1}: severity '{old_severity}' → '{FIELD_SWAP_FIX['correct_severity']}' (field-swap fix)"
             )
-        
+
         # Remap category
         if old_category in CATEGORY_REMAP:
             move["category"] = CATEGORY_REMAP[old_category]
             move_changes.append(
-                f"move {i+1}: category '{old_category}' → '{CATEGORY_REMAP[old_category]}'"
+                f"move {i + 1}: category '{old_category}' → '{CATEGORY_REMAP[old_category]}'"
             )
-        
+
         if move_changes:
             changes.extend(move_changes)
-    
+
     return migrated, changes
 
 
@@ -103,20 +103,20 @@ def main():
         help="Preview changes without writing",
     )
     args = parser.parse_args()
-    
+
     if not args.moves.exists():
         raise SystemExit(f"Moves file not found: {args.moves}")
-    
+
     # Backup the file
     backup_path = args.moves.with_suffix(".jsonl.bak")
     if not args.dry_run:
         shutil.copy2(args.moves, backup_path)
         print(f"backed up {args.moves} → {backup_path}")
-    
+
     # Read and migrate
     records = []
     all_changes = []
-    
+
     with open(args.moves, encoding="utf-8") as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
@@ -127,32 +127,32 @@ def main():
             records.append(migrated)
             if changes:
                 all_changes.append((line_num, changes))
-    
+
     # Print summary
     total_migrated = len(all_changes)
     total_moves_affected = sum(len(changes) for _, changes in all_changes)
-    
-    print(f"\nmigration summary:")
+
+    print("\nmigration summary:")
     print(f"  records with changes: {total_migrated}")
     print(f"  total moves remapped: {total_moves_affected}")
-    
+
     if all_changes:
-        print(f"\ndetails:")
+        print("\ndetails:")
         for line_num, changes in all_changes[:10]:  # Show first 10
             for change in changes:
                 print(f"  line {line_num}: {change}")
         if len(all_changes) > 10:
             print(f"  ... and {len(all_changes) - 10} more")
-    
+
     if args.dry_run:
-        print(f"\ndry-run: no changes written")
+        print("\ndry-run: no changes written")
         return 0
-    
+
     # Write migrated data
     with open(args.moves, "w", encoding="utf-8") as f:
         for record in records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    
+
     print(f"\nwrote migrated data to {args.moves}")
     return 0
 

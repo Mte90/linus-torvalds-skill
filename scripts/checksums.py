@@ -4,7 +4,7 @@
 import hashlib
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Pipeline intermediate files to track
@@ -55,7 +55,7 @@ def write_checksums(data_dir: str = "data", output_path: str = "data/checksums.j
 
     # Build output with metadata
     output = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "files": {},
     }
 
@@ -75,7 +75,9 @@ def write_checksums(data_dir: str = "data", output_path: str = "data/checksums.j
     print(f"Output: {output_path}")
 
 
-def verify_checksums(data_dir: str = "data", checksums_path: str = "data/checksums.json") -> tuple[bool, list[str]]:
+def verify_checksums(
+    data_dir: str = "data", checksums_path: str = "data/checksums.json"
+) -> tuple[bool, list[str]]:
     """Verify file checksums against stored values.
 
     Returns (all_valid, mismatches) where mismatches includes:

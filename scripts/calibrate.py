@@ -19,10 +19,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from torvalds_skill.audit import log_decision
 
@@ -69,31 +69,210 @@ SEVERITY_REMAP = {
 }
 
 STOPWORDS = {
-    "the", "a", "an", "to", "of", "in", "is", "it", "that", "this", "and", "or",
-    "for", "on", "with", "as", "by", "be", "not", "but", "from", "at", "if",
-    "are", "was", "were", "have", "has", "had", "do", "does", "did", "will",
-    "would", "could", "should", "may", "might", "can", "must", "shall", "they",
-    "you", "we", "i", "he", "she", "code", "function", "use", "using", "used",
-    "line", "patch", "patches", "change", "changes", "make", "makes", "made",
-    "get", "set", "new", "one", "two", "first", "when", "then", "than", "so",
-    "no", "yes", "all", "any", "some", "more", "most", "other", "such", "only",
-    "own", "same", "very", "just", "also", "into", "out", "up", "down", "over",
-    "about", "what", "which", "who", "how", "why", "where", "there", "here",
-    "now", "still", "even", "ever", "never", "always", "like", "well",
-    "proposal", "suggestion", "handling", "kernel", "add", "adds", "existing",
-    "instead", "without", "after", "before", "case", "specific", "user",
-    "bit", "page", "memory", "flag", "interface", "behavior", "logic",
-    "support", "series", "commit", "merge", "pull", "request", "tree",
-    "system", "check", "return", "error", "name", "type", "value", "data",
-    "struct", "int", "char", "void", "null", "true", "false", "default",
-    "field", "list", "point", "point", "call", "calls", "called", "calling",
-    "passed", "passing", "takes", "taken", "give", "given", "want", "need",
-    "way", "thing", "things", "stuff", "lot", "big", "small", "long", "short",
-    "good", "bad", "right", "wrong", "better", "worse", "best", "worst",
-    "real", "actually", "really", "simply", "basically", "actually", "fact",
-    "problem", "problems", "issue", "issues", "bug", "bugs", "fix", "fixed",
-    "fixes", "broken", "wrong", "correct", "correctly", "incorrect",
+    "the",
+    "a",
+    "an",
+    "to",
+    "of",
+    "in",
+    "is",
+    "it",
+    "that",
+    "this",
+    "and",
+    "or",
+    "for",
+    "on",
+    "with",
+    "as",
+    "by",
+    "be",
+    "not",
+    "but",
+    "from",
+    "at",
+    "if",
+    "are",
+    "was",
+    "were",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "can",
+    "must",
+    "shall",
+    "they",
+    "you",
+    "we",
+    "i",
+    "he",
+    "she",
+    "code",
+    "function",
+    "use",
+    "using",
+    "used",
+    "line",
+    "patch",
+    "patches",
+    "change",
+    "changes",
+    "make",
+    "makes",
+    "made",
+    "get",
+    "set",
+    "new",
+    "one",
+    "two",
+    "first",
+    "when",
+    "then",
+    "than",
+    "so",
+    "no",
+    "yes",
+    "all",
+    "any",
+    "some",
+    "more",
+    "most",
+    "other",
+    "such",
+    "only",
+    "own",
+    "same",
+    "very",
+    "just",
+    "also",
+    "into",
+    "out",
+    "up",
+    "down",
+    "over",
+    "about",
+    "what",
+    "which",
+    "who",
+    "how",
+    "why",
+    "where",
+    "there",
+    "here",
+    "now",
+    "still",
+    "even",
+    "ever",
+    "never",
+    "always",
+    "like",
+    "well",
+    "proposal",
+    "suggestion",
+    "handling",
+    "kernel",
+    "add",
+    "adds",
+    "existing",
+    "instead",
+    "without",
+    "after",
+    "before",
+    "case",
+    "specific",
+    "user",
+    "bit",
+    "page",
+    "memory",
+    "flag",
+    "interface",
+    "behavior",
+    "logic",
+    "support",
+    "series",
+    "commit",
+    "merge",
+    "pull",
+    "request",
+    "tree",
+    "system",
+    "check",
+    "return",
+    "error",
+    "name",
+    "type",
+    "value",
+    "data",
+    "struct",
+    "int",
+    "char",
+    "void",
+    "null",
+    "true",
+    "false",
+    "default",
+    "field",
+    "list",
+    "point",
+    "call",
+    "calls",
+    "called",
+    "calling",
+    "passed",
+    "passing",
+    "takes",
+    "taken",
+    "give",
+    "given",
+    "want",
+    "need",
+    "way",
+    "thing",
+    "things",
+    "stuff",
+    "lot",
+    "big",
+    "small",
+    "long",
+    "short",
+    "good",
+    "bad",
+    "right",
+    "wrong",
+    "better",
+    "worse",
+    "best",
+    "worst",
+    "real",
+    "actually",
+    "really",
+    "simply",
+    "basically",
+    "fact",
+    "problem",
+    "problems",
+    "issue",
+    "issues",
+    "bug",
+    "bugs",
+    "fix",
+    "fixed",
+    "fixes",
+    "broken",
+    "correct",
+    "correctly",
+    "incorrect",
 }
+
 
 def clean_category(cat: str) -> str | None:
     if cat in CANONICAL_CATEGORIES:
@@ -127,14 +306,16 @@ def load_moves(moves_path: Path) -> list[dict]:
                 sev = clean_severity(m.get("severity", ""))
                 if cat is None or sev is None:
                     continue
-                moves.append({
-                    "trigger": m.get("trigger", ""),
-                    "principle": m.get("principle", ""),
-                    "response": m.get("response", ""),
-                    "severity": sev,
-                    "category": cat,
-                    "year": year,
-                })
+                moves.append(
+                    {
+                        "trigger": m.get("trigger", ""),
+                        "principle": m.get("principle", ""),
+                        "response": m.get("response", ""),
+                        "severity": sev,
+                        "category": cat,
+                        "year": year,
+                    }
+                )
     return moves
 
 
@@ -202,13 +383,17 @@ def compute_corpus_stats(moves: list[dict]) -> dict:
     return {
         "total_moves": total,
         "severity_distribution": {
-            sev: {"count": sev_counts.get(sev, 0),
-                  "percentage": round(100 * sev_counts.get(sev, 0) / total, 1)}
+            sev: {
+                "count": sev_counts.get(sev, 0),
+                "percentage": round(100 * sev_counts.get(sev, 0) / total, 1),
+            }
             for sev in CANONICAL_SEVERITIES
         },
         "category_distribution": {
-            cat: {"count": cat_counts.get(cat, 0),
-                  "percentage": round(100 * cat_counts.get(cat, 0) / total, 1)}
+            cat: {
+                "count": cat_counts.get(cat, 0),
+                "percentage": round(100 * cat_counts.get(cat, 0) / total, 1),
+            }
             for cat in CANONICAL_CATEGORIES
         },
     }
@@ -219,7 +404,7 @@ def build_calibration(moves_path: Path) -> dict:
     print(f"Loaded {len(moves)} clean moves")
 
     severity_by_category = compute_severity_by_category(moves)
-    
+
     log_decision(
         "calibrate",
         thresholds={
@@ -245,11 +430,15 @@ def main():
         description="Compute severity calibration from the moves corpus."
     )
     parser.add_argument(
-        "--moves", type=Path, default=Path("data/moves.jsonl"),
+        "--moves",
+        type=Path,
+        default=Path("data/moves.jsonl"),
         help="Path to moves.jsonl (default: data/moves.jsonl)",
     )
     parser.add_argument(
-        "--out", type=Path, default=Path("data/calibration.json"),
+        "--out",
+        type=Path,
+        default=Path("data/calibration.json"),
         help="Output path (default: data/calibration.json)",
     )
     args = parser.parse_args()
@@ -276,9 +465,11 @@ def main():
     for cat in CANONICAL_CATEGORIES:
         if cat in calibration["severity_by_category"]:
             c = calibration["severity_by_category"][cat]
-            print(f"  {cat:20s} reject={c['reject_rate']:5.1f}%  "
-                  f"req-changes={c['request_changes_rate']:5.1f}%  "
-                  f"nitpick={c['nitpick_rate']:5.1f}%  (n={c['total']})")
+            print(
+                f"  {cat:20s} reject={c['reject_rate']:5.1f}%  "
+                f"req-changes={c['request_changes_rate']:5.1f}%  "
+                f"nitpick={c['nitpick_rate']:5.1f}%  (n={c['total']})"
+            )
 
 
 if __name__ == "__main__":

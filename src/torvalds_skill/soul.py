@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -490,7 +489,7 @@ def _load_interview_data(project_root: Path) -> str:
             # Truncate this file to fit
             remaining = max_chars - total_len
             if remaining > len(header):
-                parts.append(header + content[:remaining - len(header)])
+                parts.append(header + content[: remaining - len(header)])
             break
 
         parts.append(file_content)
@@ -519,7 +518,7 @@ def _strip_code_fences(text: str) -> str:
     first_newline = stripped.find("\n")
     if first_newline == -1:
         return text
-    body = stripped[first_newline + 1:]
+    body = stripped[first_newline + 1 :]
     if body.rstrip().endswith("```"):
         body = body.rstrip()[:-3].rstrip("\n")
     return body
@@ -541,7 +540,10 @@ def generate_soul(
     calibration_path = project_root / "data" / "calibration.json"
     if calibration_path.exists():
         calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
-        user_prompt += "\n\n## CALIBRATION DATA (severity statistics from 38,293 moves)\n" + json.dumps(calibration, ensure_ascii=False, indent=2)
+        user_prompt += (
+            "\n\n## CALIBRATION DATA (severity statistics from 38,293 moves)\n"
+            + json.dumps(calibration, ensure_ascii=False, indent=2)
+        )
 
     # Optionally load interlocutor data (sample of first 50 records)
     interlocutor_path = project_root / "data" / "interlocutor.jsonl"
@@ -554,7 +556,9 @@ def generate_soul(
                         break
                     sample.append(json.loads(line))
             if sample:
-                user_prompt += "\n\n## INTERLOCUTOR DATA (sample of 50 emails)\n" + json.dumps(sample, ensure_ascii=False, indent=2)
+                user_prompt += "\n\n## INTERLOCUTOR DATA (sample of 50 emails)\n" + json.dumps(
+                    sample, ensure_ascii=False, indent=2
+                )
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -569,14 +573,18 @@ def generate_soul(
                         break
                     sample.append(json.loads(line))
             if sample:
-                user_prompt += "\n\n## VARIATION DATA (sample of 50 emails)\n" + json.dumps(sample, ensure_ascii=False, indent=2)
+                user_prompt += "\n\n## VARIATION DATA (sample of 50 emails)\n" + json.dumps(
+                    sample, ensure_ascii=False, indent=2
+                )
         except (json.JSONDecodeError, OSError):
             pass
 
     # Load interview transcripts (principle/definition quotes for Identity/Principles/Anti-Soul)
     interview_data = _load_interview_data(project_root)
     if interview_data:
-        user_prompt += "\n\n## INTERVIEW DATA (Linus' explicit principle statements)\n" + interview_data
+        user_prompt += (
+            "\n\n## INTERVIEW DATA (Linus' explicit principle statements)\n" + interview_data
+        )
 
     print(f"calling LLM with {len(user_prompt)} chars of move data...")
     print(f"  ({len(patterns)} sampled moves)")

@@ -10,12 +10,11 @@ from __future__ import annotations
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.request import urlopen, Request
-from urllib.error import URLError, HTTPError
-
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 DATA = Path(__file__).parent.parent.parent / "data"
 SOURCES_FILE = DATA / "interview_sources.json"
@@ -26,7 +25,20 @@ class HTMLTextExtractor(HTMLParser):
     """Extract visible text from HTML, ignoring structural elements."""
 
     IGNORE_TAGS = {"script", "style", "nav", "footer", "header", "head", "form"}
-    SIGNAL_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "pre", "div", "span"}
+    SIGNAL_TAGS = {
+        "p",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "li",
+        "blockquote",
+        "pre",
+        "div",
+        "span",
+    }
 
     def __init__(self):
         super().__init__()
@@ -88,7 +100,7 @@ def extract_text_from_html(html: str) -> str:
 
 def format_metadata_header(source: dict) -> str:
     """Format source metadata as markdown header."""
-    fetched_at = datetime.now(timezone.utc).isoformat()
+    fetched_at = datetime.now(UTC).isoformat()
     lines = [
         f"# {source['title']}",
         "",
@@ -115,7 +127,10 @@ def fetch_interview(source: dict) -> tuple[str, str] | tuple[None, str]:
     url = source["url"]
 
     if is_youtube_url(url):
-        return None, "YouTube transcripts must be fetched manually — see data/interviews/raw/lca-2024-keynote.md"
+        return (
+            None,
+            "YouTube transcripts must be fetched manually — see data/interviews/raw/lca-2024-keynote.md",
+        )
 
     try:
         html = fetch_url(url)
@@ -212,13 +227,15 @@ def load_interviews() -> list[dict]:
 
         full_content = "\n".join(lines[content_start:]).strip()
 
-        interviews.append({
-            "id": interview_id,
-            "title": metadata.get("title", title),
-            "date": metadata.get("date", "unknown"),
-            "url": metadata.get("url", ""),
-            "content": full_content,
-        })
+        interviews.append(
+            {
+                "id": interview_id,
+                "title": metadata.get("title", title),
+                "date": metadata.get("date", "unknown"),
+                "url": metadata.get("url", ""),
+                "content": full_content,
+            }
+        )
 
     return interviews
 

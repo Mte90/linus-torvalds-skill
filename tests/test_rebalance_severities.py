@@ -1,7 +1,6 @@
 """Tests for the model-agnostic severity rebalancer."""
 
-from torvalds_skill.distill_sanitize import rebalance_severities, _soft_language_score
-
+from torvalds_skill.distill_sanitize import _soft_language_score, rebalance_severities
 
 CALIBRATION = {
     "corpus_stats": {
@@ -23,7 +22,7 @@ def _make_trigger(idx, severity, text):
         f"  - **What to look for**: details {idx}\n"
         f"  - **Why it's a problem**: explanation {idx}\n"
         f"  - **Severity**: {severity}\n"
-        f"  - **Example**: \"quote {idx}\"\n"
+        f'  - **Example**: "quote {idx}"\n'
     )
 
 
@@ -92,8 +91,9 @@ def test_hard_language_triggers_kept_as_reject():
     reject_count = result.count("**Severity**: reject")
     assert reject_count <= 5, "hard triggers should be preferentially kept"
     # Check that at least some hard triggers survived
-    hard_kept = sum(
-        1 for i in range(5)
+    sum(
+        1
+        for i in range(5)
         if f"buffer overflow crash corruption {i}" in result
         and result.split("buffer overflow crash corruption")[0].endswith("reject")
     )
@@ -148,8 +148,7 @@ def test_total_trigger_count_preserved():
     result = rebalance_severities(skill, CALIBRATION)
 
     total = sum(
-        result.count(f"**Severity**: {s}")
-        for s in ["reject", "request-changes", "nitpick"]
+        result.count(f"**Severity**: {s}") for s in ["reject", "request-changes", "nitpick"]
     )
     assert total == 10, f"trigger count changed: {total}"
 
@@ -209,7 +208,7 @@ def test_promotion_prefers_hard_language():
         marker = f"naming convention style {i}"
         if marker in result:
             after = result.split(marker, 1)[1]
-            sev_match = after[:after.find("- **Example**")]
+            sev_match = after[: after.find("- **Example**")]
             assert "reject" not in sev_match, f"soft trigger {i} should not be reject"
     # At least one hard-language trigger should be at reject
     hard_at_reject = 0
@@ -217,7 +216,7 @@ def test_promotion_prefers_hard_language():
         marker = f"buffer overflow crash corruption {i}"
         if marker in result:
             after = result.split(marker, 1)[1]
-            sev_match = after[:after.find("- **Example**")]
+            sev_match = after[: after.find("- **Example**")]
             if "reject" in sev_match:
                 hard_at_reject += 1
     assert hard_at_reject == 2, f"both reject slots should be hard triggers, got {hard_at_reject}"

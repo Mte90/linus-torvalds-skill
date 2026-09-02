@@ -15,13 +15,17 @@ Usage:
 """
 
 import hashlib
-import sys
 import mailbox
-from datetime import datetime
+import sys
+from datetime import UTC
 from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 
-MBOX = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "data" / "lkml.mbox"
+MBOX = (
+    Path(sys.argv[1])
+    if len(sys.argv) > 1
+    else Path(__file__).resolve().parent.parent / "data" / "lkml.mbox"
+)
 
 
 def main():
@@ -30,7 +34,7 @@ def main():
         sys.exit(1)
 
     size = MBOX.stat().st_size
-    print(f"=== {MBOX} ({size/1e6:.1f} MB) ===")
+    print(f"=== {MBOX} ({size / 1e6:.1f} MB) ===")
 
     # sha256
     h = hashlib.sha256()
@@ -93,27 +97,26 @@ def main():
         if i < 5 or i >= total - 3:
             subjects_sample.append((i, subj[:72]))
 
-    print(f"\n--- integrity ---")
+    print("\n--- integrity ---")
     print(f"missing From:     {missing_from}")
     print(f"missing Date:     {missing_date}")
     print(f"missing Msg-ID:   {missing_msgid}")
     print(f"non-torvalds:     {non_torvalds}")
 
-    print(f"\n--- From addresses (top 5) ---")
+    print("\n--- From addresses (top 5) ---")
     for addr, c in sorted(addr_counts.items(), key=lambda x: -x[1])[:5]:
         print(f"  {c:>6}  {addr}")
 
     # Normalize all datetimes to offset-aware (UTC) for comparison
-    from datetime import timezone, timedelta
     aware_dates = []
     for d in dates:
         if d.tzinfo is None:
-            d = d.replace(tzinfo=timezone.utc)
+            d = d.replace(tzinfo=UTC)
         aware_dates.append(d)
     if aware_dates:
         dmin = min(aware_dates)
         dmax = max(aware_dates)
-        print(f"\n--- date range ---")
+        print("\n--- date range ---")
         print(f"  earliest: {dmin.isoformat()}")
         print(f"  latest:   {dmax.isoformat()}")
         years = {}
@@ -121,12 +124,14 @@ def main():
             years[d.year] = years.get(d.year, 0) + 1
         print(f"  by year: {dict(sorted(years.items()))}")
 
-    print(f"\n--- subject sample (first 5, last 3) ---")
+    print("\n--- subject sample (first 5, last 3) ---")
     for i, s in subjects_sample:
         print(f"  [{i:>5}] {s}")
 
-    ok = (missing_from == 0 and missing_date == 0 and missing_msgid == 0 and non_torvalds == 0)
-    print(f"\n{'OK' if ok else 'ISSUES FOUND'}: {total} messages, all headers intact, all from Torvalds")
+    ok = missing_from == 0 and missing_date == 0 and missing_msgid == 0 and non_torvalds == 0
+    print(
+        f"\n{'OK' if ok else 'ISSUES FOUND'}: {total} messages, all headers intact, all from Torvalds"
+    )
     sys.exit(0 if ok else 1)
 
 

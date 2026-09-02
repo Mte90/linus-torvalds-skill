@@ -43,7 +43,7 @@ import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Configuration
@@ -77,9 +77,7 @@ DEFAULT_TIMEOUT = 900
 
 def parse_args():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Run multi-model code review pipeline"
-    )
+    parser = argparse.ArgumentParser(description="Run multi-model code review pipeline")
     parser.add_argument(
         "--force",
         action="store_true",
@@ -290,13 +288,24 @@ Write the final report to: {out_file}
 """
 
 
-def run_llm_call(model_label: str, prompt_file: Path, out_file: Path, timeout_sec: int) -> tuple[int, str]:
+def run_llm_call(
+    model_label: str, prompt_file: Path, out_file: Path, timeout_sec: int
+) -> tuple[int, str]:
     """Run the LLM review subprocess. Returns (exit_code, output)."""
     try:
         result = subprocess.run(
-            ["python3", "report/llm_review.py", "--model", model_label,
-             "--prompt-file", str(prompt_file), "--out", str(out_file),
-             "--timeout", str(timeout_sec)],
+            [
+                "python3",
+                "report/llm_review.py",
+                "--model",
+                model_label,
+                "--prompt-file",
+                str(prompt_file),
+                "--out",
+                str(out_file),
+                "--timeout",
+                str(timeout_sec),
+            ],
             timeout=timeout_sec,
             capture_output=True,
             text=True,
@@ -318,14 +327,19 @@ def log_metrics(
     chunked: bool = False,
 ):
     """Log metrics to metrics.jsonl."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     word_count = 0
     findings_count = 0
 
     if out_file.exists() and out_file.stat().st_size > 0:
         word_count = len(out_file.read_text().split())
         import re
-        findings_count = len(re.findall(r'^#{2,4}\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]', out_file.read_text(), re.MULTILINE))
+
+        findings_count = len(
+            re.findall(
+                r"^#{2,4}\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]", out_file.read_text(), re.MULTILINE
+            )
+        )
 
     metrics = {
         "ts": ts,
@@ -355,7 +369,9 @@ def run_chunk_review(
     """Run a single chunk review with timeout + retry. Returns True on success."""
     if not force and chunk_file.exists() and chunk_file.stat().st_size > 0:
         word_count = len(chunk_file.read_text().split())
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} already exists ({word_count} words), skipping")
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} already exists ({word_count} words), skipping"
+        )
         return True
 
     chunk_dir = chunk_file.parent
@@ -366,7 +382,9 @@ def run_chunk_review(
             backoff_multiplier = 2 ** (attempt - 1)
             jitter = random.randint(0, 30)
             retry_timeout = int(timeout_sec * backoff_multiplier + jitter)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file}: retrying (attempt {attempt}, timeout {retry_timeout}s)")
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file}: retrying (attempt {attempt}, timeout {retry_timeout}s)"
+            )
             chunk_file.unlink(missing_ok=True)
         else:
             retry_timeout = timeout_sec
@@ -377,21 +395,32 @@ def run_chunk_review(
 
         start_ts = datetime.now()
         exit_code, _ = run_llm_call(model_label, prompt_file, chunk_file, retry_timeout)
-        duration = (datetime.now() - start_ts).total_seconds()
+        (datetime.now() - start_ts).total_seconds()
 
         prompt_file.unlink(missing_ok=True)
 
         if exit_code == 0 and chunk_file.exists() and chunk_file.stat().st_size > 0:
             word_count = len(chunk_file.read_text().split())
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} done: {word_count} words")
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} done: {word_count} words"
+            )
             return True
 
         if exit_code == 124:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} TIMED OUT after {retry_timeout}s", file=sys.stderr)
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} TIMED OUT after {retry_timeout}s",
+                file=sys.stderr,
+            )
         else:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} FAILED (exit {exit_code})", file=sys.stderr)
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} FAILED (exit {exit_code})",
+                file=sys.stderr,
+            )
 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} FAILED after 3 attempts", file=sys.stderr)
+    print(
+        f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} FAILED after 3 attempts",
+        file=sys.stderr,
+    )
     return False
 
 
@@ -409,7 +438,7 @@ def _clean_chunk_content(text: str) -> str:
         stripped = text.lstrip()
         end = stripped.find("\n---", 3)
         if end != -1:
-            text = stripped[end + 4:]
+            text = stripped[end + 4 :]
 
     # Drop literal prompt-template headings like '### [SEVERITY] Finding title'
     text = re.sub(r"^#{3,4}\s+\[SEVERITY\]\s+Finding title\s*$", "", text, flags=re.MULTILINE)
@@ -423,6 +452,7 @@ def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
     severity_totals = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
 
     import re
+
     # Tolerant heading match: 3-4 hashes, brackets optional.
     # Models emit both '### [CRITICAL] Title' and '### CRITICAL Title'.
     sev_re = re.compile(r"^#{3,4}\s+\[?(CRITICAL|HIGH|MEDIUM|LOW)\]?(?:\s|$)", re.MULTILINE)
@@ -439,7 +469,7 @@ def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
                 severity_totals[sev] += 1
 
     verdict = "passes review" if total_findings == 0 else "needs review"
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d")
 
     severity_summary = ", ".join(f"{sev}: {n}" for sev, n in severity_totals.items())
 
@@ -477,11 +507,15 @@ def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
 
     if final_file.stat().st_size > 0:
         word_count = len(final_file.read_text().split())
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Merge complete: {word_count} words in {final_file.name}")
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] Merge complete: {word_count} words in {final_file.name}"
+        )
         shutil.rmtree(chunk_dir)
         return True
     else:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Merge failed: output empty", file=sys.stderr)
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] Merge failed: output empty", file=sys.stderr
+        )
         return False
 
 
@@ -495,13 +529,17 @@ def run_review_chunked(
     # Skip if final output already exists (unless --force).
     if not force and out_file.exists() and out_file.stat().st_size > 0:
         word_count = len(out_file.read_text().split())
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review already exists ({word_count} words), skipping")
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review already exists ({word_count} words), skipping"
+        )
         return True
 
     # Handle interrupted merge: final file exists but chunks dir also exists
     chunk_dir = REPORT_DIR / "chunks" / model_label
     if not force and out_file.exists() and out_file.stat().st_size > 0 and chunk_dir.exists():
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: stale chunks dir found, cleaning up")
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: stale chunks dir found, cleaning up"
+        )
         shutil.rmtree(chunk_dir)
         return True
 
@@ -512,7 +550,9 @@ def run_review_chunked(
 
     # Check if chunks dir exists (resume from interrupted run)
     if chunk_dir.exists() and any(chunk_dir.iterdir()):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: resuming from existing chunks dir")
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: resuming from existing chunks dir"
+        )
 
     # Process each source file chunk
     failed_chunks = 0
@@ -521,19 +561,27 @@ def run_review_chunked(
 
         # Skip if chunk already exists and non-empty
         if chunk_file.exists() and chunk_file.stat().st_size > 0:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {src} already done, skipping")
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {src} already done, skipping"
+            )
             continue
 
         if not run_chunk_review(model_label, skill_file, src, chunk_file, chunk_timeout, force):
             failed_chunks += 1
 
     if failed_chunks > 0:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: {failed_chunks} chunk(s) failed, keeping chunks for retry", file=sys.stderr)
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: {failed_chunks} chunk(s) failed, keeping chunks for retry",
+            file=sys.stderr,
+        )
         return False
 
     # Merge chunks into final output (mechanical merge, no LLM call)
     if not merge_chunks(model_label, chunk_dir, out_file):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: merge failed, keeping chunks for manual recovery", file=sys.stderr)
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: merge failed, keeping chunks for manual recovery",
+            file=sys.stderr,
+        )
         return False
 
     return True
@@ -544,13 +592,17 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
     # Skip if already done (unless --force).
     if not force and out_file.exists() and out_file.stat().st_size > 0:
         word_count = len(out_file.read_text().split())
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review already exists ({word_count} words), skipping")
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review already exists ({word_count} words), skipping"
+        )
         return True
 
     prompt = build_review_prompt(skill_file, out_file)
     timeout_sec = TIMEOUTS.get(model_label, DEFAULT_TIMEOUT)
 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting {model_label} review -> {out_file.name} (timeout {timeout_sec}s)")
+    print(
+        f"[{datetime.now().strftime('%H:%M:%S')}] Starting {model_label} review -> {out_file.name} (timeout {timeout_sec}s)"
+    )
 
     start_ts = datetime.now()
 
@@ -559,7 +611,9 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
             backoff_multiplier = 2 ** (attempt - 1)
             jitter = random.randint(0, 30)
             retry_timeout = int(timeout_sec * backoff_multiplier + jitter)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review: retrying (attempt {attempt}, timeout {retry_timeout}s)")
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review: retrying (attempt {attempt}, timeout {retry_timeout}s)"
+            )
             out_file.unlink(missing_ok=True)
         else:
             retry_timeout = timeout_sec
@@ -573,18 +627,29 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
         if exit_code == 0 and out_file.exists() and out_file.stat().st_size > 0:
             duration = int((datetime.now() - start_ts).total_seconds())
             word_count = len(out_file.read_text().split())
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review done: {word_count} words")
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review done: {word_count} words"
+            )
             log_metrics(model_label, "with-skill", out_file, duration, 0, chunk=None, chunked=False)
             return True
 
         if exit_code == 124:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review TIMED OUT after {retry_timeout}s", file=sys.stderr)
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review TIMED OUT after {retry_timeout}s",
+                file=sys.stderr,
+            )
         else:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review FAILED (exit {exit_code})", file=sys.stderr)
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review FAILED (exit {exit_code})",
+                file=sys.stderr,
+            )
 
     duration = int((datetime.now() - start_ts).total_seconds())
     log_metrics(model_label, "with-skill", out_file, duration, exit_code, chunk=None, chunked=False)
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review FAILED after 3 attempts", file=sys.stderr)
+    print(
+        f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review FAILED after 3 attempts",
+        file=sys.stderr,
+    )
     return False
 
 
@@ -593,13 +658,17 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
     # Skip if already done (unless --force).
     if not force and out_file.exists() and out_file.stat().st_size > 0:
         word_count = len(out_file.read_text().split())
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review already exists ({word_count} words), skipping")
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review already exists ({word_count} words), skipping"
+        )
         return True
 
     prompt = build_baseline_prompt(out_file)
     timeout_sec = TIMEOUTS.get(model_label, DEFAULT_TIMEOUT)
 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting baseline {model_label} review -> {out_file.name} (timeout {timeout_sec}s)")
+    print(
+        f"[{datetime.now().strftime('%H:%M:%S')}] Starting baseline {model_label} review -> {out_file.name} (timeout {timeout_sec}s)"
+    )
 
     start_ts = datetime.now()
 
@@ -608,7 +677,9 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
             backoff_multiplier = 2 ** (attempt - 1)
             jitter = random.randint(0, 30)
             retry_timeout = int(timeout_sec * backoff_multiplier + jitter)
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review: retrying (attempt {attempt}, timeout {retry_timeout}s)")
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review: retrying (attempt {attempt}, timeout {retry_timeout}s)"
+            )
             out_file.unlink(missing_ok=True)
         else:
             retry_timeout = timeout_sec
@@ -622,18 +693,29 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
         if exit_code == 0 and out_file.exists() and out_file.stat().st_size > 0:
             duration = int((datetime.now() - start_ts).total_seconds())
             word_count = len(out_file.read_text().split())
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review done: {word_count} words")
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review done: {word_count} words"
+            )
             log_metrics(model_label, "baseline", out_file, duration, 0, chunk=None, chunked=False)
             return True
 
         if exit_code == 124:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review TIMED OUT after {retry_timeout}s", file=sys.stderr)
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review TIMED OUT after {retry_timeout}s",
+                file=sys.stderr,
+            )
         else:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review FAILED (exit {exit_code})", file=sys.stderr)
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review FAILED (exit {exit_code})",
+                file=sys.stderr,
+            )
 
     duration = int((datetime.now() - start_ts).total_seconds())
     log_metrics(model_label, "baseline", out_file, duration, exit_code, chunk=None, chunked=False)
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review FAILED after 3 attempts", file=sys.stderr)
+    print(
+        f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review FAILED after 3 attempts",
+        file=sys.stderr,
+    )
     return False
 
 
@@ -642,13 +724,18 @@ def validate_review_format(file: Path, model: str) -> bool:
     import re
 
     if not file.exists() or file.stat().st_size == 0:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {model}: review file empty", file=sys.stderr)
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model}: review file empty", file=sys.stderr
+        )
         return False
 
     content = file.read_text()
-    if not re.search(r'^#{2,4}\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]', content, re.MULTILINE):
+    if not re.search(r"^#{2,4}\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]", content, re.MULTILINE):
         if "no findings" not in content.lower():
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {model}: no valid severity headings found", file=sys.stderr)
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model}: no valid severity headings found",
+                file=sys.stderr,
+            )
             return False
     return True
 
@@ -672,9 +759,13 @@ def dispatch_reviews(force: bool, chunked_models: set[str]) -> tuple[int, int]:
             out_file = REPORT_DIR / f"review-{model_label}.md"
 
             if model_label in chunked_models:
-                futures.append(executor.submit(run_review_chunked, model_label, skill_file, out_file, force))
+                futures.append(
+                    executor.submit(run_review_chunked, model_label, skill_file, out_file, force)
+                )
             else:
-                futures.append(executor.submit(run_review, model_label, skill_file, out_file, force))
+                futures.append(
+                    executor.submit(run_review, model_label, skill_file, out_file, force)
+                )
 
         # Dispatch baseline reviews
         for model_label in MODELS:
@@ -730,7 +821,10 @@ def generate_comparison_report():
     if result.returncode == 0:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Comparison written to report/comparison.md")
     else:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: comparison generation failed", file=sys.stderr)
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: comparison generation failed",
+            file=sys.stderr,
+        )
         if result.stderr:
             print(result.stderr, file=sys.stderr)
 
@@ -777,8 +871,14 @@ def main():
             print(f"  report/review-{model_label}.md")
         sys.exit(0)
     else:
-        print(f"\nWARNING: {failures} reviews failed. Check .log files in report/ for details.", file=sys.stderr)
-        print("Re-run the script to retry only the missing reviews (existing outputs are skipped).", file=sys.stderr)
+        print(
+            f"\nWARNING: {failures} reviews failed. Check .log files in report/ for details.",
+            file=sys.stderr,
+        )
+        print(
+            "Re-run the script to retry only the missing reviews (existing outputs are skipped).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 

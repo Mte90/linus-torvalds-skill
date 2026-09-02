@@ -35,11 +35,7 @@ API_KEY = (
     or os.environ.get("REGOLO_API_KEY")
     or os.environ.get("LLM_API_KEY")
 )
-HOST = (
-    os.environ.get("OPENAI_BASE_URL")
-    or os.environ.get("LLM_HOST")
-    or "https://api.regolo.ai/v1"
-)
+HOST = os.environ.get("OPENAI_BASE_URL") or os.environ.get("LLM_HOST") or "https://api.regolo.ai/v1"
 MODEL = os.environ.get("LLM_MODEL", "gpt-oss-120b")
 
 CHAT_URL = urljoin(HOST + "/", "chat/completions")
@@ -58,6 +54,7 @@ _MODEL_TIMEOUTS = {
     "default": 120,
 }
 
+
 def get_model_timeout(model: str | None = None) -> int:
     """Get per-model timeout in seconds. Env override: LLM_TIMEOUT_{MODEL}."""
     model = (model or MODEL).lower()
@@ -66,12 +63,17 @@ def get_model_timeout(model: str | None = None) -> int:
         return int(env_val)
     return _MODEL_TIMEOUTS.get(model, _MODEL_TIMEOUTS["default"])
 
+
 # Streaming-specific timeouts
 READ_TIMEOUT = int(os.environ.get("LLM_READ_TIMEOUT", "120"))  # per-read socket timeout
 WALL_CLOCK_GLM = int(os.environ.get("LLM_WALL_CLOCK_GLM", "1800"))  # GLM reasoning: 30 min
-WALL_CLOCK_LONG = int(os.environ.get("LLM_WALL_CLOCK_LONG", "900"))  # other models, long prompts: 15 min
+WALL_CLOCK_LONG = int(
+    os.environ.get("LLM_WALL_CLOCK_LONG", "900")
+)  # other models, long prompts: 15 min
 WALL_CLOCK_DEFAULT = int(os.environ.get("LLM_WALL_CLOCK_DEFAULT", "300"))  # other models: 5 min
-WALL_CLOCK_CATEGORY = int(os.environ.get("LLM_WALL_CLOCK_CATEGORY", "300"))  # per-category distill: 5 min
+WALL_CLOCK_CATEGORY = int(
+    os.environ.get("LLM_WALL_CLOCK_CATEGORY", "300")
+)  # per-category distill: 5 min
 
 # GLM5.2 reasoning models need a larger token budget so reasoning AND content fit
 GLM_MAX_TOKENS = int(os.environ.get("GLM_MAX_TOKENS", "16000"))

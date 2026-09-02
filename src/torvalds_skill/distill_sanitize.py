@@ -42,12 +42,12 @@ SANITIZE_REPLACEMENTS = {
 
 # Regex patterns for sanitization
 _QUOTE_SPAN_RE = re.compile(r'("[^"]*"|"[^"]*"|`[^`]*`)')
-_TABLE_SEP_RE = re.compile(r'^\s*\|[\s:|-]+\|?\s*$')
+_TABLE_SEP_RE = re.compile(r"^\s*\|[\s:|-]+\|?\s*$")
 
 
 def generalize_trigger(trigger: str) -> str:
     """Apply SANITIZE_REPLACEMENTS to generalize C-specific terms in triggers.
-    
+
     This pre-generalizes triggers before they're formatted into the prompt,
     ensuring C-specific terms are removed at the source.
     """
@@ -64,7 +64,7 @@ def sanitize_skill(text: str) -> str:
     lines = text.splitlines(keepends=True)
     out = []
     for line in lines:
-        if line.lstrip().startswith('> '):
+        if line.lstrip().startswith("> "):
             out.append(line)
             continue
         parts = _QUOTE_SPAN_RE.split(line)
@@ -74,8 +74,8 @@ def sanitize_skill(text: str) -> str:
             for term, repl in SANITIZE_REPLACEMENTS.items():
                 part = part.replace(term, repl)
             parts[i] = part
-        out.append(''.join(parts))
-    return ''.join(out)
+        out.append("".join(parts))
+    return "".join(out)
 
 
 def _strip_markdown_tables(text: str) -> str:
@@ -85,35 +85,83 @@ def _strip_markdown_tables(text: str) -> str:
     i = 0
     while i < len(lines):
         stripped = lines[i].strip()
-        if stripped.startswith('|') and i + 1 < len(lines) and _TABLE_SEP_RE.match(lines[i + 1].strip()):
-            header_cells = [c.strip() for c in stripped.strip('|').split('|')]
+        if (
+            stripped.startswith("|")
+            and i + 1 < len(lines)
+            and _TABLE_SEP_RE.match(lines[i + 1].strip())
+        ):
+            header_cells = [c.strip() for c in stripped.strip("|").split("|")]
             i += 2
-            while i < len(lines) and lines[i].strip().startswith('|'):
-                row_cells = [c.strip() for c in lines[i].strip().strip('|').split('|')]
-                for h, val in zip(header_cells, row_cells):
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                row_cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                for h, val in zip(header_cells, row_cells, strict=False):
                     out.append(f"- **{h}**: {val}\n")
                 out.append("\n")
                 i += 1
             continue
         out.append(lines[i])
         i += 1
-    return ''.join(out)
+    return "".join(out)
 
 
 # ---- Severity rebalancing ----
 
 _SOFT_WORDS = {
-    "should", "consider", "prefer", "may", "might", "could", "typically",
-    "usually", "often", "generally", "common", "convention", "style",
-    "readability", "clarity", "consistency", "cleaner", "simpler", "better",
-    "naming", "comment", "documentation", "optional", "minor",
+    "should",
+    "consider",
+    "prefer",
+    "may",
+    "might",
+    "could",
+    "typically",
+    "usually",
+    "often",
+    "generally",
+    "common",
+    "convention",
+    "style",
+    "readability",
+    "clarity",
+    "consistency",
+    "cleaner",
+    "simpler",
+    "better",
+    "naming",
+    "comment",
+    "documentation",
+    "optional",
+    "minor",
 }
 _HARD_WORDS = {
-    "must", "never", "always", "crash", "corrupt", "overflow", "leak",
-    "null", "deref", "race", "deadlock", "undefined", "unsafe",
-    "critical", "security", "loss", "silent", "corruption", "double",
-    "free", "buffer", "bounds", "injection", "dangling", "stale",
-    "uninitialized", "atomic", "lifetime", "use-after",
+    "must",
+    "never",
+    "always",
+    "crash",
+    "corrupt",
+    "overflow",
+    "leak",
+    "null",
+    "deref",
+    "race",
+    "deadlock",
+    "undefined",
+    "unsafe",
+    "critical",
+    "security",
+    "loss",
+    "silent",
+    "corruption",
+    "double",
+    "free",
+    "buffer",
+    "bounds",
+    "injection",
+    "dangling",
+    "stale",
+    "uninitialized",
+    "atomic",
+    "lifetime",
+    "use-after",
 }
 
 _SEVERITY_LADDER = ["reject", "request-changes", "nitpick"]
@@ -183,12 +231,14 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
                     break
                 j += 1
             if severity and sev_line is not None:
-                triggers.append({
-                    "sev_line": sev_line,
-                    "severity": severity,
-                    "raw_original": sm.group(1).lower().replace("\u2011", "-"),
-                    "score": _soft_language_score(block_text),
-                })
+                triggers.append(
+                    {
+                        "sev_line": sev_line,
+                        "severity": severity,
+                        "raw_original": sm.group(1).lower().replace("\u2011", "-"),
+                        "score": _soft_language_score(block_text),
+                    }
+                )
             i = j + 1 if severity else j
         else:
             i += 1
@@ -204,9 +254,7 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
     # Target distribution from calibration, normalised to the three
     # severities the skill actually uses.
     corpus_dist = calibration.get("corpus_stats", {}).get("severity_distribution", {})
-    total_corpus_pct = sum(
-        corpus_dist.get(s, {}).get("percentage", 0) for s in _SEVERITY_LADDER
-    )
+    total_corpus_pct = sum(corpus_dist.get(s, {}).get("percentage", 0) for s in _SEVERITY_LADDER)
     if total_corpus_pct == 0:
         return skill_text
 
@@ -279,8 +327,7 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
 
     if changed:
         print(
-            f"  rebalance: {changed} trigger(s) relabelled "
-            f"({current} → {target})",
+            f"  rebalance: {changed} trigger(s) relabelled ({current} → {target})",
             file=sys.stderr,
         )
 
@@ -290,14 +337,11 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
     return result
 
 
-def _fix_target_rounding(
-    target: dict[str, int], total: int, sevs: list[str]
-) -> None:
+def _fix_target_rounding(target: dict[str, int], total: int, sevs: list[str]) -> None:
     """Adjust target counts in-place so they sum to *total*."""
     while sum(target.values()) < total:
         deficits = {
-            s: target[s] - total * target.get(s, 0) / max(sum(target.values()), 1)
-            for s in sevs
+            s: target[s] - total * target.get(s, 0) / max(sum(target.values()), 1) for s in sevs
         }
         target[max(deficits, key=lambda s: -deficits[s])] += 1
     while sum(target.values()) > total:

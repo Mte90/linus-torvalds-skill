@@ -6,10 +6,7 @@ skip them, saving API calls on emails known to produce no signal.
 """
 
 import json
-from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from torvalds_skill import cli
 

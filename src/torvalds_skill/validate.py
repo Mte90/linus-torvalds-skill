@@ -52,7 +52,7 @@ def _validate_move(move: dict, line_num: int | None = None) -> list[str]:
 def validate_moves(path: str) -> tuple[bool, list[str]]:
     """
     Validate moves.jsonl file.
-    
+
     Returns (is_valid, errors) where errors is a list of human-readable error strings.
     """
     errors = []
@@ -89,7 +89,7 @@ def validate_moves(path: str) -> tuple[bool, list[str]]:
                     move_errors = _validate_move(move, line_num)
                     errors.extend(move_errors)
 
-    except IOError as e:
+    except OSError as e:
         return False, [f"Error reading file: {e}"]
 
     return (len(errors) == 0, errors)
@@ -98,7 +98,7 @@ def validate_moves(path: str) -> tuple[bool, list[str]]:
 def validate_patterns(path: str) -> tuple[bool, list[str]]:
     """
     Validate patterns.json file.
-    
+
     Returns (is_valid, errors) where errors is a list of human-readable error strings.
     """
     errors = []
@@ -153,7 +153,7 @@ def validate_patterns(path: str) -> tuple[bool, list[str]]:
 
     except json.JSONDecodeError as e:
         return False, [f"Invalid JSON - {e}"]
-    except IOError as e:
+    except OSError as e:
         return False, [f"Error reading file: {e}"]
 
     return (len(errors) == 0, errors)
@@ -162,7 +162,7 @@ def validate_patterns(path: str) -> tuple[bool, list[str]]:
 def validate_calibration(path: str) -> tuple[bool, list[str]]:
     """
     Validate calibration.json file.
-    
+
     Returns (is_valid, errors) where errors is a list of human-readable error strings.
     """
     errors = []
@@ -193,7 +193,7 @@ def validate_calibration(path: str) -> tuple[bool, list[str]]:
 
     except json.JSONDecodeError as e:
         return False, [f"Invalid JSON - {e}"]
-    except IOError as e:
+    except OSError as e:
         return False, [f"Error reading file: {e}"]
 
     return (len(errors) == 0, errors)
@@ -202,7 +202,7 @@ def validate_calibration(path: str) -> tuple[bool, list[str]]:
 def validate_all(data_dir: str = "data") -> tuple[bool, list[str]]:
     """
     Run all validators on the data directory.
-    
+
     Returns (is_valid, errors) with aggregated results from all three validators.
     """
     all_errors = []

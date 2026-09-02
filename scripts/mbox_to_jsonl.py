@@ -113,7 +113,7 @@ def main():
     sha = h.hexdigest()
     size = JSONL.stat().st_size
     print(f"\nwrote {JSONL}")
-    print(f"  {total} records, {size/1e6:.1f} MB, sha256={sha}")
+    print(f"  {total} records, {size / 1e6:.1f} MB, sha256={sha}")
 
     # update manifest with corpus.jsonl info
     manifest_path = ROOT / "data" / "manifest.json"

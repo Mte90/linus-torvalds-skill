@@ -16,8 +16,8 @@ from __future__ import annotations
 import json
 import random
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 from . import config
@@ -77,15 +77,20 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
     payload = {
         "model": config.MODEL,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT.format(
-                from_header=f"{email.from_name} <{email.from_email}>",
-                to_header=email.subject.split('Re: ', 1)[-1] if 'Re: ' in email.subject else email.subject,
-                cc_header="(see full headers)",
-                subject=email.subject,
-                message_id=email.message_id,
-                date=email.date,
-                body_truncated=body_truncated,
-            )},
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT.format(
+                    from_header=f"{email.from_name} <{email.from_email}>",
+                    to_header=email.subject.split("Re: ", 1)[-1]
+                    if "Re: " in email.subject
+                    else email.subject,
+                    cc_header="(see full headers)",
+                    subject=email.subject,
+                    message_id=email.message_id,
+                    date=email.date,
+                    body_truncated=body_truncated,
+                ),
+            },
             {"role": "user", "content": user_content},
         ],
         "temperature": 0.1,
@@ -109,10 +114,14 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
         except urllib.error.HTTPError as e:
             last_err = e
             if e.code == 429:
-                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(0, config.RETRY_DELAY)
+                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(
+                    0, config.RETRY_DELAY
+                )
                 time.sleep(wait)
             elif e.code >= 500:
-                time.sleep(config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY))
+                time.sleep(
+                    config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
+                )
             else:
                 raise
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
@@ -254,13 +263,15 @@ def run_interlocutor(
     # Load checkpoint if resuming
     if resume and INTERLOCUTOR_CHECKPOINT.exists():
         checkpoint_ids = set(
-            line.strip() for line in INTERLOCUTOR_CHECKPOINT.read_text().splitlines() if line.strip()
+            line.strip()
+            for line in INTERLOCUTOR_CHECKPOINT.read_text().splitlines()
+            if line.strip()
         )
         print(f"  checkpoint: {len(checkpoint_ids)} emails from previous run")
 
     mode = "a" if resume else "w"
     with open(INTERLOCUTOR_OUTPUT, mode, encoding="utf-8") as f:
-        for i, message in enumerate(mbox):
+        for _i, message in enumerate(mbox):
             # Parse email
             from_header = message.get("From", "")
             to_header = message.get("To", "")

@@ -61,31 +61,210 @@ SEVERITY_REMAP = {
 }
 
 STOPWORDS = {
-    "the", "a", "an", "to", "of", "in", "is", "it", "that", "this", "and", "or",
-    "for", "on", "with", "as", "by", "be", "not", "but", "from", "at", "if",
-    "are", "was", "were", "have", "has", "had", "do", "does", "did", "will",
-    "would", "could", "should", "may", "might", "can", "must", "shall", "they",
-    "you", "we", "i", "he", "she", "code", "function", "use", "using", "used",
-    "line", "patch", "patches", "change", "changes", "make", "makes", "made",
-    "get", "set", "new", "one", "two", "first", "when", "then", "than", "so",
-    "no", "yes", "all", "any", "some", "more", "most", "other", "such", "only",
-    "own", "same", "very", "just", "also", "into", "out", "up", "down", "over",
-    "about", "what", "which", "who", "how", "why", "where", "there", "here",
-    "now", "still", "even", "ever", "never", "always", "like", "well",
-    "proposal", "suggestion", "handling", "kernel", "add", "adds", "existing",
-    "instead", "without", "after", "before", "case", "specific", "user",
-    "bit", "page", "memory", "flag", "interface", "behavior", "logic",
-    "support", "series", "commit", "merge", "pull", "request", "tree",
-    "system", "check", "return", "error", "name", "type", "value", "data",
-    "struct", "int", "char", "void", "null", "true", "false", "default",
-    "set_fs", "buf",
-    "field", "list", "point", "point", "call", "calls", "called", "calling",
-    "passed", "passing", "takes", "taken", "give", "given", "want", "need",
-    "way", "thing", "things", "stuff", "lot", "big", "small", "long", "short",
-    "good", "bad", "right", "wrong", "better", "worse", "best", "worst",
-    "real", "actually", "really", "simply", "basically", "actually", "fact",
-    "problem", "problems", "issue", "issues", "bug", "bugs", "fix", "fixed",
-    "fixes", "broken", "wrong", "correct", "correctly", "incorrect",
+    "the",
+    "a",
+    "an",
+    "to",
+    "of",
+    "in",
+    "is",
+    "it",
+    "that",
+    "this",
+    "and",
+    "or",
+    "for",
+    "on",
+    "with",
+    "as",
+    "by",
+    "be",
+    "not",
+    "but",
+    "from",
+    "at",
+    "if",
+    "are",
+    "was",
+    "were",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "can",
+    "must",
+    "shall",
+    "they",
+    "you",
+    "we",
+    "i",
+    "he",
+    "she",
+    "code",
+    "function",
+    "use",
+    "using",
+    "used",
+    "line",
+    "patch",
+    "patches",
+    "change",
+    "changes",
+    "make",
+    "makes",
+    "made",
+    "get",
+    "set",
+    "new",
+    "one",
+    "two",
+    "first",
+    "when",
+    "then",
+    "than",
+    "so",
+    "no",
+    "yes",
+    "all",
+    "any",
+    "some",
+    "more",
+    "most",
+    "other",
+    "such",
+    "only",
+    "own",
+    "same",
+    "very",
+    "just",
+    "also",
+    "into",
+    "out",
+    "up",
+    "down",
+    "over",
+    "about",
+    "what",
+    "which",
+    "who",
+    "how",
+    "why",
+    "where",
+    "there",
+    "here",
+    "now",
+    "still",
+    "even",
+    "ever",
+    "never",
+    "always",
+    "like",
+    "well",
+    "proposal",
+    "suggestion",
+    "handling",
+    "kernel",
+    "add",
+    "adds",
+    "existing",
+    "instead",
+    "without",
+    "after",
+    "before",
+    "case",
+    "specific",
+    "user",
+    "bit",
+    "page",
+    "memory",
+    "flag",
+    "interface",
+    "behavior",
+    "logic",
+    "support",
+    "series",
+    "commit",
+    "merge",
+    "pull",
+    "request",
+    "tree",
+    "system",
+    "check",
+    "return",
+    "error",
+    "name",
+    "type",
+    "value",
+    "data",
+    "struct",
+    "int",
+    "char",
+    "void",
+    "null",
+    "true",
+    "false",
+    "default",
+    "set_fs",
+    "buf",
+    "field",
+    "list",
+    "point",
+    "call",
+    "calls",
+    "called",
+    "calling",
+    "passed",
+    "passing",
+    "takes",
+    "taken",
+    "give",
+    "given",
+    "want",
+    "need",
+    "way",
+    "thing",
+    "things",
+    "stuff",
+    "lot",
+    "big",
+    "small",
+    "long",
+    "short",
+    "good",
+    "bad",
+    "right",
+    "wrong",
+    "better",
+    "worse",
+    "best",
+    "worst",
+    "real",
+    "actually",
+    "really",
+    "simply",
+    "basically",
+    "fact",
+    "problem",
+    "problems",
+    "issue",
+    "issues",
+    "bug",
+    "bugs",
+    "fix",
+    "fixed",
+    "fixes",
+    "broken",
+    "correct",
+    "correctly",
+    "incorrect",
 }
 
 
@@ -121,15 +300,17 @@ def load_moves_from_jsonl(moves_path: Path, source: str) -> list[dict]:
                 sev = clean_severity(m.get("severity", ""))
                 if cat is None or sev is None:
                     continue
-                moves.append({
-                    "trigger": m.get("trigger", ""),
-                    "principle": m.get("principle", ""),
-                    "response": m.get("response", ""),
-                    "severity": sev,
-                    "category": cat,
-                    "year": year,
-                    "source": source,
-                })
+                moves.append(
+                    {
+                        "trigger": m.get("trigger", ""),
+                        "principle": m.get("principle", ""),
+                        "response": m.get("response", ""),
+                        "severity": sev,
+                        "category": cat,
+                        "year": year,
+                        "source": source,
+                    }
+                )
     return moves
 
 
@@ -211,19 +392,25 @@ def compute_corpus_stats(moves: list[dict], email_count: int, interview_count: i
             "interview": interview_count,
         },
         "severity_distribution": {
-            sev: {"count": sev_counts.get(sev, 0),
-                  "percentage": round(100 * sev_counts.get(sev, 0) / total, 1) if total else 0.0}
+            sev: {
+                "count": sev_counts.get(sev, 0),
+                "percentage": round(100 * sev_counts.get(sev, 0) / total, 1) if total else 0.0,
+            }
             for sev in CANONICAL_SEVERITIES
         },
         "category_distribution": {
-            cat: {"count": cat_counts.get(cat, 0),
-                  "percentage": round(100 * cat_counts.get(cat, 0) / total, 1) if total else 0.0}
+            cat: {
+                "count": cat_counts.get(cat, 0),
+                "percentage": round(100 * cat_counts.get(cat, 0) / total, 1) if total else 0.0,
+            }
             for cat in CANONICAL_CATEGORIES
         },
     }
 
 
-def calibrate_interviews(email_moves_path: str, interview_moves_path: str, output_path: str) -> dict:
+def calibrate_interviews(
+    email_moves_path: str, interview_moves_path: str, output_path: str
+) -> dict:
     email_path = Path(email_moves_path)
     interview_path = Path(interview_moves_path)
     output = Path(output_path)
@@ -238,7 +425,10 @@ def calibrate_interviews(email_moves_path: str, interview_moves_path: str, outpu
         interview_moves = load_interview_moves(interview_path)
         print(f"Loaded {len(interview_moves)} clean interview moves")
     else:
-        print(f"Warning: Interview moves file not found: {interview_path}. Falling back to email-only calibration.", file=sys.stderr)
+        print(
+            f"Warning: Interview moves file not found: {interview_path}. Falling back to email-only calibration.",
+            file=sys.stderr,
+        )
         interview_moves = []
 
     all_moves = email_moves + interview_moves
@@ -264,15 +454,21 @@ def main():
         description="Compute severity calibration from merged email + interview moves."
     )
     parser.add_argument(
-        "--email-moves", type=str, default="data/moves.jsonl",
+        "--email-moves",
+        type=str,
+        default="data/moves.jsonl",
         help="Path to email moves.jsonl (default: data/moves.jsonl)",
     )
     parser.add_argument(
-        "--interview-moves", type=str, default="data/interview_moves.jsonl",
+        "--interview-moves",
+        type=str,
+        default="data/interview_moves.jsonl",
         help="Path to interview moves.jsonl (default: data/interview_moves.jsonl)",
     )
     parser.add_argument(
-        "--output", type=str, default="data/calibration.json",
+        "--output",
+        type=str,
+        default="data/calibration.json",
         help="Output path (default: data/calibration.json)",
     )
     args = parser.parse_args()
@@ -283,7 +479,9 @@ def main():
     calibration = json.loads(output_path.read_text(encoding="utf-8"))
 
     stats = calibration["corpus_stats"]
-    print(f"\nCorpus: {stats['total_moves']} total moves ({stats['total_emails']} email, {stats['total_interviews']} interview)")
+    print(
+        f"\nCorpus: {stats['total_moves']} total moves ({stats['total_emails']} email, {stats['total_interviews']} interview)"
+    )
     print("Severity distribution:")
     for sev in CANONICAL_SEVERITIES:
         d = stats["severity_distribution"][sev]
@@ -293,9 +491,11 @@ def main():
     for cat in CANONICAL_CATEGORIES:
         if cat in calibration["severity_by_category"]:
             c = calibration["severity_by_category"][cat]
-            print(f"  {cat:20s} reject={c['reject_rate']:5.1f}%  "
-                  f"req-changes={c['request_changes_rate']:5.1f}%  "
-                  f"nitpick={c['nitpick_rate']:5.1f}%  (n={c['total']})")
+            print(
+                f"  {cat:20s} reject={c['reject_rate']:5.1f}%  "
+                f"req-changes={c['request_changes_rate']:5.1f}%  "
+                f"nitpick={c['nitpick_rate']:5.1f}%  (n={c['total']})"
+            )
 
 
 if __name__ == "__main__":

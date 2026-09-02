@@ -9,10 +9,10 @@ import json
 import pytest
 
 from torvalds_skill.variation import (
+    _parse_json_response,
+    count_words,
     detect_thread_phase,
     detect_urgency,
-    count_words,
-    _parse_json_response,
 )
 
 
@@ -40,26 +40,32 @@ class TestDetectThreadPhase:
         phase = detect_thread_phase(headers, subject)
         assert phase == "iteration_n"
 
-    @pytest.mark.parametrize("subject", [
-        "Re: Patch applied",
-        "Re: Changes merged",
-        "Re: Request rejected",
-        "Re: Your patch is acked",
-        "Re: Code pulled into tree",
-    ])
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "Re: Patch applied",
+            "Re: Changes merged",
+            "Re: Request rejected",
+            "Re: Your patch is acked",
+            "Re: Code pulled into tree",
+        ],
+    )
     def test_final_decision_with_finality_signals(self, subject):
         """Subject with finality signals indicates final decision."""
         headers = {"In-Reply-To": "parent@example.com"}
         phase = detect_thread_phase(headers, subject)
         assert phase == "final_decision"
 
-    @pytest.mark.parametrize("subject", [
-        "Re: Patch APPLIED",
-        "Re: Changes MERGED",
-        "Re: Request REJECTED",
-        "Re: Your patch is ACKED",
-        "Re: Code PULLED into tree",
-    ])
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "Re: Patch APPLIED",
+            "Re: Changes MERGED",
+            "Re: Request REJECTED",
+            "Re: Your patch is ACKED",
+            "Re: Code PULLED into tree",
+        ],
+    )
     def test_final_decision_case_insensitive(self, subject):
         """Finality signals are case-insensitive."""
         headers = {"In-Reply-To": "parent@example.com"}
@@ -105,25 +111,31 @@ class TestDetectThreadPhase:
 class TestDetectUrgency:
     """Test detect_urgency pure function for urgency detection."""
 
-    @pytest.mark.parametrize("subject", [
-        "Fix for -rc1",
-        "Critical fix -rc2",
-        "Merge window patch",
-        "Release blocker fix",
-        "Critical fix release",
-    ])
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "Fix for -rc1",
+            "Critical fix -rc2",
+            "Merge window patch",
+            "Release blocker fix",
+            "Critical fix release",
+        ],
+    )
     def test_release_blocker_urgency_signals(self, subject):
         """Subject with urgency signals is release_blocker."""
         headers = {}
         urgency = detect_urgency(headers, subject)
         assert urgency == "release_blocker"
 
-    @pytest.mark.parametrize("subject", [
-        "Fix for -RC1",
-        "Critical Fix -RC2",
-        "MERGE WINDOW patch",
-        "RELEASE BLOCKER fix",
-    ])
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "Fix for -RC1",
+            "Critical Fix -RC2",
+            "MERGE WINDOW patch",
+            "RELEASE BLOCKER fix",
+        ],
+    )
     def test_release_blocker_case_insensitive(self, subject):
         """Urgency signals are case-insensitive."""
         headers = {}
@@ -144,12 +156,15 @@ class TestDetectUrgency:
         urgency = detect_urgency(headers, subject)
         assert urgency == "release_blocker"
 
-    @pytest.mark.parametrize("subject", [
-        "Regular patch",
-        "Documentation update",
-        "Code cleanup",
-        "Feature addition",
-    ])
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "Regular patch",
+            "Documentation update",
+            "Code cleanup",
+            "Feature addition",
+        ],
+    )
     def test_routine_urgency(self, subject):
         """Subject without urgency signals is routine."""
         headers = {}
@@ -256,25 +271,25 @@ class TestParseJsonResponse:
 
     def test_invalid_json(self):
         """Invalid JSON raises JSONDecodeError."""
-        text = 'not valid json'
+        text = "not valid json"
         with pytest.raises(json.JSONDecodeError):
             _parse_json_response(text)
 
     def test_invalid_json_with_fences(self):
         """Invalid JSON with fences raises JSONDecodeError."""
-        text = '```\nnot valid json\n```'
+        text = "```\nnot valid json\n```"
         with pytest.raises(json.JSONDecodeError):
             _parse_json_response(text)
 
     def test_empty_string(self):
         """Empty string raises JSONDecodeError."""
-        text = ''
+        text = ""
         with pytest.raises(json.JSONDecodeError):
             _parse_json_response(text)
 
     def test_only_fences(self):
         """Only fence markers raises JSONDecodeError."""
-        text = '```'
+        text = "```"
         with pytest.raises(json.JSONDecodeError):
             _parse_json_response(text)
 
@@ -296,7 +311,7 @@ class TestParseJsonResponse:
 
     def test_single_fence_line(self):
         """Single fence line is treated as content."""
-        text = '```'
+        text = "```"
         with pytest.raises(json.JSONDecodeError):
             _parse_json_response(text)
 

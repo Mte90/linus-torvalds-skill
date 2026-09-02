@@ -9,7 +9,7 @@ distillation step will cite for verifiable claims.
 import hashlib
 import json
 import mailbox
-from datetime import timezone
+from datetime import UTC
 from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 
@@ -42,7 +42,7 @@ def main():
             dt = parsedate_to_datetime(date_raw)
             if dt:
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=UTC)
                 dates.append(dt)
         except Exception:
             pass
@@ -87,7 +87,7 @@ def main():
 
     MANIFEST.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     print(f"wrote {MANIFEST}")
-    print(f"  {total} emails, {size/1e6:.1f} MB, sha256={sha[:16]}...")
+    print(f"  {total} emails, {size / 1e6:.1f} MB, sha256={sha[:16]}...")
     print(f"  date range: {dmin.date()} to {dmax.date()}")
 
 

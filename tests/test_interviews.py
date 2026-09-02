@@ -3,9 +3,7 @@
 Verifies the HTML text extraction logic and URL validation functions.
 """
 
-import pytest
-
-from src.torvalds_skill.interviews import HTMLTextExtractor, is_youtube_url, extract_text_from_html
+from src.torvalds_skill.interviews import HTMLTextExtractor, extract_text_from_html, is_youtube_url
 
 
 class TestHTMLTextExtractor:

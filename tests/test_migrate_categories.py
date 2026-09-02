@@ -3,9 +3,7 @@
 Verifies the category remapping and field-swap bug fix logic.
 """
 
-import pytest
-
-from scripts.migrate_categories import migrate_record, CATEGORY_REMAP
+from scripts.migrate_categories import migrate_record
 
 
 class TestMigrateRecord:
@@ -15,9 +13,7 @@ class TestMigrateRecord:
         """Already migrated record should return copy with no changes."""
         record = {
             "email_message_id": "<test@example.com>",
-            "moves": [
-                {"category": "testing", "severity": "reject"}
-            ]
+            "moves": [{"category": "testing", "severity": "reject"}],
         }
         migrated, changes = migrate_record(record)
         assert migrated == record
@@ -27,9 +23,7 @@ class TestMigrateRecord:
         """Non-canonical category should be remapped."""
         record = {
             "email_message_id": "<test@example.com>",
-            "moves": [
-                {"category": "debugging", "severity": "reject"}
-            ]
+            "moves": [{"category": "debugging", "severity": "reject"}],
         }
         migrated, changes = migrate_record(record)
         assert migrated["moves"][0]["category"] == "correctness"
@@ -50,11 +44,11 @@ class TestMigrateRecord:
             ("reliability", "error-handling"),
             ("readability", "style"),
         ]
-        
+
         for old_cat, expected_new_cat in test_cases:
             record = {
                 "email_message_id": "<test@example.com>",
-                "moves": [{"category": old_cat, "severity": "reject"}]
+                "moves": [{"category": old_cat, "severity": "reject"}],
             }
             migrated, changes = migrate_record(record)
             assert migrated["moves"][0]["category"] == expected_new_cat, f"Failed for {old_cat}"
@@ -68,7 +62,7 @@ class TestMigrateRecord:
                 {"category": "process", "severity": "process"},
                 {"category": "testing", "severity": "reject"},
                 {"category": "correctness", "severity": "process"},  # move 3 (index 2)
-            ]
+            ],
         }
         migrated, changes = migrate_record(record)
         # Move 3 (index 2) should have severity fixed
@@ -84,7 +78,7 @@ class TestMigrateRecord:
                 {"category": "process", "severity": "process"},  # move 1 - should NOT change
                 {"category": "testing", "severity": "process"},  # move 2 - should NOT change
                 {"category": "correctness", "severity": "process"},  # move 3 - SHOULD change
-            ]
+            ],
         }
         migrated, changes = migrate_record(record)
         # Only move 3 should be changed
@@ -99,7 +93,7 @@ class TestMigrateRecord:
             "email_message_id": "<different@example.com>",
             "moves": [
                 {"category": "correctness", "severity": "process"},  # move 3 but wrong email
-            ]
+            ],
         }
         migrated, changes = migrate_record(record)
         # Should NOT be fixed
@@ -111,8 +105,11 @@ class TestMigrateRecord:
         record = {
             "email_message_id": "<Pine.LNX.4.58.0409251513290.2317@ppc970.osdl.org>",
             "moves": [
-                {"category": "correctness", "severity": "reject"},  # move 3 but severity != 'process'
-            ]
+                {
+                    "category": "correctness",
+                    "severity": "reject",
+                },  # move 3 but severity != 'process'
+            ],
         }
         migrated, changes = migrate_record(record)
         # Should NOT be fixed
@@ -125,9 +122,9 @@ class TestMigrateRecord:
             "email_message_id": "<Pine.LNX.4.58.0409251513290.2317@ppc970.osdl.org>",
             "moves": [
                 {"category": "debugging", "severity": "reject"},  # category change
-                {"category": "testing", "severity": "process"},   # no change
+                {"category": "testing", "severity": "process"},  # no change
                 {"category": "correctness", "severity": "process"},  # severity fix
-            ]
+            ],
         }
         migrated, changes = migrate_record(record)
         assert migrated["moves"][0]["category"] == "correctness"
@@ -140,7 +137,7 @@ class TestMigrateRecord:
             "email_message_id": "<test@example.com>",
             "moves": [
                 {"category": "design", "severity": "reject"},
-            ]
+            ],
         }
         migrated, changes = migrate_record(record)
         assert len(changes) == 1
@@ -149,19 +146,14 @@ class TestMigrateRecord:
 
     def test_empty_moves_list(self):
         """Record with empty moves list should return copy with no changes."""
-        record = {
-            "email_message_id": "<test@example.com>",
-            "moves": []
-        }
+        record = {"email_message_id": "<test@example.com>", "moves": []}
         migrated, changes = migrate_record(record)
         assert migrated["moves"] == []
         assert changes == []
 
     def test_record_without_moves_key(self):
         """Record without moves key should handle gracefully."""
-        record = {
-            "email_message_id": "<test@example.com>"
-        }
+        record = {"email_message_id": "<test@example.com>"}
         migrated, changes = migrate_record(record)
         assert migrated == record
         assert changes == []
@@ -172,7 +164,7 @@ class TestMigrateRecord:
             "email_message_id": "<test@example.com>",
             "moves": [
                 {"severity": "reject"}  # no category key
-            ]
+            ],
         }
         migrated, changes = migrate_record(record)
         # Should not crash, no category change

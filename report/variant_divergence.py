@@ -15,24 +15,24 @@ Usage:
 
 import re
 import sys
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
 
 def read_skill_file(path: str) -> str:
     """Read a skill file and return its contents."""
-    with open(path, 'r') as f:
+    with open(path) as f:
         return f.read()
 
 
 def count_sections(content: str) -> int:
     """Count markdown sections (## headers)."""
-    return len(re.findall(r'^## ', content, re.MULTILINE))
+    return len(re.findall(r"^## ", content, re.MULTILINE))
 
 
 def count_subsections(content: str) -> int:
     """Count subsections (### headers)."""
-    return len(re.findall(r'^### ', content, re.MULTILINE))
+    return len(re.findall(r"^### ", content, re.MULTILINE))
 
 
 def count_triggers(content: str) -> int:
@@ -41,17 +41,17 @@ def count_triggers(content: str) -> int:
     # GLM/Mistral use "- **Trigger**:" (colon outside bold)
     # gpt-oss uses "- **Trigger:**" (colon inside bold)
     # Use a single pattern that matches both
-    return len(re.findall(r'- \*\*Trigger[:\*]?\*\*[:\s]', content))
+    return len(re.findall(r"- \*\*Trigger[:\*]?\*\*[:\s]", content))
 
 
 def count_themes(content: str) -> int:
     """Count theme definitions."""
     # Match various theme patterns
     patterns = [
-        r'#### Theme \d+:',  # GLM style
-        r'#### Theme [A-Z]',  # gpt-oss style
-        r'#### Theme ',  # Mistral style (without colon to avoid regex error)
-        r'- \*\*Theme\*\*:',  # Alternative
+        r"#### Theme \d+:",  # GLM style
+        r"#### Theme [A-Z]",  # gpt-oss style
+        r"#### Theme ",  # Mistral style (without colon to avoid regex error)
+        r"- \*\*Theme\*\*:",  # Alternative
     ]
     count = 0
     for pattern in patterns:
@@ -63,7 +63,7 @@ def extract_severity_labels(content: str) -> dict:
     """Extract severity label distribution."""
     severities = defaultdict(int)
     # Match both "- **Severity:** value" and "- **Severity** : value" formats
-    for match in re.findall(r'- \*\*Severity[:\*]?\*\*[:\s]+(\S+)', content):
+    for match in re.findall(r"- \*\*Severity[:\*]?\*\*[:\s]+(\S+)", content):
         severities[match] += 1
     return dict(severities)
 
@@ -72,11 +72,11 @@ def extract_severity_by_trigger(content: str) -> list:
     """Extract (trigger text, severity) pairs."""
     triggers = []
     # Find trigger blocks
-    blocks = re.split(r'- \*\*Trigger:\*', content)[1:]  # Skip first split
+    blocks = re.split(r"- \*\*Trigger:\*", content)[1:]  # Skip first split
     for block in blocks:
         # Extract trigger name (first line)
-        trigger_match = re.match(r'\s*(.+?)(?:\n|$)', block)
-        severity_match = re.search(r'- \*\*Severity:\*\* (\S+)', block)
+        trigger_match = re.match(r"\s*(.+?)(?:\n|$)", block)
+        severity_match = re.search(r"- \*\*Severity:\*\* (\S+)", block)
         if trigger_match and severity_match:
             trigger_name = trigger_match.group(1).strip()[:50]  # Truncate for readability
             severity = severity_match.group(1)
@@ -88,19 +88,19 @@ def find_unique_sections(content: str, variant_name: str) -> list:
     """Find sections that appear to be unique to this variant."""
     # Check for specific content patterns unique to each variant
     unique_patterns = {
-        'gpt-oss': [
-            ('Decision Cards', '## Decision Cards'),
-            ('Severity Calibration', '## Severity Calibration'),
-            ('Cross-File Review', '## Cross-File Review'),
+        "gpt-oss": [
+            ("Decision Cards", "## Decision Cards"),
+            ("Severity Calibration", "## Severity Calibration"),
+            ("Cross-File Review", "## Cross-File Review"),
         ],
-        'GLM': [
-            ('Root Cause Theme', 'Theme 6: Root Cause'),
-            ('Interface Honesty Theme', 'Theme 7: Interface Honesty'),
-            ('Testing Theme', 'Theme 13: Testing'),
+        "GLM": [
+            ("Root Cause Theme", "Theme 6: Root Cause"),
+            ("Interface Honesty Theme", "Theme 7: Interface Honesty"),
+            ("Testing Theme", "Theme 13: Testing"),
         ],
-        'mistral': [
-            ('Anti-Patterns', '## Anti-Patterns'),
-            ('YAML Frontmatter', '```yaml'),
+        "mistral": [
+            ("Anti-Patterns", "## Anti-Patterns"),
+            ("YAML Frontmatter", "```yaml"),
         ],
     }
     unique = []
@@ -111,7 +111,9 @@ def find_unique_sections(content: str, variant_name: str) -> list:
     return unique
 
 
-def find_severity_discrepancies(triggers_a: list, triggers_b: list, name_a: str, name_b: str) -> list:
+def find_severity_discrepancies(
+    triggers_a: list, triggers_b: list, name_a: str, name_b: str
+) -> list:
     """Find triggers with different severity labels between two variants."""
     discrepancies = []
     # Simple fuzzy matching on trigger names
@@ -120,44 +122,46 @@ def find_severity_discrepancies(triggers_a: list, triggers_b: list, name_a: str,
             # Check if triggers are similar (simple substring match)
             if trigger_a.lower() in trigger_b.lower() or trigger_b.lower() in trigger_a.lower():
                 if sev_a != sev_b:
-                    discrepancies.append({
-                        'trigger': trigger_a,
-                        f'{name_a}_severity': sev_a,
-                        f'{name_b}_severity': sev_b,
-                    })
+                    discrepancies.append(
+                        {
+                            "trigger": trigger_a,
+                            f"{name_a}_severity": sev_a,
+                            f"{name_b}_severity": sev_b,
+                        }
+                    )
     return discrepancies
 
 
 def main():
     """Main entry point."""
-    base_path = Path(__file__).parent.parent / 'linus-torvalds-skill'
-    
+    base_path = Path(__file__).parent.parent / "linus-torvalds-skill"
+
     files = {
-        'gpt-oss-120b': base_path / 'SKILL.md',
-        'glm5.2': base_path / 'SKILL-GLM.md',
-        'mistral': base_path / 'SKILL-Mistral.md',
+        "gpt-oss-120b": base_path / "SKILL.md",
+        "glm5.2": base_path / "SKILL-GLM.md",
+        "mistral": base_path / "SKILL-Mistral.md",
     }
-    
+
     # Check files exist
-    for name, path in files.items():
+    for _name, path in files.items():
         if not path.exists():
             print(f"Error: {path} not found", file=sys.stderr)
             sys.exit(1)
-    
+
     # Read all files
     contents = {name: read_skill_file(path) for name, path in files.items()}
-    
+
     # Print header
     print("=" * 80)
     print("TORVALDS SKILL VARIANT DIVERGENCE REPORT")
     print("=" * 80)
     print()
-    
+
     # Section counts
     print("## Section Counts")
     print()
-    print(f"| Variant | Sections | Subsections | Triggers | Themes |")
-    print(f"|---|---|---|---|---|")
+    print("| Variant | Sections | Subsections | Triggers | Themes |")
+    print("|---|---|---|---|---|")
     for name, content in contents.items():
         sections = count_sections(content)
         subsections = count_subsections(content)
@@ -165,17 +169,17 @@ def main():
         themes = count_themes(content)
         print(f"| {name} | {sections} | {subsections} | {triggers} | {themes} |")
     print()
-    
+
     # Word counts
     print("## Word Counts")
     print()
-    print(f"| Variant | Words |")
-    print(f"|---|---|")
+    print("| Variant | Words |")
+    print("|---|---|")
     for name, content in contents.items():
         words = len(content.split())
         print(f"| {name} | {words:,} |")
     print()
-    
+
     # Severity distributions
     print("## Severity Distributions")
     print()
@@ -185,7 +189,7 @@ def main():
         for sev, count in sorted(severities.items(), key=lambda x: -x[1]):
             print(f"  - {sev}: {count}")
         print()
-    
+
     # Unique sections
     print("## Unique Sections by Variant")
     print()
@@ -196,32 +200,36 @@ def main():
             for item in unique:
                 print(f"  - {item}")
             print()
-    
+
     # Severity discrepancies
     print("## Severity Discrepancies")
     print()
     print("Triggers with different severity assignments:")
     print()
-    
-    all_triggers = {name: extract_severity_by_trigger(content) for name, content in contents.items()}
-    
+
+    all_triggers = {
+        name: extract_severity_by_trigger(content) for name, content in contents.items()
+    }
+
     # Compare pairs
     pairs = [
-        ('gpt-oss-120b', 'glm5.2', all_triggers['gpt-oss-120b'], all_triggers['glm5.2']),
-        ('gpt-oss-120b', 'mistral', all_triggers['gpt-oss-120b'], all_triggers['mistral']),
-        ('glm5.2', 'mistral', all_triggers['glm5.2'], all_triggers['mistral']),
+        ("gpt-oss-120b", "glm5.2", all_triggers["gpt-oss-120b"], all_triggers["glm5.2"]),
+        ("gpt-oss-120b", "mistral", all_triggers["gpt-oss-120b"], all_triggers["mistral"]),
+        ("glm5.2", "mistral", all_triggers["glm5.2"], all_triggers["mistral"]),
     ]
-    
+
     for name_a, name_b, triggers_a, triggers_b in pairs:
         discrepancies = find_severity_discrepancies(triggers_a, triggers_b, name_a, name_b)
         if discrepancies:
             print(f"**{name_a} vs {name_b}** ({len(discrepancies)} discrepancies):")
             for d in discrepancies[:5]:  # Show first 5
-                print(f"  - '{d['trigger']}': {d[f'{name_a}_severity']} vs {d[f'{name_b}_severity']}")
+                print(
+                    f"  - '{d['trigger']}': {d[f'{name_a}_severity']} vs {d[f'{name_b}_severity']}"
+                )
             if len(discrepancies) > 5:
                 print(f"  ... and {len(discrepancies) - 5} more")
             print()
-    
+
     # Markdown table output
     print("=" * 80)
     print("SUMMARY TABLE (Markdown)")
@@ -234,14 +242,14 @@ def main():
         sections = count_sections(content)
         triggers = count_triggers(content)
         themes = count_themes(content)
-        unique = ', '.join(find_unique_sections(content, name)[:3])
+        unique = ", ".join(find_unique_sections(content, name)[:3])
         if not unique:
-            unique = '-'
+            unique = "-"
         print(f"| {name} | {words:,} | {sections} | {triggers} | {themes} | {unique} |")
     print()
-    
+
     print("Done.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

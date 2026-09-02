@@ -7,16 +7,12 @@ Each test uses tmp_path for isolation and mocks LLM calls to avoid API hits.
 from __future__ import annotations
 
 import json
-import random
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
-
-from torvalds_skill.classify import is_review, classify_corpus
-from torvalds_skill.extract import extract_moves, _validate_severity_consistency
-from torvalds_skill.cluster import cluster_moves, _stratified_sample
-from torvalds_skill.models import EmailRecord, CATEGORIES, SEVERITIES
+from torvalds_skill.classify import classify_corpus
+from torvalds_skill.cluster import cluster_moves
+from torvalds_skill.extract import _validate_severity_consistency, extract_moves
+from torvalds_skill.models import EmailRecord
 
 
 def _make_email(
@@ -72,12 +68,12 @@ class TestClassifyToExtractFlow:
 
         # Step 1: Classify
         classified = list(classify_corpus(emails))
-        
+
         # Assert: announcement filtered (not a review), git-pull skipped (not a review), review passes
         review_label = classified[0][1]
         announce_label = classified[1][1]
         pull_label = classified[2][1]
-        
+
         assert review_label == "review", "Review email should be classified as review"
         assert announce_label == "other", "Announcement should be classified as other"
         assert pull_label == "other", "Git pull should be classified as other"
@@ -120,10 +116,10 @@ class TestExtractToClusterFlow:
         # Format: nested JSONL where each line has email fields + moves array
         categories_to_use = ["correctness", "performance"]
         severities_to_use = ["reject", "request-changes", "nitpick", "approve", "discussion"]
-        
+
         # Build nested structure: email entries with moves arrays
         email_entries = []
-        for i, (cat, sev) in enumerate(zip(categories_to_use * 5, severities_to_use * 2)):
+        for i, (cat, sev) in enumerate(zip(categories_to_use * 5, severities_to_use * 2, strict=False)):
             entry = {
                 "email_message_id": f"move{i}@example.com",
                 "email_date": f"2024-{(i % 12) + 1:02d}-01",
@@ -153,18 +149,18 @@ class TestExtractToClusterFlow:
         assert "samples_by_category" in result
         assert "correctness" in result["samples_by_category"]
         assert "performance" in result["samples_by_category"]
-        
+
         # Check stratified sampling distributed across severities
         correctness_samples = result["samples_by_category"]["correctness"]
         assert len(correctness_samples) > 0, "Should have samples from correctness category"
-        
+
         # Assert: output JSON valid (already validated by cluster_moves writing it)
         assert output_path.exists(), "patterns.json should be created"
-        
+
         # Verify the JSON is valid and has expected structure
-        with open(output_path, "r", encoding="utf-8") as f:
+        with open(output_path, encoding="utf-8") as f:
             patterns = json.load(f)
-        
+
         assert "total_moves" in patterns
         assert "samples_by_category" in patterns
         assert patterns["total_moves"] == 10
@@ -187,7 +183,7 @@ class TestClusterToDistillToVerifyFlow:
                 "category": "correctness",
             }
         ] * 5
-        
+
         patterns_path = tmp_path / "patterns.json"
         with open(patterns_path, "w", encoding="utf-8") as f:
             json.dump(patterns_data, f)
@@ -238,16 +234,20 @@ If code is broken → reject.
         # Mock _call_llm in distill module
         with patch("torvalds_skill.distill._call_llm", return_value=minimal_skill):
             from torvalds_skill.distill import distill_skill
-            
+
             skill_path = tmp_path / "SKILL.md"
             distill_skill(patterns_path, skill_path, top_n=5)
 
         # Assert: skill file created
         assert skill_path.exists(), "SKILL.md should be created"
-        
+
         # Step: Verify skill (import from scripts)
-        from scripts.verify_skill import check_forbidden_terms, check_no_tables, check_interview_quotes, score_skill_quality
-        
+        from scripts.verify_skill import (
+            check_forbidden_terms,
+            check_no_tables,
+            score_skill_quality,
+        )
+
         # Assert: skill passes verify_skill section checks
         # Check required sections exist
         content = skill_path.read_text()
@@ -255,17 +255,16 @@ If code is broken → reject.
         assert "## Review Triggers" in content
         assert "## Severity Calibration" in content
         assert "## Severity Decision Tree" in content
-        
+
         # Check no forbidden terms (C-specific tokens)
         violations = check_forbidden_terms(skill_path)
         assert len(violations) == 0, f"No forbidden terms should be found, got: {violations}"
-        
+
         # Check no markdown tables
         no_tables, table_violations = check_no_tables(skill_path)
         assert no_tables, "No markdown tables should be present"
-        
+
         # Score skill quality (should be > 0)
-        calibration = {}  # Empty calibration for this test
         score_result = score_skill_quality(skill_path)
         score = score_result.get("total", 0)
         assert score > 0, f"Skill quality score should be > 0, got {score}"
@@ -302,22 +301,24 @@ class TestSeverityConsistency:
         warning_count = 0
         with patch("torvalds_skill.extract._call_llm", return_value=mock_response):
             result = extract_moves(email)
-            
+
             # Assert: pipeline still completes
             assert "error" not in result or result.get("severity_warnings", 0) >= 0
-            
+
             # Check that severity inconsistency was detected
             # The move has "nitpick" severity but contains hard language ("crash")
             move = result["moves"][0]
             is_consistent, reason = _validate_severity_consistency(move)
-            
+
             # Assert: inconsistency flagged
             assert not is_consistent, "Severity inconsistency should be detected"
-            assert "hard language" in reason.lower(), f"Reason should mention hard language: {reason}"
-            
+            assert "hard language" in reason.lower(), (
+                f"Reason should mention hard language: {reason}"
+            )
+
             # The extract_moves function should have incremented severity_warnings
             warning_count = result.get("severity_warnings", 0)
-        
+
         # Assert: warning counter incremented
         assert warning_count >= 1, "At least 1 severity warning should be recorded"
 
@@ -342,45 +343,113 @@ class TestBatchMode:
             """Mock that returns 2 results (one per email in batch)."""
             results = []
             for email in batch_emails:
-                results.append({
-                    "moves": [
-                        {
-                            "trigger": f"Issue in {email.message_id}",
-                            "principle": "Fix the issue",
-                            "response": "This needs fixing",
-                            "severity": "request-changes",
-                            "category": "correctness",
-                        }
-                    ]
-                })
+                results.append(
+                    {
+                        "moves": [
+                            {
+                                "trigger": f"Issue in {email.message_id}",
+                                "principle": "Fix the issue",
+                                "response": "This needs fixing",
+                                "severity": "request-changes",
+                                "category": "correctness",
+                            }
+                        ]
+                    }
+                )
             return results
 
         # Test batch extraction with batch_size=2
-        output_path = tmp_path / "batch_output.jsonl"
-        
-        with patch("torvalds_skill.extract._call_llm_batch", return_value=[
-            {"moves": [{"trigger": "Issue 1", "principle": "P1", "response": "R1", "severity": "reject", "category": "correctness"}]},
-            {"moves": [{"trigger": "Issue 2", "principle": "P2", "response": "R2", "severity": "reject", "category": "correctness"}]},
-        ]):
-            with patch("torvalds_skill.extract._call_llm_batch", side_effect=[
-                # First batch (emails 0-1)
-                [
-                    {"moves": [{"trigger": "Issue 0", "principle": "P0", "response": "R0", "severity": "reject", "category": "correctness"}]},
-                    {"moves": [{"trigger": "Issue 1", "principle": "P1", "response": "R1", "severity": "reject", "category": "correctness"}]},
+        tmp_path / "batch_output.jsonl"
+
+        with patch(
+            "torvalds_skill.extract._call_llm_batch",
+            return_value=[
+                {
+                    "moves": [
+                        {
+                            "trigger": "Issue 1",
+                            "principle": "P1",
+                            "response": "R1",
+                            "severity": "reject",
+                            "category": "correctness",
+                        }
+                    ]
+                },
+                {
+                    "moves": [
+                        {
+                            "trigger": "Issue 2",
+                            "principle": "P2",
+                            "response": "R2",
+                            "severity": "reject",
+                            "category": "correctness",
+                        }
+                    ]
+                },
+            ],
+        ):
+            with patch(
+                "torvalds_skill.extract._call_llm_batch",
+                side_effect=[
+                    # First batch (emails 0-1)
+                    [
+                        {
+                            "moves": [
+                                {
+                                    "trigger": "Issue 0",
+                                    "principle": "P0",
+                                    "response": "R0",
+                                    "severity": "reject",
+                                    "category": "correctness",
+                                }
+                            ]
+                        },
+                        {
+                            "moves": [
+                                {
+                                    "trigger": "Issue 1",
+                                    "principle": "P1",
+                                    "response": "R1",
+                                    "severity": "reject",
+                                    "category": "correctness",
+                                }
+                            ]
+                        },
+                    ],
+                    # Second batch (emails 2-3)
+                    [
+                        {
+                            "moves": [
+                                {
+                                    "trigger": "Issue 2",
+                                    "principle": "P2",
+                                    "response": "R2",
+                                    "severity": "reject",
+                                    "category": "correctness",
+                                }
+                            ]
+                        },
+                        {
+                            "moves": [
+                                {
+                                    "trigger": "Issue 3",
+                                    "principle": "P3",
+                                    "response": "R3",
+                                    "severity": "reject",
+                                    "category": "correctness",
+                                }
+                            ]
+                        },
+                    ],
                 ],
-                # Second batch (emails 2-3)
-                [
-                    {"moves": [{"trigger": "Issue 2", "principle": "P2", "response": "R2", "severity": "reject", "category": "correctness"}]},
-                    {"moves": [{"trigger": "Issue 3", "principle": "P3", "response": "R3", "severity": "reject", "category": "correctness"}]},
-                ],
-            ]):
+            ):
                 from torvalds_skill.extract import extract_moves_batch
-                
+
                 results = extract_moves_batch(emails, batch_size=2, batch_retry=True)
 
         # Assert: all 4 processed
         assert len(results) == 4, "All 4 emails should be processed"
-        
+
         # Assert: batch parsing succeeds
         for i, result in enumerate(results):
             assert "error" not in result, f"Email {i} should not have error"
@@ -429,7 +498,7 @@ class TestBatchMode:
         with patch("torvalds_skill.extract._call_llm_batch", side_effect=mock_malformed_batch_call):
             with patch("torvalds_skill.extract.extract_moves", side_effect=mock_sequential_extract):
                 from torvalds_skill.extract import extract_moves_batch
-                
+
                 results = extract_moves_batch(emails, batch_size=2, batch_retry=True)
 
         # Assert: fallback path succeeded (sequential extraction used)

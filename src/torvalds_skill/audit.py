@@ -11,12 +11,10 @@ Provides:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import stat
-import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Project root relative to this module
@@ -28,22 +26,18 @@ SKILL_DIR = ROOT / "linus-torvalds-skill"
 
 def log_decision(stage: str, **kwargs) -> None:
     """Append a JSON line to report/decisions.jsonl.
-    
+
     Each line contains:
     - timestamp: ISO8601 with timezone
     - stage: pipeline stage name (classify, extract, cluster, calibrate, distill)
     - kwargs: any additional context (model, prompt_hash, params, seed, etc.)
-    
+
     Creates report/ dir if missing. Idempotent: safe to call multiple times.
     """
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    
-    record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "stage": stage,
-        **kwargs
-    }
-    
+
+    record = {"timestamp": datetime.now(UTC).isoformat(), "stage": stage, **kwargs}
+
     decisions_path = REPORT_DIR / "decisions.jsonl"
     with open(decisions_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -67,7 +61,7 @@ def _word_count(path: Path) -> int:
 
 def generate_audit_report() -> dict:
     """Aggregate counts from each pipeline stage.
-    
+
     Returns a dict with:
     - emails_in: count from data/torvalds.mbox or data/moves.jsonl
     - moves_extracted: count lines in data/moves.jsonl
@@ -78,7 +72,7 @@ def generate_audit_report() -> dict:
     # emails_in: try torvalds.mbox first, then moves.jsonl as fallback
     mbox_path = DATA_DIR / "torvalds.mbox"
     moves_path = DATA_DIR / "moves.jsonl"
-    
+
     if mbox_path.exists():
         emails_in = _count_lines(mbox_path)
     elif moves_path.exists():
@@ -86,10 +80,10 @@ def generate_audit_report() -> dict:
         emails_in = _count_lines(moves_path)
     else:
         emails_in = 0
-    
+
     # moves_extracted: lines in moves.jsonl
     moves_extracted = _count_lines(moves_path) if moves_path.exists() else 0
-    
+
     # moves_sampled: from patterns.json
     patterns_path = DATA_DIR / "patterns.json"
     moves_sampled = 0
@@ -100,15 +94,15 @@ def generate_audit_report() -> dict:
             moves_sampled = sum(len(samples) for samples in samples_by_category.values())
         except (json.JSONDecodeError, KeyError):
             moves_sampled = 0
-    
+
     # skill_words_out: word count of SKILL.md
     skill_path = SKILL_DIR / "SKILL.md"
     skill_words_out = _word_count(skill_path)
-    
+
     # decisions_logged: lines in decisions.jsonl
     decisions_path = REPORT_DIR / "decisions.jsonl"
     decisions_logged = _count_lines(decisions_path) if decisions_path.exists() else 0
-    
+
     report = {
         "emails_in": emails_in,
         "moves_extracted": moves_extracted,
@@ -116,23 +110,20 @@ def generate_audit_report() -> dict:
         "skill_words_out": skill_words_out,
         "decisions_logged": decisions_logged,
     }
-    
+
     # Write the report
     report_path = REPORT_DIR / "audit_report.json"
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(
-        json.dumps(report, indent=2, ensure_ascii=False),
-        encoding="utf-8"
-    )
-    
+    report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+
     return report
 
 
 def generate_flowchart() -> str:
     """Generate a Mermaid flowchart (CONSORT-style) showing pipeline stages.
-    
+
     Writes report/pipeline_flowchart.mmd and returns the mermaid string.
-    
+
     Flowchart shows:
     - Raw mbox → classify → extract → cluster → calibrate → distill → SKILL.md
     - Decision points marked with diamonds
@@ -144,12 +135,12 @@ def generate_flowchart() -> str:
         report = json.loads(report_path.read_text(encoding="utf-8"))
     else:
         report = generate_audit_report()
-    
+
     emails_in = report.get("emails_in", 0)
     moves_extracted = report.get("moves_extracted", 0)
     moves_sampled = report.get("moves_sampled", 0)
     skill_words_out = report.get("skill_words_out", 0)
-    
+
     mermaid = f"""flowchart TD
     A[/"Raw mbox: {emails_in} emails"/] --> B{("{classify}")}
     B --> C{("{extract}")}
@@ -157,32 +148,32 @@ def generate_flowchart() -> str:
     D --> E{("{calibrate}")}
     E --> F{("{distill}")}
     F --> G[/"SKILL.md: {skill_words_out} words"/]
-    
+
     C -.->|"moves extracted: {moves_extracted}"| D
     D -.->|"moves sampled: {moves_sampled}"| E
 """
-    
+
     # Write the flowchart
     flowchart_path = REPORT_DIR / "pipeline_flowchart.mmd"
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     flowchart_path.write_text(mermaid, encoding="utf-8")
-    
+
     return mermaid
 
 
 def generate_reproduce_script() -> str:
     """Generate a bash script that reruns the full pipeline.
-    
+
     Writes reproduce.sh at repo root and makes it executable.
     Returns the script content.
-    
+
     Uses the CLI subcommand pattern from cli.py:
     - classify
     - extract --sample N --workers N
     - cluster
     - distill --top-n N
     """
-    script = '''#!/usr/bin/env bash
+    script = """#!/usr/bin/env bash
 # reproduce.sh — rerun the full torvalds-skill pipeline
 # Generated by audit.py
 
@@ -215,37 +206,37 @@ echo ""
 echo "=== Pipeline complete ==="
 echo "Finished at: $(date -Iseconds)"
 echo "Output: linus-torvalds-skill/SKILL.md"
-'''
-    
+"""
+
     script_path = ROOT / "reproduce.sh"
     script_path.write_text(script, encoding="utf-8")
-    
+
     # Make executable
     current_mode = os.stat(script_path).st_mode
     os.chmod(script_path, current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    
+
     return script
 
 
 def run_audit() -> dict:
     """Orchestrator: generate all audit outputs and print summary.
-    
+
     Calls:
     - generate_audit_report()
     - generate_flowchart()
     - generate_reproduce_script()
-    
+
     Prints a summary to stdout and returns the audit report dict.
     """
     print("Generating audit report...", flush=True)
     report = generate_audit_report()
-    
+
     print("Generating pipeline flowchart...", flush=True)
-    flowchart = generate_flowchart()
-    
+    generate_flowchart()
+
     print("Generating reproduction script...", flush=True)
-    reproduce_script = generate_reproduce_script()
-    
+    generate_reproduce_script()
+
     # Print summary
     print("\n" + "=" * 60)
     print("AUDIT SUMMARY")
@@ -262,5 +253,5 @@ def run_audit() -> dict:
     print(f"  - {REPORT_DIR / 'pipeline_flowchart.mmd'}")
     print(f"  - {ROOT / 'reproduce.sh'}")
     print("=" * 60)
-    
+
     return report

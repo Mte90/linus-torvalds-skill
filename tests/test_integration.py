@@ -6,13 +6,11 @@ formats are compatible between stages. No real LLM API calls are made.
 
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
-
-from torvalds_skill.classify import is_review, classify_corpus
-from torvalds_skill.extract import extract_moves, extract_batch
+from torvalds_skill.classify import classify_corpus
 from torvalds_skill.cluster import cluster_moves
+from torvalds_skill.extract import extract_batch, extract_moves
 from torvalds_skill.models import EmailRecord, ReviewMove, iter_moves
 
 
@@ -88,8 +86,7 @@ class TestClassifyToExtractDataFlow:
     def test_classify_yields_email_records(self):
         """classify_corpus should yield EmailRecord objects."""
         emails = [
-            _make_email(message_id=f"m{i}@example.com", subject=f"Re: Patch {i}")
-            for i in range(5)
+            _make_email(message_id=f"m{i}@example.com", subject=f"Re: Patch {i}") for i in range(5)
         ]
         results = list(classify_corpus(emails))
 
@@ -104,8 +101,8 @@ class TestClassifyToExtractDataFlow:
             message_id="review@exampl.com",
             subject="Re: Fix memory leak",
             body="The buffer is freed twice. This is a use-after-free bug. "
-                 "You need to remove the second kfree() call. "
-                 "This is critical and must be fixed before merging.",
+            "You need to remove the second kfree() call. "
+            "This is critical and must be fixed before merging.",
         )
         emails = [review_email]
         results = list(classify_corpus(emails))
@@ -129,7 +126,7 @@ class TestClassifyToExtractDataFlow:
         ]
         results = list(classify_corpus(emails))
 
-        for email, label in results:
+        for _email, label in results:
             assert label == "other"
 
     def test_extract_accepts_classified_email(self):
@@ -138,8 +135,8 @@ class TestClassifyToExtractDataFlow:
             message_id="extract-test@example.com",
             subject="Re: Code review",
             body="This code has issues. The error handling is incomplete. "
-                 "You need to add cleanup in all error paths. "
-                 "This is a correctness issue that must be addressed.",
+            "You need to add cleanup in all error paths. "
+            "This is a correctness issue that must be addressed.",
         )
 
         # Classify first
@@ -307,7 +304,7 @@ class TestClusterToDistillDataFlow:
         with open(out_path, encoding="utf-8") as f:
             patterns = json.load(f)
 
-        for category, samples in patterns["samples_by_category"].items():
+        for _category, samples in patterns["samples_by_category"].items():
             for sample in samples:
                 assert "trigger" in sample
                 assert "principle" in sample
@@ -403,15 +400,15 @@ class TestFullPipelineSmokeTest:
                 message_id="integrity-1@example.com",
                 subject="Re: Test 1",
                 body="Review comment one that is substantive enough. "
-                     "The code needs improvement in error handling. "
-                     "This is important for correctness.",
+                "The code needs improvement in error handling. "
+                "This is important for correctness.",
             ),
             _make_email(
                 message_id="integrity-2@example.com",
                 subject="Re: Test 2",
                 body="Review comment two that is substantive enough and has the required length. "
-                     "The tests are missing from this code. "
-                     "Add tests before merging this patch.",
+                "The tests are missing from this code. "
+                "Add tests before merging this patch.",
             ),
         ]
 
@@ -467,8 +464,8 @@ class TestFullPipelineSmokeTest:
                 message_id="empty-moves@example.com",
                 subject="Re: Ack",
                 body="This is a substantive email but with no review moves. "
-                     "It's just an acknowledgment. "
-                     "Nothing to extract here.",
+                "It's just an acknowledgment. "
+                "Nothing to extract here.",
             ),
         ]
 
@@ -517,9 +514,7 @@ class TestDataFormatInvariants:
         """Moves from extract_moves should match ReviewMove schema."""
         email = _make_email(message_id="schema-test@example.com")
 
-        expected_fields = {
-            "trigger", "principle", "response", "severity", "category"
-        }
+        expected_fields = {"trigger", "principle", "response", "severity", "category"}
 
         with patch("torvalds_skill.extract._call_llm") as mock_llm:
             mock_llm.return_value = {
@@ -556,8 +551,9 @@ class TestDataFormatInvariants:
 
         for category, samples in data["samples_by_category"].items():
             for sample in samples:
-                assert set(sample.keys()) == required_sample_fields, \
+                assert set(sample.keys()) == required_sample_fields, (
                     f"Category {category} sample missing fields"
+                )
 
     def test_severity_values_are_valid(self):
         """Severity values should be from the valid set."""
@@ -588,10 +584,10 @@ class TestEdgeCases:
         email = _make_email(
             message_id="multi-move@example.com",
             body="Review with multiple issues. "
-                 "First, the error handling is wrong. "
-                 "Second, there are no tests. "
-                 "Third, the naming is unclear. "
-                 "All need to be fixed.",
+            "First, the error handling is wrong. "
+            "Second, there are no tests. "
+            "Third, the naming is unclear. "
+            "All need to be fixed.",
         )
 
         with patch("torvalds_skill.extract._call_llm") as mock_llm:

@@ -17,13 +17,11 @@ from __future__ import annotations
 import json
 import random
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 from . import config
-from .models import CATEGORIES, SEVERITIES
-
 
 SYSTEM_PROMPT = """\
 You are analyzing an interview passage where Linus Torvalds discusses code review,
@@ -59,10 +57,7 @@ def _call_llm(passage_text: str, passage_id: str, retries: int = None) -> dict:
     """Call the LLM API for one passage. Returns parsed JSON dict."""
     retries = retries if retries is not None else config.MAX_RETRIES
 
-    user_content = (
-        f"Passage ID: {passage_id}\n\n"
-        f"{passage_text[:8000]}"
-    )
+    user_content = f"Passage ID: {passage_id}\n\n{passage_text[:8000]}"
 
     payload = {
         "model": config.MODEL,
@@ -91,10 +86,14 @@ def _call_llm(passage_text: str, passage_id: str, retries: int = None) -> dict:
         except urllib.error.HTTPError as e:
             last_err = e
             if e.code == 429:
-                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(0, config.RETRY_DELAY)
+                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(
+                    0, config.RETRY_DELAY
+                )
                 time.sleep(wait)
             elif e.code >= 500:
-                time.sleep(config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY))
+                time.sleep(
+                    config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
+                )
             else:
                 raise
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
@@ -150,7 +149,7 @@ def _load_checkpoint(checkpoint_path: Path) -> set[str]:
         return set()
 
     processed = set()
-    with open(checkpoint_path, "r", encoding="utf-8") as f:
+    with open(checkpoint_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -169,7 +168,7 @@ def _load_skip_list(skip_list_path: Path) -> set[str]:
         return set()
 
     skipped = set()
-    with open(skip_list_path, "r", encoding="utf-8") as f:
+    with open(skip_list_path, encoding="utf-8") as f:
         try:
             data = json.load(f)
             skipped = set(data.get("skipped_passages", []))
@@ -204,7 +203,7 @@ def extract_interviews(input_path: str, output_path: str, model: str = "gpt-oss-
 
     # Read all passages
     passages = []
-    with open(input_file, "r", encoding="utf-8") as f:
+    with open(input_file, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -281,28 +280,24 @@ def extract_interviews(input_path: str, output_path: str, model: str = "gpt-oss-
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Extract review moves from interview passages"
-    )
+    parser = argparse.ArgumentParser(description="Extract review moves from interview passages")
     parser.add_argument(
         "--input",
         default="data/interviews_classified.jsonl",
-        help="Input JSONL file with classified passages (default: data/interviews_classified.jsonl)"
+        help="Input JSONL file with classified passages (default: data/interviews_classified.jsonl)",
     )
     parser.add_argument(
         "--output",
         default="data/interview_moves.jsonl",
-        help="Output JSONL file path (default: data/interview_moves.jsonl)"
+        help="Output JSONL file path (default: data/interview_moves.jsonl)",
     )
     parser.add_argument(
-        "--model",
-        default="gpt-oss-120b",
-        help="Model name to use (default: gpt-oss-120b)"
+        "--model", default="gpt-oss-120b", help="Model name to use (default: gpt-oss-120b)"
     )
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume from checkpoint, skipping already-processed passages"
+        help="Resume from checkpoint, skipping already-processed passages",
     )
 
     args = parser.parse_args()

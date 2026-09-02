@@ -7,42 +7,48 @@ technical passages from interview transcripts.
 import pytest
 
 from torvalds_skill.classify_interviews import (
-    is_promotional,
-    is_procedural,
-    is_personal_topic,
-    has_core_kernel_content,
-    mentions_linus,
-    split_into_passages,
     classify_passage,
     extract_context,
+    has_core_kernel_content,
+    is_personal_topic,
+    is_procedural,
+    is_promotional,
+    mentions_linus,
+    split_into_passages,
 )
 
 
 class TestIsPromotional:
     """Test promotional/ad content detection."""
 
-    @pytest.mark.parametrize("text", [
-        "Please subscribe to our channel for more content",
-        "Don't forget to like and share this video",
-        "Hit the subscribe button to join us",
-        "This episode is brought to you by our sponsor",
-        "Follow us on Twitter and Facebook",
-        "Thanks for watching, see you next time",
-        "Welcome to today's episode where we have",
-        "Thank you for joining us today",
-        "Join us on YouTube for more content",
-        "Subscribe to our podcast for weekly updates",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Please subscribe to our channel for more content",
+            "Don't forget to like and share this video",
+            "Hit the subscribe button to join us",
+            "This episode is brought to you by our sponsor",
+            "Follow us on Twitter and Facebook",
+            "Thanks for watching, see you next time",
+            "Welcome to today's episode where we have",
+            "Thank you for joining us today",
+            "Join us on YouTube for more content",
+            "Subscribe to our podcast for weekly updates",
+        ],
+    )
     def test_promotional_patterns_detected(self, text):
         """Promotional patterns should be detected as promotional."""
         assert is_promotional(text) is True
 
-    @pytest.mark.parametrize("text", [
-        "The kernel patch fixes a memory leak in the network driver",
-        "Linus explained the merge window process",
-        "Technical discussion about code review practices",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "The kernel patch fixes a memory leak in the network driver",
+            "Linus explained the merge window process",
+            "Technical discussion about code review practices",
+            "",
+        ],
+    )
     def test_technical_content_not_promotional(self, text):
         """Technical content should not be flagged as promotional."""
         assert is_promotional(text) is False
@@ -60,26 +66,32 @@ class TestIsPromotional:
 class TestIsProcedural:
     """Test procedural host question detection."""
 
-    @pytest.mark.parametrize("text", [
-        "Can you tell us about the merge window process?",
-        "Let's move on to discussing code review",
-        "What would you say to developers who disagree?",
-        "Could you share your thoughts on this?",
-        "I'd love to hear more about that",
-        "Let's dig into the technical details",
-        "Before we start, can you introduce yourself?",
-        "To get us started, what's your background?",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Can you tell us about the merge window process?",
+            "Let's move on to discussing code review",
+            "What would you say to developers who disagree?",
+            "Could you share your thoughts on this?",
+            "I'd love to hear more about that",
+            "Let's dig into the technical details",
+            "Before we start, can you introduce yourself?",
+            "To get us started, what's your background?",
+        ],
+    )
     def test_procedural_patterns_detected(self, text):
         """Procedural host questions should be detected."""
         assert is_procedural(text) is True
 
-    @pytest.mark.parametrize("text", [
-        "The merge window is open for two weeks",
-        "Linus discussed the patch review process",
-        "Technical explanation of kernel development",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "The merge window is open for two weeks",
+            "Linus discussed the patch review process",
+            "Technical explanation of kernel development",
+            "",
+        ],
+    )
     def test_technical_content_not_procedural(self, text):
         """Technical content should not be flagged as procedural."""
         assert is_procedural(text) is False
@@ -92,28 +104,34 @@ class TestIsProcedural:
 class TestIsPersonalTopic:
     """Test personal/non-technical topic detection."""
 
-    @pytest.mark.parametrize("text", [
-        "What do you do in your free time?",
-        "Tell us about your family and wife",
-        "Where did you grow up and go to school?",
-        "What inspires you personally in life?",
-        "What's your favorite programming language?",
-        "Are you married or single?",
-        "What kind of car do you drive?",
-        "Tell us about your childhood and early life",
-        "What are your hobbies and interests?",
-        "What's your dream vacation?",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "What do you do in your free time?",
+            "Tell us about your family and wife",
+            "Where did you grow up and go to school?",
+            "What inspires you personally in life?",
+            "What's your favorite programming language?",
+            "Are you married or single?",
+            "What kind of car do you drive?",
+            "Tell us about your childhood and early life",
+            "What are your hobbies and interests?",
+            "What's your dream vacation?",
+        ],
+    )
     def test_personal_patterns_detected(self, text):
         """Personal topic patterns should be detected."""
         assert is_personal_topic(text) is True
 
-    @pytest.mark.parametrize("text", [
-        "The kernel patch fixes a memory leak",
-        "Linus discussed code review best practices",
-        "Technical discussion about software engineering",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "The kernel patch fixes a memory leak",
+            "Linus discussed code review best practices",
+            "Technical discussion about software engineering",
+            "",
+        ],
+    )
     def test_technical_content_not_personal(self, text):
         """Technical content should not be flagged as personal."""
         assert is_personal_topic(text) is False
@@ -126,34 +144,40 @@ class TestIsPersonalTopic:
 class TestHasCoreKernelContent:
     """Test core kernel development keyword detection."""
 
-    @pytest.mark.parametrize("text", [
-        "The kernel patch fixes a memory leak",
-        "Linus reviewed the pull request for the subsystem",
-        "Merge window opens for upstream changes",
-        "Code review process on the mailing list",
-        "Git tree structure for the branch",
-        "Driver development for the filesystem",
-        "Memory management and concurrency issues",
-        "Locking with mutex and semaphore",
-        "Performance optimization and profiling",
-        "Testing and test coverage improvements",
-        "Security vulnerability and bug fix",
-        "API design and interface abstraction",
-        "Compiler build and debugging",
-        "Regression test and backport",
-        "Open source contribution guidelines",
-        "Developer community governance",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "The kernel patch fixes a memory leak",
+            "Linus reviewed the pull request for the subsystem",
+            "Merge window opens for upstream changes",
+            "Code review process on the mailing list",
+            "Git tree structure for the branch",
+            "Driver development for the filesystem",
+            "Memory management and concurrency issues",
+            "Locking with mutex and semaphore",
+            "Performance optimization and profiling",
+            "Testing and test coverage improvements",
+            "Security vulnerability and bug fix",
+            "API design and interface abstraction",
+            "Compiler build and debugging",
+            "Regression test and backport",
+            "Open source contribution guidelines",
+            "Developer community governance",
+        ],
+    )
     def test_kernel_keywords_detected(self, text):
         """Core kernel keywords should be detected."""
         assert has_core_kernel_content(text) is True
 
-    @pytest.mark.parametrize("text", [
-        "The weather is nice today",
-        "I enjoy cooking and gardening",
-        "Discussion about cooking recipes and food preparation",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "The weather is nice today",
+            "I enjoy cooking and gardening",
+            "Discussion about cooking recipes and food preparation",
+            "",
+        ],
+    )
     def test_non_kernel_content_not_detected(self, text):
         """Non-kernel content should not be detected."""
         assert has_core_kernel_content(text) is False
@@ -171,24 +195,30 @@ class TestHasCoreKernelContent:
 class TestMentionsLinus:
     """Test Linus/Torvalds reference detection."""
 
-    @pytest.mark.parametrize("text", [
-        "Torvalds explained the merge process",
-        "Linus discussed the patch review",
-        "Torvalds said the code is incorrect",
-        "Linus Torvalds replied to the mailing list",
-        "As Torvalds noted in his response",
-        "The patch was reviewed by Linus",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Torvalds explained the merge process",
+            "Linus discussed the patch review",
+            "Torvalds said the code is incorrect",
+            "Linus Torvalds replied to the mailing list",
+            "As Torvalds noted in his response",
+            "The patch was reviewed by Linus",
+        ],
+    )
     def test_linus_references_detected(self, text):
         """Linus/Torvalds references should be detected."""
         assert mentions_linus(text) is True
 
-    @pytest.mark.parametrize("text", [
-        "The developer explained the process",
-        "Someone discussed the patch",
-        "Technical explanation without attribution",
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "The developer explained the process",
+            "Someone discussed the patch",
+            "Technical explanation without attribution",
+            "",
+        ],
+    )
     def test_no_linus_reference(self, text):
         """Text without Linus reference should not be detected."""
         assert mentions_linus(text) is False
@@ -228,7 +258,9 @@ class TestSplitIntoPassages:
         content = "First passage with enough content to pass the minimum length requirement.\n\nSecond passage also has enough content to be included.\n\nThird passage here with sufficient length."
         result = split_into_passages(content)
         assert len(result) == 3
-        assert result[0] == "First passage with enough content to pass the minimum length requirement."
+        assert (
+            result[0] == "First passage with enough content to pass the minimum length requirement."
+        )
         assert result[1] == "Second passage also has enough content to be included."
         assert result[2] == "Third passage here with sufficient length."
 
@@ -310,25 +342,31 @@ class TestClassifyPassage:
         assert keep is True
         assert reason == "technical"
 
-    @pytest.mark.parametrize("text", [
-        "Linus Torvalds discussed the merge window for upstream kernel patches.",
-        "Torvalds reviewed the pull request and found issues with the code review process.",
-        "As Linus noted, the subsystem maintainership requires careful git tree management.",
-        "Torvalds explained the importance of testing and test coverage for bug fixes.",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Linus Torvalds discussed the merge window for upstream kernel patches.",
+            "Torvalds reviewed the pull request and found issues with the code review process.",
+            "As Linus noted, the subsystem maintainership requires careful git tree management.",
+            "Torvalds explained the importance of testing and test coverage for bug fixes.",
+        ],
+    )
     def test_various_valid_passages_accepted(self, text):
         """Various valid technical passages should be accepted."""
         keep, reason = classify_passage(text)
         assert keep is True
         assert reason == "technical"
 
-    @pytest.mark.parametrize("text", [
-        "Subscribe to our channel for more Linus content.",  # promotional
-        "Can you tell us about kernel development?",  # procedural
-        "What's your favorite kernel feature?",  # personal
-        "The kernel is great.",  # no linus reference
-        "Torvalds likes pizza.",  # non-technical
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Subscribe to our channel for more Linus content.",  # promotional
+            "Can you tell us about kernel development?",  # procedural
+            "What's your favorite kernel feature?",  # personal
+            "The kernel is great.",  # no linus reference
+            "Torvalds likes pizza.",  # non-technical
+        ],
+    )
     def test_various_invalid_passages_rejected(self, text):
         """Various invalid passages should be rejected for correct reasons."""
         keep, reason = classify_passage(text)

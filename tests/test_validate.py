@@ -8,13 +8,13 @@ import json
 
 import pytest
 
+from torvalds_skill.models import CATEGORIES, SEVERITIES
 from torvalds_skill.validate import (
     _validate_move,
+    validate_calibration,
     validate_moves,
     validate_patterns,
-    validate_calibration,
 )
-from torvalds_skill.models import CATEGORIES, SEVERITIES
 
 
 class TestValidateMove:
@@ -96,12 +96,15 @@ class TestValidateMove:
         assert any("Missing required field: trigger" in e for e in errors)
         assert any("Missing required field: principle" in e for e in errors)
 
-    @pytest.mark.parametrize("category", [
-        "invalid-category",
-        "Correctness",
-        "CORRECTNESS",
-        "unknown",
-    ])
+    @pytest.mark.parametrize(
+        "category",
+        [
+            "invalid-category",
+            "Correctness",
+            "CORRECTNESS",
+            "unknown",
+        ],
+    )
     def test_invalid_category(self, category):
         """Invalid category values produce an error."""
         move = {
@@ -114,12 +117,15 @@ class TestValidateMove:
         assert len(errors) == 1
         assert f"Invalid category '{category}'" in errors[0]
 
-    @pytest.mark.parametrize("severity", [
-        "invalid-severity",
-        "Reject",
-        "REJECT",
-        "unknown",
-    ])
+    @pytest.mark.parametrize(
+        "severity",
+        [
+            "invalid-severity",
+            "Reject",
+            "REJECT",
+            "unknown",
+        ],
+    )
     def test_invalid_severity(self, severity):
         """Invalid severity values produce an error."""
         move = {
@@ -289,9 +295,7 @@ class TestValidateMoves:
     def test_moves_not_array(self, tmp_path):
         """Moves field that is not an array produces an error."""
         moves_file = tmp_path / "moves.jsonl"
-        moves_file.write_text(
-            '{"email_message_id": "test@example.com", "moves": "not an array"}\n'
-        )
+        moves_file.write_text('{"email_message_id": "test@example.com", "moves": "not an array"}\n')
         is_valid, errors = validate_moves(str(moves_file))
         assert is_valid is False
         assert len(errors) == 1
@@ -324,8 +328,8 @@ class TestValidateMoves:
         moves_file = tmp_path / "moves.jsonl"
         moves_file.write_text(
             '{"email_message_id": "test@example.com", "moves": [{"category": "correctness", "severity": "reject", "trigger": "test", "principle": "test"}]}\n'
-            '\n'
-            '\n'
+            "\n"
+            "\n"
         )
         is_valid, errors = validate_moves(str(moves_file))
         assert is_valid is True
@@ -355,7 +359,7 @@ class TestValidatePatterns:
     def test_invalid_json(self, tmp_path):
         """Invalid JSON produces an error."""
         patterns_file = tmp_path / "patterns.json"
-        patterns_file.write_text('not valid json')
+        patterns_file.write_text("not valid json")
         is_valid, errors = validate_patterns(str(patterns_file))
         assert is_valid is False
         assert len(errors) == 1
@@ -391,7 +395,7 @@ class TestValidatePatterns:
     def test_missing_required_fields(self, tmp_path):
         """Pattern missing required fields produces errors."""
         patterns_file = tmp_path / "patterns.json"
-        patterns_file.write_text('[{}]')
+        patterns_file.write_text("[{}]")
         is_valid, errors = validate_patterns(str(patterns_file))
         assert is_valid is False
         assert len(errors) == 4
@@ -457,7 +461,12 @@ class TestValidatePatterns:
         """Multiple valid patterns all pass validation."""
         patterns_file = tmp_path / "patterns.json"
         patterns = [
-            {"category": "correctness", "severity": "reject", "trigger": "test1", "principle": "test1"},
+            {
+                "category": "correctness",
+                "severity": "reject",
+                "trigger": "test1",
+                "principle": "test1",
+            },
             {"category": "style", "severity": "nitpick", "trigger": "test2", "principle": "test2"},
         ]
         patterns_file.write_text(json.dumps(patterns))
@@ -469,7 +478,12 @@ class TestValidatePatterns:
         """Multiple patterns with some errors reports all errors."""
         patterns_file = tmp_path / "patterns.json"
         patterns = [
-            {"category": "correctness", "severity": "reject", "trigger": "test", "principle": "test"},
+            {
+                "category": "correctness",
+                "severity": "reject",
+                "trigger": "test",
+                "principle": "test",
+            },
             {"category": "invalid"},
         ]
         patterns_file.write_text(json.dumps(patterns))
@@ -485,11 +499,13 @@ class TestValidateCalibration:
         """A valid calibration.json file returns no errors."""
         calibration_file = tmp_path / "calibration.json"
         calibration_file.write_text(
-            json.dumps({
-                "severity_by_category": {},
-                "temporal_trends": {},
-                "corpus_stats": {"total_moves": 100},
-            })
+            json.dumps(
+                {
+                    "severity_by_category": {},
+                    "temporal_trends": {},
+                    "corpus_stats": {"total_moves": 100},
+                }
+            )
         )
         is_valid, errors = validate_calibration(str(calibration_file))
         assert is_valid is True
@@ -505,7 +521,7 @@ class TestValidateCalibration:
     def test_invalid_json(self, tmp_path):
         """Invalid JSON produces an error."""
         calibration_file = tmp_path / "calibration.json"
-        calibration_file.write_text('not valid json')
+        calibration_file.write_text("not valid json")
         is_valid, errors = validate_calibration(str(calibration_file))
         assert is_valid is False
         assert len(errors) == 1
@@ -532,7 +548,7 @@ class TestValidateCalibration:
     def test_missing_required_fields(self, tmp_path):
         """Calibration missing required fields produces errors."""
         calibration_file = tmp_path / "calibration.json"
-        calibration_file.write_text('{}')
+        calibration_file.write_text("{}")
         is_valid, errors = validate_calibration(str(calibration_file))
         assert is_valid is False
         assert len(errors) == 3
@@ -544,11 +560,13 @@ class TestValidateCalibration:
         """Required field that is not an object produces an error."""
         calibration_file = tmp_path / "calibration.json"
         calibration_file.write_text(
-            json.dumps({
-                "severity_by_category": [],
-                "temporal_trends": {},
-                "corpus_stats": {"total_moves": 100},
-            })
+            json.dumps(
+                {
+                    "severity_by_category": [],
+                    "temporal_trends": {},
+                    "corpus_stats": {"total_moves": 100},
+                }
+            )
         )
         is_valid, errors = validate_calibration(str(calibration_file))
         assert is_valid is False
@@ -559,11 +577,13 @@ class TestValidateCalibration:
         """corpus_stats without total_moves produces an error."""
         calibration_file = tmp_path / "calibration.json"
         calibration_file.write_text(
-            json.dumps({
-                "severity_by_category": {},
-                "temporal_trends": {},
-                "corpus_stats": {"other_field": 1},
-            })
+            json.dumps(
+                {
+                    "severity_by_category": {},
+                    "temporal_trends": {},
+                    "corpus_stats": {"other_field": 1},
+                }
+            )
         )
         is_valid, errors = validate_calibration(str(calibration_file))
         assert is_valid is False
@@ -574,11 +594,13 @@ class TestValidateCalibration:
         """corpus_stats.total_moves that is not an integer produces an error."""
         calibration_file = tmp_path / "calibration.json"
         calibration_file.write_text(
-            json.dumps({
-                "severity_by_category": {},
-                "temporal_trends": {},
-                "corpus_stats": {"total_moves": "not an int"},
-            })
+            json.dumps(
+                {
+                    "severity_by_category": {},
+                    "temporal_trends": {},
+                    "corpus_stats": {"total_moves": "not an int"},
+                }
+            )
         )
         is_valid, errors = validate_calibration(str(calibration_file))
         assert is_valid is False
@@ -589,11 +611,13 @@ class TestValidateCalibration:
         """corpus_stats.total_moves that is a float produces an error."""
         calibration_file = tmp_path / "calibration.json"
         calibration_file.write_text(
-            json.dumps({
-                "severity_by_category": {},
-                "temporal_trends": {},
-                "corpus_stats": {"total_moves": 100.5},
-            })
+            json.dumps(
+                {
+                    "severity_by_category": {},
+                    "temporal_trends": {},
+                    "corpus_stats": {"total_moves": 100.5},
+                }
+            )
         )
         is_valid, errors = validate_calibration(str(calibration_file))
         assert is_valid is False
@@ -604,11 +628,13 @@ class TestValidateCalibration:
         """corpus_stats.total_moves of zero (valid int) passes validation."""
         calibration_file = tmp_path / "calibration.json"
         calibration_file.write_text(
-            json.dumps({
-                "severity_by_category": {},
-                "temporal_trends": {},
-                "corpus_stats": {"total_moves": 0},
-            })
+            json.dumps(
+                {
+                    "severity_by_category": {},
+                    "temporal_trends": {},
+                    "corpus_stats": {"total_moves": 0},
+                }
+            )
         )
         is_valid, errors = validate_calibration(str(calibration_file))
         assert is_valid is True

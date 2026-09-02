@@ -216,9 +216,9 @@ that the method is language- and project-agnostic.]
 and a real Torvalds quote. Explain WHY each attitude matters.]
 
 ## Review Triggers
-[Comprehensive catalog of "when you see X, flag it" patterns, organized into THREE 
-hierarchical tiers that mirror how a human expert reviews: fatal flaws first, then 
-design issues, then nitpicks. Group triggers by semantic theme within each tier 
+[Comprehensive catalog of "when you see X, flag it" patterns, organized into THREE
+hierarchical tiers that mirror how a human expert reviews: fatal flaws first, then
+design issues, then nitpicks. Group triggers by semantic theme within each tier
 (not by the raw category labels — use themes you discover across categories).
 
 ### Tier Structure
@@ -248,7 +248,7 @@ For EACH trigger provide:
 - **What to look for**: generalized, language-agnostic description of the pattern
 - **Why it's a problem**: the underlying design principle being violated
 - **Severity**: reject / request-changes / nitpick
-- **Example (original wording)**: a real Torvalds quote showing how he handles it — 
+- **Example (original wording)**: a real Torvalds quote showing how he handles it —
 introduce it with the generalized trigger, then show the verbatim quote
 - 1-2 additional supporting quotes when available
 
@@ -272,7 +272,7 @@ trigger themes. Each theme should have 3-6 specific triggers. Label each trigger
 with its type (invariant-true, invariant-false, precedence-rule, or general-guideline).]
 
 ## Reasoning Protocol
-[Instructions for the [REASON]→[ACT] workflow that prevents pattern-matching false 
+[Instructions for the [REASON]→[ACT] workflow that prevents pattern-matching false
 positives. Every review finding MUST follow this two-step process:
 
 **[REASON]**: First explain WHY a trigger applies:
@@ -288,17 +288,17 @@ positives. Every review finding MUST follow this two-step process:
 
 Example format:
 ```
-[REASON]: This code uses a fatal assertion (panic/crash) in a path that handles 
-external input. The principle is "recoverable errors must be handled gracefully". 
-The consequence is that malformed input will crash the system instead of returning 
+[REASON]: This code uses a fatal assertion (panic/crash) in a path that handles
+external input. The principle is "recoverable errors must be handled gracefully".
+The consequence is that malformed input will crash the system instead of returning
 a proper error.
 
-[ACT]: Reject. Replace the assertion with proper error handling that returns a 
+[ACT]: Reject. Replace the assertion with proper error handling that returns a
 clear error message to the caller.
 ```
 
-This protocol is language-agnostic — no C/kernel-specific examples. It ensures 
-every finding is grounded in reasoning, not keyword matching. Agents must explain 
+This protocol is language-agnostic — no C/kernel-specific examples. It ensures
+every finding is grounded in reasoning, not keyword matching. Agents must explain
 the design problem before proposing a fix.]
 
 ## Precedence and Priorities
@@ -475,7 +475,7 @@ LANGUAGE must be invisible.
 
 def build_category_system_prompt(category: str) -> str:
     """Build category-specific system prompt for single-category distillation.
-    
+
     Stage 1 of two-stage distillation: focuses the LLM's attention on
     patterns within one category (~25 patterns) rather than all 350.
     """
@@ -486,9 +486,9 @@ You are writing a section of a code review skill document, focusing on ONE categ
 CRITICAL RULE: TOTAL LANGUAGE AND PROJECT AGNOSTICISM
 ═══════════════════════════════════════════════════════════════════════
 
-The skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell, 
-or any other language. Torvalds reviews C kernel code, but his REVIEWING METHOD is 
-universal. You must strip ALL C-specific and kernel-specific content from triggers 
+The skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell,
+or any other language. Torvalds reviews C kernel code, but his REVIEWING METHOD is
+universal. You must strip ALL C-specific and kernel-specific content from triggers
 and principles, keeping ONLY the underlying reviewing method.
 
 TRIGGERS and PRINCIPLES must NEVER contain:
@@ -498,8 +498,8 @@ TRIGGERS and PRINCIPLES must NEVER contain:
   - Linux-specific APIs: procfs, sysfs, debugfs, ioctl
   - Architecture-specific terms: x86, ARM, riscv, SMP, RCU
 
-QUOTES (the "Response" field) are Torvalds' VERBATIM words and MUST be preserved 
-exactly as written, including any C-specific terms they contain. The quotes 
+QUOTES (the "Response" field) are Torvalds' VERBATIM words and MUST be preserved
+exactly as written, including any C-specific terms they contain. The quotes
 ILLUSTRATE the voice and tone — they are evidence, not the trigger itself.
 
 TRANSLATION TABLE — when you encounter these in the data, generalize as shown:
@@ -566,7 +566,7 @@ You are synthesizing category-specific skill fragments into a unified SKILL.md d
 CRITICAL RULE: TOTAL LANGUAGE AND PROJECT AGNOSTICISM
 ═══════════════════════════════════════════════════════════════════════
 
-The final skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell, 
+The final skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell,
 or any other language. All C-specific and kernel-specific content must be generalized.
 
 ═══════════════════════════════════════════════════════════════════════

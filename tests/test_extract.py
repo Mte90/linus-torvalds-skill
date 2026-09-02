@@ -5,19 +5,18 @@ and batch extraction with file I/O. No real API calls are made.
 """
 
 import json
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
 from torvalds_skill.extract import (
-    _parse_batch_response,
-    _parse_json_response,
-    extract_moves,
-    extract_batch,
-    _validate_severity_consistency,
     HARD_LANGUAGE_INDICATORS,
     SOFT_LANGUAGE_INDICATORS,
+    _parse_batch_response,
+    _parse_json_response,
+    _validate_severity_consistency,
+    extract_batch,
+    extract_moves,
 )
 from torvalds_skill.models import EmailRecord
 
@@ -67,12 +66,14 @@ class TestParseJsonResponse:
         assert result["moves"] == []
 
     def test_multiple_moves(self):
-        content = json.dumps({
-            "moves": [
-                {"trigger": "a", "principle": "b", "severity": "reject"},
-                {"trigger": "c", "principle": "d", "severity": "nitpick"},
-            ]
-        })
+        content = json.dumps(
+            {
+                "moves": [
+                    {"trigger": "a", "principle": "b", "severity": "reject"},
+                    {"trigger": "c", "principle": "d", "severity": "nitpick"},
+                ]
+            }
+        )
         result = _parse_json_response(content)
         assert len(result["moves"]) == 2
 
@@ -158,10 +159,7 @@ class TestExtractMoves:
     @patch("torvalds_skill.extract._call_llm")
     def test_multiple_moves_extracted(self, mock_call):
         mock_call.return_value = {
-            "moves": [
-                {"trigger": f"t{i}", "principle": f"p{i}"}
-                for i in range(5)
-            ]
+            "moves": [{"trigger": f"t{i}", "principle": f"p{i}"} for i in range(5)]
         }
         email = _make_email()
         result = extract_moves(email)
@@ -358,7 +356,7 @@ class TestSeverityConsistency:
         move = {
             "severity": "reject",
             "description": "This code is broken and will crash.",
-            "trigger": "use-after-free bug"
+            "trigger": "use-after-free bug",
         }
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True
@@ -369,7 +367,7 @@ class TestSeverityConsistency:
         move = {
             "severity": "request-changes",
             "description": "This is wrong and cannot work.",
-            "trigger": "memory leak"
+            "trigger": "memory leak",
         }
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True
@@ -380,7 +378,7 @@ class TestSeverityConsistency:
         move = {
             "severity": "nitpick",
             "description": "Consider improving the style here.",
-            "trigger": "cosmetic issue"
+            "trigger": "cosmetic issue",
         }
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True
@@ -391,7 +389,7 @@ class TestSeverityConsistency:
         move = {
             "severity": "nitpick",
             "description": "This might be broken, but consider fixing it.",
-            "trigger": "minor issue"
+            "trigger": "minor issue",
         }
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True
@@ -402,7 +400,7 @@ class TestSeverityConsistency:
         move = {
             "severity": "reject",
             "description": "Consider improving this code.",
-            "trigger": "could be better"
+            "trigger": "could be better",
         }
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is False
@@ -413,7 +411,7 @@ class TestSeverityConsistency:
         move = {
             "severity": "request-changes",
             "description": "It might be nice to fix this.",
-            "trigger": "optional improvement"
+            "trigger": "optional improvement",
         }
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is False
@@ -424,7 +422,7 @@ class TestSeverityConsistency:
         move = {
             "severity": "nitpick",
             "description": "This is broken and will fail.",
-            "trigger": "critical error"
+            "trigger": "critical error",
         }
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is False
@@ -435,37 +433,28 @@ class TestSeverityConsistency:
         move = {
             "severity": "REJECT",
             "description": "This is BROKEN and CRASHES.",
-            "trigger": "BUG"
+            "trigger": "BUG",
         }
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True
 
     def test_empty_description_is_consistent(self):
         """Empty description is consistent (no language detected)."""
-        move = {
-            "severity": "reject",
-            "description": "",
-            "trigger": ""
-        }
+        move = {"severity": "reject", "description": "", "trigger": ""}
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True
         assert reason == ""
 
     def test_missing_severity_is_consistent(self):
         """Missing severity is treated as consistent (no validation)."""
-        move = {
-            "description": "This is broken.",
-            "trigger": "test"
-        }
+        move = {"description": "This is broken.", "trigger": "test"}
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True
         assert reason == ""
 
     def test_missing_description_is_consistent(self):
         """Missing description is treated as consistent (no language detected)."""
-        move = {
-            "severity": "reject"
-        }
+        move = {"severity": "reject"}
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True
         assert reason == ""
@@ -473,21 +462,13 @@ class TestSeverityConsistency:
     def test_word_boundary_matching(self):
         """Word boundaries prevent false positives."""
         # "broken" should match but "unbroken" should not
-        move = {
-            "severity": "nitpick",
-            "description": "This is unbroken code.",
-            "trigger": "test"
-        }
+        move = {"severity": "nitpick", "description": "This is unbroken code.", "trigger": "test"}
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True  # "unbroken" doesn't match "broken"
 
     def test_phrase_matching(self):
         """Multi-word phrases are matched correctly."""
-        move = {
-            "severity": "reject",
-            "description": "This should not be done.",
-            "trigger": "test"
-        }
+        move = {"severity": "reject", "description": "This should not be done.", "trigger": "test"}
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is True  # "should not" is hard language
 
@@ -496,7 +477,7 @@ class TestSeverityConsistency:
         move = {
             "severity": "reject",
             "description": "It would be nice to fix this.",
-            "trigger": "test"
+            "trigger": "test",
         }
         is_consistent, reason = _validate_severity_consistency(move)
         assert is_consistent is False
@@ -508,7 +489,7 @@ class TestSeverityConsistency:
             move = {
                 "severity": "nitpick",
                 "description": f"This {indicator} here.",
-                "trigger": "test"
+                "trigger": "test",
             }
             is_consistent, reason = _validate_severity_consistency(move)
             # Should be inconsistent (hard language in nitpick)
@@ -521,7 +502,7 @@ class TestSeverityConsistency:
             move = {
                 "severity": "reject",
                 "description": f"You {indicator} this.",
-                "trigger": "test"
+                "trigger": "test",
             }
             is_consistent, reason = _validate_severity_consistency(move)
             # Should be inconsistent (only soft language in reject)
@@ -533,11 +514,13 @@ class TestParseBatchResponse:
 
     def test_valid_batch_response(self):
         """Valid batch response with correct length parses successfully."""
-        content = json.dumps([
-            {"moves": [{"trigger": "a", "principle": "b"}]},
-            {"moves": [{"trigger": "c", "principle": "d"}]},
-            {"moves": []},
-        ])
+        content = json.dumps(
+            [
+                {"moves": [{"trigger": "a", "principle": "b"}]},
+                {"moves": [{"trigger": "c", "principle": "d"}]},
+                {"moves": []},
+            ]
+        )
         result = _parse_batch_response(content, 3)
         assert len(result) == 3
         assert result[0]["moves"][0]["trigger"] == "a"
@@ -627,7 +610,7 @@ class TestBatchExtraction:
         # Simulate batch failure, then sequential success
         mock_batch.side_effect = RuntimeError("Batch failed")
         mock_extract.return_value = {"email_message_id": "0", "moves": []}
-        
+
         out = tmp_path / "out.jsonl"
         emails = [_make_email(message_id=str(i)) for i in range(2)]
 
@@ -644,7 +627,7 @@ class TestBatchExtraction:
     def test_batch_retry_disabled(self, mock_extract, mock_batch, tmp_path):
         """When batch_retry=False, failed batches return errors."""
         mock_batch.side_effect = RuntimeError("Batch failed")
-        
+
         out = tmp_path / "out.jsonl"
         emails = [_make_email(message_id=str(i)) for i in range(2)]
 

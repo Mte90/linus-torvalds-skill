@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-
 # Get project root
 PROJECT_ROOT = Path(__file__).parent.parent
 BENCHMARK_PATH = PROJECT_ROOT / "data" / "benchmark.jsonl"
@@ -27,13 +26,13 @@ class TestSchemaValidation:
 
     def test_schema_is_valid_json(self):
         """Schema file should be valid JSON."""
-        with open(SCHEMA_PATH, "r") as f:
+        with open(SCHEMA_PATH) as f:
             schema = json.load(f)
         assert isinstance(schema, dict)
 
     def test_schema_has_required_fields(self):
         """Schema should define required fields."""
-        with open(SCHEMA_PATH, "r") as f:
+        with open(SCHEMA_PATH) as f:
             schema = json.load(f)
         assert "required" in schema
         required_fields = schema["required"]
@@ -48,7 +47,7 @@ class TestSchemaValidation:
 
     def test_schema_severity_enum(self):
         """Schema should define valid severities."""
-        with open(SCHEMA_PATH, "r") as f:
+        with open(SCHEMA_PATH) as f:
             schema = json.load(f)
         severity_enum = schema["properties"]["severity"]["enum"]
         assert "reject" in severity_enum
@@ -57,7 +56,7 @@ class TestSchemaValidation:
 
     def test_schema_category_enum(self):
         """Schema should define valid categories."""
-        with open(SCHEMA_PATH, "r") as f:
+        with open(SCHEMA_PATH) as f:
             schema = json.load(f)
         category_enum = schema["properties"]["category"]["enum"]
         expected_categories = [
@@ -88,7 +87,7 @@ class TestFileLoading:
         if not BENCHMARK_PATH.exists():
             pytest.skip(f"Benchmark file not found: {BENCHMARK_PATH}")
         records = []
-        with open(BENCHMARK_PATH, "r") as f:
+        with open(BENCHMARK_PATH) as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -111,7 +110,16 @@ class TestFileLoading:
 
     def test_records_have_required_fields(self, benchmark_records):
         """All records should have required fields."""
-        required_fields = ["id", "file", "line", "severity", "category", "trigger", "description", "expected_severity"]
+        required_fields = [
+            "id",
+            "file",
+            "line",
+            "severity",
+            "category",
+            "trigger",
+            "description",
+            "expected_severity",
+        ]
         for i, record in enumerate(benchmark_records):
             for field in required_fields:
                 assert field in record, f"Record {i} missing field: {field}"
@@ -126,7 +134,7 @@ class TestBenchmarkRequirements:
         if not BENCHMARK_PATH.exists():
             pytest.skip(f"Benchmark file not found: {BENCHMARK_PATH}")
         records = []
-        with open(BENCHMARK_PATH, "r") as f:
+        with open(BENCHMARK_PATH) as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -135,7 +143,9 @@ class TestBenchmarkRequirements:
 
     def test_minimum_entries(self, benchmark_records):
         """Benchmark should have at least 30 entries."""
-        assert len(benchmark_records) >= 30, f"Benchmark has {len(benchmark_records)} entries, minimum is 30"
+        assert len(benchmark_records) >= 30, (
+            f"Benchmark has {len(benchmark_records)} entries, minimum is 30"
+        )
 
     def test_file_coverage(self, benchmark_records):
         """Benchmark should cover at least 8 files."""
@@ -161,6 +171,7 @@ class TestBenchmarkRequirements:
     def test_id_format(self, benchmark_records):
         """All IDs should match SC-XXX format."""
         import re
+
         pattern = re.compile(r"^SC-\d{3}$")
         for i, record in enumerate(benchmark_records):
             assert pattern.match(record["id"]), f"Record {i} has invalid ID format: {record['id']}"
@@ -191,7 +202,9 @@ class TestValidationScript:
             text=True,
             cwd=PROJECT_ROOT,
         )
-        assert result.returncode == 0, f"Validation script failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        assert result.returncode == 0, (
+            f"Validation script failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
 
     def test_validation_script_with_explicit_path(self):
         """Validation script should work with explicit benchmark path."""
@@ -201,7 +214,9 @@ class TestValidationScript:
             text=True,
             cwd=PROJECT_ROOT,
         )
-        assert result.returncode == 0, f"Validation script failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        assert result.returncode == 0, (
+            f"Validation script failed:\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
 
 
 class TestSeverityConsistency:
@@ -213,7 +228,7 @@ class TestSeverityConsistency:
         if not BENCHMARK_PATH.exists():
             pytest.skip(f"Benchmark file not found: {BENCHMARK_PATH}")
         records = []
-        with open(BENCHMARK_PATH, "r") as f:
+        with open(BENCHMARK_PATH) as f:
             for line in f:
                 line = line.strip()
                 if line:

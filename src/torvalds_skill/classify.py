@@ -56,10 +56,7 @@ def is_review(email: EmailRecord) -> bool:
     subject = email.subject.strip()
 
     # must be a reply
-    is_reply = (
-        email.in_reply_to is not None
-        or subject.lower().startswith("re:")
-    )
+    is_reply = email.in_reply_to is not None or subject.lower().startswith("re:")
     if not is_reply:
         # Torvalds sometimes starts threads with review feedback
         # accept if subject references a patch and body is substantial
@@ -89,11 +86,8 @@ def is_review(email: EmailRecord) -> bool:
         return False
 
     # pure ack/sign-off with nothing else
-    lines = [l.strip() for l in body.splitlines() if l.strip()]
-    non_signoff = [
-        l for l in lines
-        if not SIGNOFF_ONLY_RE.match(l)
-    ]
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    non_signoff = [line for line in lines if not SIGNOFF_ONLY_RE.match(line)]
     if not non_signoff:
         return False
 
@@ -101,8 +95,9 @@ def is_review(email: EmailRecord) -> bool:
     # (code references, function names, explanations)
     # rather than being a one-liner + signoff
     substantive_lines = [
-        l for l in non_signoff
-        if len(l) > 30  # real sentences, not just "Agreed."
+        line
+        for line in non_signoff
+        if len(line) > 30  # real sentences, not just "Agreed."
     ]
     if len(substantive_lines) < 1:
         return False

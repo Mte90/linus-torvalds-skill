@@ -7,11 +7,7 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from torvalds_skill.calibrate_interviews import (
-    CANONICAL_CATEGORIES,
-    CANONICAL_SEVERITIES,
     clean_category,
     clean_severity,
     compute_corpus_stats,
@@ -97,17 +93,24 @@ class TestLoadMovesFromJsonl:
     def test_load_single_move(self):
         """Should load a single move correctly."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            f.write(json.dumps({
-                "email_message_id": "test@example.com",
-                "email_date": "2024-01-01",
-                "moves": [{
-                    "trigger": "test trigger",
-                    "principle": "test principle",
-                    "response": "test response",
-                    "severity": "reject",
-                    "category": "testing",
-                }],
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "email_message_id": "test@example.com",
+                        "email_date": "2024-01-01",
+                        "moves": [
+                            {
+                                "trigger": "test trigger",
+                                "principle": "test principle",
+                                "response": "test response",
+                                "severity": "reject",
+                                "category": "testing",
+                            }
+                        ],
+                    }
+                )
+                + "\n"
+            )
             f.flush()
             moves = load_moves_from_jsonl(Path(f.name), "email")
             assert len(moves) == 1
@@ -118,14 +121,31 @@ class TestLoadMovesFromJsonl:
     def test_load_multiple_moves_per_email(self):
         """Should load multiple moves from a single email."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            f.write(json.dumps({
-                "email_message_id": "test@example.com",
-                "email_date": "2024-01-01",
-                "moves": [
-                    {"trigger": "t1", "principle": "p1", "response": "r1", "severity": "reject", "category": "testing"},
-                    {"trigger": "t2", "principle": "p2", "response": "r2", "severity": "approve", "category": "correctness"},
-                ],
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "email_message_id": "test@example.com",
+                        "email_date": "2024-01-01",
+                        "moves": [
+                            {
+                                "trigger": "t1",
+                                "principle": "p1",
+                                "response": "r1",
+                                "severity": "reject",
+                                "category": "testing",
+                            },
+                            {
+                                "trigger": "t2",
+                                "principle": "p2",
+                                "response": "r2",
+                                "severity": "approve",
+                                "category": "correctness",
+                            },
+                        ],
+                    }
+                )
+                + "\n"
+            )
             f.flush()
             moves = load_moves_from_jsonl(Path(f.name), "email")
             assert len(moves) == 2
@@ -133,17 +153,24 @@ class TestLoadMovesFromJsonl:
     def test_filters_invalid_category(self):
         """Moves with invalid categories should be filtered out."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            f.write(json.dumps({
-                "email_message_id": "test@example.com",
-                "email_date": "2024-01-01",
-                "moves": [{
-                    "trigger": "test",
-                    "principle": "test",
-                    "response": "test",
-                    "severity": "reject",
-                    "category": "invalid-category",
-                }],
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "email_message_id": "test@example.com",
+                        "email_date": "2024-01-01",
+                        "moves": [
+                            {
+                                "trigger": "test",
+                                "principle": "test",
+                                "response": "test",
+                                "severity": "reject",
+                                "category": "invalid-category",
+                            }
+                        ],
+                    }
+                )
+                + "\n"
+            )
             f.flush()
             moves = load_moves_from_jsonl(Path(f.name), "email")
             assert len(moves) == 0
@@ -151,17 +178,24 @@ class TestLoadMovesFromJsonl:
     def test_filters_invalid_severity(self):
         """Moves with invalid severities should be filtered out."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            f.write(json.dumps({
-                "email_message_id": "test@example.com",
-                "email_date": "2024-01-01",
-                "moves": [{
-                    "trigger": "test",
-                    "principle": "test",
-                    "response": "test",
-                    "severity": "invalid-severity",
-                    "category": "testing",
-                }],
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "email_message_id": "test@example.com",
+                        "email_date": "2024-01-01",
+                        "moves": [
+                            {
+                                "trigger": "test",
+                                "principle": "test",
+                                "response": "test",
+                                "severity": "invalid-severity",
+                                "category": "testing",
+                            }
+                        ],
+                    }
+                )
+                + "\n"
+            )
             f.flush()
             moves = load_moves_from_jsonl(Path(f.name), "email")
             assert len(moves) == 0
@@ -169,11 +203,24 @@ class TestLoadMovesFromJsonl:
     def test_handles_empty_lines(self):
         """Empty lines should be skipped."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            f.write(json.dumps({
-                "email_message_id": "test@example.com",
-                "email_date": "2024-01-01",
-                "moves": [{"trigger": "t", "principle": "p", "response": "r", "severity": "reject", "category": "testing"}],
-            }) + "\n\n")
+            f.write(
+                json.dumps(
+                    {
+                        "email_message_id": "test@example.com",
+                        "email_date": "2024-01-01",
+                        "moves": [
+                            {
+                                "trigger": "t",
+                                "principle": "p",
+                                "response": "r",
+                                "severity": "reject",
+                                "category": "testing",
+                            }
+                        ],
+                    }
+                )
+                + "\n\n"
+            )
             f.flush()
             moves = load_moves_from_jsonl(Path(f.name), "email")
             assert len(moves) == 1
@@ -181,11 +228,24 @@ class TestLoadMovesFromJsonl:
     def test_extract_year_from_date(self):
         """Year should be extracted from email_date."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            f.write(json.dumps({
-                "email_message_id": "test@example.com",
-                "email_date": "2023-06-15",
-                "moves": [{"trigger": "t", "principle": "p", "response": "r", "severity": "reject", "category": "testing"}],
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "email_message_id": "test@example.com",
+                        "email_date": "2023-06-15",
+                        "moves": [
+                            {
+                                "trigger": "t",
+                                "principle": "p",
+                                "response": "r",
+                                "severity": "reject",
+                                "category": "testing",
+                            }
+                        ],
+                    }
+                )
+                + "\n"
+            )
             f.flush()
             moves = load_moves_from_jsonl(Path(f.name), "email")
             assert moves[0]["year"] == 2023
@@ -193,11 +253,24 @@ class TestLoadMovesFromJsonl:
     def test_invalid_date_year(self):
         """Invalid date should result in None year."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            f.write(json.dumps({
-                "email_message_id": "test@example.com",
-                "email_date": "invalid",
-                "moves": [{"trigger": "t", "principle": "p", "response": "r", "severity": "reject", "category": "testing"}],
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "email_message_id": "test@example.com",
+                        "email_date": "invalid",
+                        "moves": [
+                            {
+                                "trigger": "t",
+                                "principle": "p",
+                                "response": "r",
+                                "severity": "reject",
+                                "category": "testing",
+                            }
+                        ],
+                    }
+                )
+                + "\n"
+            )
             f.flush()
             moves = load_moves_from_jsonl(Path(f.name), "email")
             assert moves[0]["year"] is None
@@ -209,9 +282,33 @@ class TestComputeSeverityByCategory:
     def test_single_category_single_severity(self):
         """Single category with single severity should show 100%."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
         ]
         result = compute_severity_by_category(moves)
         assert "testing" in result
@@ -221,9 +318,33 @@ class TestComputeSeverityByCategory:
     def test_multiple_severities(self):
         """Multiple severities should show correct distribution."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "testing", "severity": "approve", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "approve",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
         ]
         result = compute_severity_by_category(moves)
         assert result["testing"]["percentages"]["reject"] == 66.7
@@ -232,9 +353,33 @@ class TestComputeSeverityByCategory:
     def test_dominant_severity(self):
         """Dominant severity should be the most common one."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "testing", "severity": "approve", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "testing", "severity": "approve", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "approve",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "approve",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
         ]
         result = compute_severity_by_category(moves)
         assert result["testing"]["dominant_severity"] == "approve"
@@ -247,8 +392,24 @@ class TestComputeSeverityByCategory:
     def test_multiple_categories(self):
         """Multiple categories should each have their own distribution."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "correctness", "severity": "approve", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "correctness",
+                "severity": "approve",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
         ]
         result = compute_severity_by_category(moves)
         assert "testing" in result
@@ -263,8 +424,24 @@ class TestComputeTemporalTrends:
     def test_year_range(self):
         """Year range should be computed correctly."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2020, "source": "email"},
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2023, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2020,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2023,
+                "source": "email",
+            },
         ]
         result = compute_temporal_trends(moves)
         assert result["year_range"] == [2020, 2023]
@@ -272,9 +449,33 @@ class TestComputeTemporalTrends:
     def test_total_per_year(self):
         """Total moves per year should be counted correctly."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2020, "source": "email"},
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2020, "source": "email"},
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2021, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2020,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2020,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2021,
+                "source": "email",
+            },
         ]
         result = compute_temporal_trends(moves)
         assert result["total_per_year"]["2020"] == 2
@@ -283,8 +484,24 @@ class TestComputeTemporalTrends:
     def test_reject_rate_per_year(self):
         """Reject rate per year should be computed correctly."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2020, "source": "email"},
-            {"category": "testing", "severity": "approve", "trigger": "", "principle": "", "response": "", "year": 2020, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2020,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "approve",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2020,
+                "source": "email",
+            },
         ]
         result = compute_temporal_trends(moves)
         assert result["reject_rate_per_year"]["2020"] == 50.0
@@ -297,8 +514,24 @@ class TestComputeTemporalTrends:
     def test_null_year_ignored(self):
         """Moves with null year should be ignored in temporal trends."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": None, "source": "email"},
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2020, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": None,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2020,
+                "source": "email",
+            },
         ]
         result = compute_temporal_trends(moves)
         # Bug: year_range is [2020, 2020] instead of [2020]
@@ -312,8 +545,24 @@ class TestComputeCorpusStats:
     def test_total_moves_count(self):
         """Total moves should be counted correctly."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
         ]
         result = compute_corpus_stats(moves, email_count=1, interview_count=0)
         assert result["total_moves"] == 2
@@ -321,7 +570,15 @@ class TestComputeCorpusStats:
     def test_source_breakdown(self):
         """Source breakdown should match input counts."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
         ]
         result = compute_corpus_stats(moves, email_count=1, interview_count=2)
         assert result["total_emails"] == 1
@@ -330,8 +587,24 @@ class TestComputeCorpusStats:
     def test_severity_distribution(self):
         """Severity distribution should be computed correctly."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "testing", "severity": "approve", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "testing",
+                "severity": "approve",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
         ]
         result = compute_corpus_stats(moves, email_count=1, interview_count=0)
         assert result["severity_distribution"]["reject"]["count"] == 1
@@ -340,8 +613,24 @@ class TestComputeCorpusStats:
     def test_category_distribution(self):
         """Category distribution should be computed correctly."""
         moves = [
-            {"category": "testing", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
-            {"category": "correctness", "severity": "reject", "trigger": "", "principle": "", "response": "", "year": 2024, "source": "email"},
+            {
+                "category": "testing",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "correctness",
+                "severity": "reject",
+                "trigger": "",
+                "principle": "",
+                "response": "",
+                "year": 2024,
+                "source": "email",
+            },
         ]
         result = compute_corpus_stats(moves, email_count=1, interview_count=0)
         assert result["category_distribution"]["testing"]["count"] == 1
@@ -371,8 +660,24 @@ class TestLanguageAgnosticism:
     def test_category_based_only(self):
         """Calibration should be based on categories, not specific code terms."""
         moves = [
-            {"category": "memory-safety", "severity": "reject", "trigger": "buffer overflow", "principle": "check bounds", "response": "add bounds check", "year": 2024, "source": "email"},
-            {"category": "memory-safety", "severity": "reject", "trigger": "null pointer", "principle": "check null", "response": "add null check", "year": 2024, "source": "email"},
+            {
+                "category": "memory-safety",
+                "severity": "reject",
+                "trigger": "buffer overflow",
+                "principle": "check bounds",
+                "response": "add bounds check",
+                "year": 2024,
+                "source": "email",
+            },
+            {
+                "category": "memory-safety",
+                "severity": "reject",
+                "trigger": "null pointer",
+                "principle": "check null",
+                "response": "add null check",
+                "year": 2024,
+                "source": "email",
+            },
         ]
         result = compute_severity_by_category(moves)
         # Result should only contain category/severity data, not trigger text

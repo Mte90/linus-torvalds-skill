@@ -7,19 +7,14 @@ generate_reproduce_script, and run_audit with temp directories and mock files.
 import json
 import os
 import stat
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from torvalds_skill.audit import (
-    log_decision,
     generate_audit_report,
     generate_flowchart,
     generate_reproduce_script,
+    log_decision,
     run_audit,
-    REPORT_DIR,
-    ROOT,
 )
 
 
@@ -30,13 +25,13 @@ class TestLogDecision:
         """log_decision writes a JSON line with timestamp, stage, and kwargs."""
         with patch("torvalds_skill.audit.REPORT_DIR", tmp_path):
             log_decision("extract", model="gpt-oss-120b", seed=42)
-            
+
             decisions_path = tmp_path / "decisions.jsonl"
             assert decisions_path.exists()
-            
+
             lines = decisions_path.read_text(encoding="utf-8").strip().splitlines()
             assert len(lines) == 1
-            
+
             record = json.loads(lines[0])
             assert "timestamp" in record
             assert record["stage"] == "extract"
@@ -47,10 +42,10 @@ class TestLogDecision:
         """log_decision creates report/ directory if it doesn't exist."""
         fake_report_dir = tmp_path / "nonexistent_report"
         assert not fake_report_dir.exists()
-        
+
         with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
             log_decision("classify")
-        
+
         assert fake_report_dir.exists()
         assert (fake_report_dir / "decisions.jsonl").exists()
 
@@ -60,11 +55,11 @@ class TestLogDecision:
             log_decision("extract", model="model1")
             log_decision("cluster", seed=42)
             log_decision("distill", top_n=40)
-            
+
             decisions_path = tmp_path / "decisions.jsonl"
             lines = decisions_path.read_text(encoding="utf-8").strip().splitlines()
             assert len(lines) == 3
-            
+
             records = [json.loads(line) for line in lines]
             assert records[0]["stage"] == "extract"
             assert records[1]["stage"] == "cluster"
@@ -79,12 +74,12 @@ class TestLogDecision:
                 prompt_hash="abc123",
                 params={"temperature": 0.1},
                 seed=42,
-                truncation_handling=True
+                truncation_handling=True,
             )
-            
+
             decisions_path = tmp_path / "decisions.jsonl"
             record = json.loads(decisions_path.read_text(encoding="utf-8").strip())
-            
+
             assert record["model"] == "gpt-oss-120b"
             assert record["prompt_hash"] == "abc123"
             assert record["params"] == {"temperature": 0.1}
@@ -100,12 +95,12 @@ class TestGenerateAuditReport:
         fake_data_dir = tmp_path / "data"
         fake_report_dir = tmp_path / "report"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
             with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     report = generate_audit_report()
-        
+
         assert "emails_in" in report
         assert "moves_extracted" in report
         assert "moves_sampled" in report
@@ -118,15 +113,15 @@ class TestGenerateAuditReport:
         fake_data_dir.mkdir()
         mbox_path = fake_data_dir / "torvalds.mbox"
         mbox_path.write_text("email1\nemail2\nemail3\n", encoding="utf-8")
-        
+
         fake_report_dir = tmp_path / "report"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
             with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     report = generate_audit_report()
-        
+
         assert report["emails_in"] == 3
 
     def test_moves_extracted_from_moves_jsonl(self, tmp_path):
@@ -135,15 +130,15 @@ class TestGenerateAuditReport:
         fake_data_dir.mkdir()
         moves_path = fake_data_dir / "moves.jsonl"
         moves_path.write_text('{"moves": []}\n{"moves": []}\n', encoding="utf-8")
-        
+
         fake_report_dir = tmp_path / "report"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
             with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     report = generate_audit_report()
-        
+
         assert report["moves_extracted"] == 2
 
     def test_moves_sampled_from_patterns_json(self, tmp_path):
@@ -151,21 +146,26 @@ class TestGenerateAuditReport:
         fake_data_dir = tmp_path / "data"
         fake_data_dir.mkdir()
         patterns_path = fake_data_dir / "patterns.json"
-        patterns_path.write_text(json.dumps({
-            "samples_by_category": {
-                "category1": [{"trigger": "a"}, {"trigger": "b"}],
-                "category2": [{"trigger": "c"}],
-            }
-        }), encoding="utf-8")
-        
+        patterns_path.write_text(
+            json.dumps(
+                {
+                    "samples_by_category": {
+                        "category1": [{"trigger": "a"}, {"trigger": "b"}],
+                        "category2": [{"trigger": "c"}],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
         fake_report_dir = tmp_path / "report"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
             with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     report = generate_audit_report()
-        
+
         assert report["moves_sampled"] == 3
 
     def test_skill_words_out_from_skill_md(self, tmp_path):
@@ -174,15 +174,15 @@ class TestGenerateAuditReport:
         fake_skill_dir.mkdir()
         skill_path = fake_skill_dir / "SKILL.md"
         skill_path.write_text("one two three four five", encoding="utf-8")
-        
+
         fake_data_dir = tmp_path / "data"
         fake_report_dir = tmp_path / "report"
-        
+
         with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
             with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     report = generate_audit_report()
-        
+
         assert report["skill_words_out"] == 5
 
     def test_decisions_logged_from_decisions_jsonl(self, tmp_path):
@@ -191,15 +191,15 @@ class TestGenerateAuditReport:
         fake_report_dir.mkdir()
         decisions_path = fake_report_dir / "decisions.jsonl"
         decisions_path.write_text('{"stage": "extract"}\n{"stage": "cluster"}\n', encoding="utf-8")
-        
+
         fake_data_dir = tmp_path / "data"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
             with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     report = generate_audit_report()
-        
+
         assert report["decisions_logged"] == 2
 
     def test_writes_audit_report_json(self, tmp_path):
@@ -207,15 +207,15 @@ class TestGenerateAuditReport:
         fake_report_dir = tmp_path / "report"
         fake_data_dir = tmp_path / "data"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
             with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     generate_audit_report()
-        
+
         report_path = fake_report_dir / "audit_report.json"
         assert report_path.exists()
-        
+
         saved_report = json.loads(report_path.read_text(encoding="utf-8"))
         assert "emails_in" in saved_report
 
@@ -224,13 +224,13 @@ class TestGenerateAuditReport:
         fake_data_dir = tmp_path / "data"
         fake_report_dir = tmp_path / "report"
         fake_skill_dir = tmp_path / "skill"
-        
+
         # Don't create any files - all should be zeros
         with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
             with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     report = generate_audit_report()
-        
+
         assert report["emails_in"] == 0
         assert report["moves_extracted"] == 0
         assert report["moves_sampled"] == 0
@@ -246,12 +246,12 @@ class TestGenerateFlowchart:
         fake_report_dir = tmp_path / "report"
         fake_data_dir = tmp_path / "data"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
             with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     flowchart = generate_flowchart()
-        
+
         assert "flowchart" in flowchart or "graph" in flowchart
         assert "-->" in flowchart
 
@@ -260,12 +260,12 @@ class TestGenerateFlowchart:
         fake_report_dir = tmp_path / "report"
         fake_data_dir = tmp_path / "data"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
             with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     generate_flowchart()
-        
+
         flowchart_path = fake_report_dir / "pipeline_flowchart.mmd"
         assert flowchart_path.exists()
 
@@ -275,22 +275,27 @@ class TestGenerateFlowchart:
         fake_report_dir.mkdir()
         fake_data_dir = tmp_path / "data"
         fake_skill_dir = tmp_path / "skill"
-        
+
         # Create a mock audit report
         report_path = fake_report_dir / "audit_report.json"
-        report_path.write_text(json.dumps({
-            "emails_in": 100,
-            "moves_extracted": 50,
-            "moves_sampled": 25,
-            "skill_words_out": 5000,
-            "decisions_logged": 10,
-        }), encoding="utf-8")
-        
+        report_path.write_text(
+            json.dumps(
+                {
+                    "emails_in": 100,
+                    "moves_extracted": 50,
+                    "moves_sampled": 25,
+                    "skill_words_out": 5000,
+                    "decisions_logged": 10,
+                }
+            ),
+            encoding="utf-8",
+        )
+
         with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
             with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     flowchart = generate_flowchart()
-        
+
         assert "100" in flowchart
         assert "5000" in flowchart
 
@@ -299,12 +304,12 @@ class TestGenerateFlowchart:
         fake_report_dir = tmp_path / "report"
         fake_data_dir = tmp_path / "data"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
             with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
                 with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                     flowchart = generate_flowchart()
-        
+
         assert "classify" in flowchart
         assert "extract" in flowchart
         assert "cluster" in flowchart
@@ -318,10 +323,10 @@ class TestGenerateReproduceScript:
     def test_contains_pipeline_commands(self, tmp_path):
         """Script contains torvalds_skill subcommands."""
         fake_root = tmp_path
-        
+
         with patch("torvalds_skill.audit.ROOT", fake_root):
             script = generate_reproduce_script()
-        
+
         assert "python -m torvalds_skill.classify" in script
         assert "python -m torvalds_skill.extract" in script
         assert "python -m torvalds_skill.cluster" in script
@@ -330,20 +335,20 @@ class TestGenerateReproduceScript:
     def test_writes_reproduce_sh_at_root(self, tmp_path):
         """Script is written to repo root as reproduce.sh."""
         fake_root = tmp_path
-        
+
         with patch("torvalds_skill.audit.ROOT", fake_root):
             generate_reproduce_script()
-        
+
         script_path = fake_root / "reproduce.sh"
         assert script_path.exists()
 
     def test_makes_script_executable(self, tmp_path):
         """Script has executable permissions."""
         fake_root = tmp_path
-        
+
         with patch("torvalds_skill.audit.ROOT", fake_root):
             generate_reproduce_script()
-        
+
         script_path = fake_root / "reproduce.sh"
         mode = os.stat(script_path).st_mode
         assert mode & stat.S_IXUSR  # User execute bit
@@ -351,10 +356,10 @@ class TestGenerateReproduceScript:
     def test_script_has_shebang(self, tmp_path):
         """Script starts with shebang."""
         fake_root = tmp_path
-        
+
         with patch("torvalds_skill.audit.ROOT", fake_root):
             script = generate_reproduce_script()
-        
+
         assert script.startswith("#!/usr/bin/env bash")
 
 
@@ -367,15 +372,15 @@ class TestRunAudit:
         fake_data_dir = tmp_path / "data"
         fake_report_dir = tmp_path / "report"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.ROOT", fake_root):
             with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
                 with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                     with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                         # Log a decision first to create the file
                         log_decision("test", extra_field="test")
-                        report = run_audit()
-        
+                        run_audit()
+
         assert (fake_report_dir / "decisions.jsonl").exists()
         assert (fake_report_dir / "audit_report.json").exists()
         assert (fake_report_dir / "pipeline_flowchart.mmd").exists()
@@ -387,13 +392,13 @@ class TestRunAudit:
         fake_data_dir = tmp_path / "data"
         fake_report_dir = tmp_path / "report"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.ROOT", fake_root):
             with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
                 with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                     with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                         report = run_audit()
-        
+
         assert isinstance(report, dict)
         assert "emails_in" in report
         assert "moves_extracted" in report
@@ -404,13 +409,13 @@ class TestRunAudit:
         fake_data_dir = tmp_path / "data"
         fake_report_dir = tmp_path / "report"
         fake_skill_dir = tmp_path / "skill"
-        
+
         with patch("torvalds_skill.audit.ROOT", fake_root):
             with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
                 with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                     with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
                         run_audit()
-        
+
         captured = capsys.readouterr()
         assert "AUDIT SUMMARY" in captured.out
         assert "Emails in corpus" in captured.out

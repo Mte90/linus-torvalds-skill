@@ -16,8 +16,8 @@ import json
 import random
 import re
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 import click
@@ -27,18 +27,16 @@ from .models import EmailRecord
 
 # Output paths
 VARIATION_OUTPUT = Path(__file__).resolve().parent.parent.parent / "data" / "variation.jsonl"
-VARIATION_CHECKPOINT = Path(__file__).resolve().parent.parent.parent / "data" / "variation_checkpoint.jsonl"
+VARIATION_CHECKPOINT = (
+    Path(__file__).resolve().parent.parent.parent / "data" / "variation_checkpoint.jsonl"
+)
 
 # Finality signals in subject line
-FINALITY_SIGNALS = re.compile(
-    r"\b(applied|merged|rejected|acked|pulled)\b",
-    re.IGNORECASE
-)
+FINALITY_SIGNALS = re.compile(r"\b(applied|merged|rejected|acked|pulled)\b", re.IGNORECASE)
 
 # Urgency signals in subject line
 URGENCY_SIGNALS = re.compile(
-    r"(-rc|merge\s+window|release\s+blocker|critical\s+fix)",
-    re.IGNORECASE
+    r"(-rc|merge\s+window|release\s+blocker|critical\s+fix)", re.IGNORECASE
 )
 
 
@@ -99,9 +97,7 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
     body_truncated = email.body[:2000]
 
     user_content = (
-        f"Subject: {email.subject}\n"
-        f"Email Body (truncated to 2000 chars):\n"
-        f"{body_truncated}"
+        f"Subject: {email.subject}\nEmail Body (truncated to 2000 chars):\n{body_truncated}"
     )
 
     payload = {
@@ -126,7 +122,7 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
                     "- Use ONLY the provided categories\n"
                     "- Base classification on the email body content\n"
                     "- If unclear, default to 'medium' stakes and 'correctness' risk"
-                )
+                ),
             },
             {"role": "user", "content": user_content},
         ],
@@ -151,10 +147,14 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
         except urllib.error.HTTPError as e:
             last_err = e
             if e.code == 429:
-                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(0, config.RETRY_DELAY)
+                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(
+                    0, config.RETRY_DELAY
+                )
                 time.sleep(wait)
             elif e.code >= 500:
-                time.sleep(config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY))
+                time.sleep(
+                    config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
+                )
             else:
                 raise
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
@@ -288,7 +288,7 @@ def run_variation(mbox_path: str, resume: bool = False) -> dict:
     errors = 0
 
     # Read all emails from mbox
-    with open(mbox_path, "r", encoding="utf-8", errors="replace") as f:
+    with open(mbox_path, encoding="utf-8", errors="replace") as f:
         emails = list(message_from_file(f, headersonly=False))
 
     total = len(emails)
@@ -327,12 +327,16 @@ def run_variation(mbox_path: str, resume: bool = False) -> dict:
                     content_type = part.get_content_type()
                     if content_type == "text/plain":
                         try:
-                            body_parts.append(part.get_payload(decode=True).decode("utf-8", errors="replace"))
+                            body_parts.append(
+                                part.get_payload(decode=True).decode("utf-8", errors="replace")
+                            )
                         except Exception:
                             continue
             else:
                 try:
-                    body_parts.append(msg.get_payload(decode=True).decode("utf-8", errors="replace"))
+                    body_parts.append(
+                        msg.get_payload(decode=True).decode("utf-8", errors="replace")
+                    )
                 except Exception:
                     pass
 
@@ -403,15 +407,13 @@ def run_variation(mbox_path: str, resume: bool = False) -> dict:
 
 @click.command()
 @click.option(
-    "--mbox",
-    default="data/lkml.mbox",
-    help="Path to the mbox file (default: data/lkml.mbox)"
+    "--mbox", default="data/lkml.mbox", help="Path to the mbox file (default: data/lkml.mbox)"
 )
 @click.option(
     "--resume",
     is_flag=True,
     default=False,
-    help="Resume from checkpoint, skipping already processed emails"
+    help="Resume from checkpoint, skipping already processed emails",
 )
 def main(mbox: str, resume: bool):
     """Extract context signals from LKML emails.
@@ -428,7 +430,7 @@ def main(mbox: str, resume: bool):
     if resume:
         print("Resume mode: will skip already processed emails")
 
-    result = run_variation(mbox, resume=resume)
+    run_variation(mbox, resume=resume)
     print(f"\nExtraction complete. Results written to {VARIATION_OUTPUT}")
 
 

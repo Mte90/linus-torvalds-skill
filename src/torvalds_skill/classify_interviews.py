@@ -23,7 +23,6 @@ import json
 import re
 from pathlib import Path
 
-
 # Patterns that indicate non-substantive content
 INTRO_PATTERNS = [
     r"welcome\s+to",
@@ -137,60 +136,127 @@ PERSONAL_PATTERNS = [
 
 # Core kernel development keywords (must have at least one)
 CORE_KERNEL_KEYWORDS = [
-    "kernel", "kernels", "linux kernel",
-    "patch", "patches",
-    "maintainer", "maintainers", "maintainership",
-    "merge", "merging", "merge window",
-    "pull request", "pull requests", "pulling",
-    "commit", "commits",
+    "kernel",
+    "kernels",
+    "linux kernel",
+    "patch",
+    "patches",
+    "maintainer",
+    "maintainers",
+    "maintainership",
+    "merge",
+    "merging",
+    "merge window",
+    "pull request",
+    "pull requests",
+    "pulling",
+    "commit",
+    "commits",
     "git",
-    "lkml", "mailing list",
+    "lkml",
+    "mailing list",
     "upstream",
-    "subsystem", "subsystems",
-    "tree", "git tree", "source tree",
-    "branch", "branches",
-    "tag", "tags",
-    "release", "releases", "kernel release",
-    "stable", "lts",
+    "subsystem",
+    "subsystems",
+    "tree",
+    "git tree",
+    "source tree",
+    "branch",
+    "branches",
+    "tag",
+    "tags",
+    "release",
+    "releases",
+    "kernel release",
+    "stable",
+    "lts",
     "mainline",
-    "gpl", "license", "licensing",
-    "code review", "code reviews", "review", "reviewing",
-    "bug", "bugs", "bug fix", "bugfix",
-    "fix", "fixes", "fixing",
-    "driver", "drivers", "device driver",
-    "filesystem", "fs",
-    "memory management", "memory allocation",
-    "concurrency", "parallel", "thread", "threads",
-    "locking", "mutex", "semaphore", "race condition",
-    "c language", "c++", "rust",
-    "compiler", "build",
-    "debug", "debugging",
-    "performance", "perf",
-    "complexity", "complex",
-    "correctness", "correct",
-    "security", "vulnerability",
-    "abstraction", "api", "interface",
-    "architecture", "architectural",
-    "design", "software design",
-    "engineering", "engineer",
-    "technical", "technology",
-    "implementation", "implement",
-    "refactor", "refactoring",
-    "documentation", "docs",
-    "syscall", "system call",
+    "gpl",
+    "license",
+    "licensing",
+    "code review",
+    "code reviews",
+    "review",
+    "reviewing",
+    "bug",
+    "bugs",
+    "bug fix",
+    "bugfix",
+    "fix",
+    "fixes",
+    "fixing",
+    "driver",
+    "drivers",
+    "device driver",
+    "filesystem",
+    "fs",
+    "memory management",
+    "memory allocation",
+    "concurrency",
+    "parallel",
+    "thread",
+    "threads",
+    "locking",
+    "mutex",
+    "semaphore",
+    "race condition",
+    "c language",
+    "c++",
+    "rust",
+    "compiler",
+    "build",
+    "debug",
+    "debugging",
+    "performance",
+    "perf",
+    "complexity",
+    "complex",
+    "correctness",
+    "correct",
+    "security",
+    "vulnerability",
+    "abstraction",
+    "api",
+    "interface",
+    "architecture",
+    "architectural",
+    "design",
+    "software design",
+    "engineering",
+    "engineer",
+    "technical",
+    "technology",
+    "implementation",
+    "implement",
+    "refactor",
+    "refactoring",
+    "documentation",
+    "docs",
+    "syscall",
+    "system call",
     "storage",
-    "heap", "stack",
-    "optimization", "optimize",
+    "heap",
+    "stack",
+    "optimization",
+    "optimize",
     "regression",
-    "backport", "cherry-pick",
+    "backport",
+    "cherry-pick",
     "downstream",
-    "version control", "vcs",
+    "version control",
+    "vcs",
     "defect",
-    "test", "testing", "tests", "test coverage",
-    "benchmark", "benchmarking",
+    "test",
+    "testing",
+    "tests",
+    "test coverage",
+    "benchmark",
+    "benchmarking",
     "profiling",
-    "slow", "speed",
-    "simple", "simplify",
+    "slow",
+    "speed",
+    "simple",
+    "simplify",
     "incorrect",
     "vulnerabilities",
     "programming language",
@@ -201,12 +267,21 @@ CORE_KERNEL_KEYWORDS = [
     "long-term support",
     "linux-maintainers",
     "open source",
-    "fork", "forking", "derivative",
-    "contribution", "contributions", "contributor",
+    "fork",
+    "forking",
+    "derivative",
+    "contribution",
+    "contributions",
+    "contributor",
     "developer community",
-    "governance", "decision making",
-    "conflict", "disagreement", "resolution",
-    "meritocracy", "bdfl", "benevolent dictator",
+    "governance",
+    "decision making",
+    "conflict",
+    "disagreement",
+    "resolution",
+    "meritocracy",
+    "bdfl",
+    "benevolent dictator",
 ]
 
 # Must contain Linus/Torvalds reference or be a direct quote
@@ -935,10 +1010,10 @@ def mentions_linus(text: str) -> bool:
 def split_into_passages(content: str) -> list[str]:
     """Split interview content into passages (paragraphs)."""
     # Normalize line endings
-    content = content.replace('\r\n', '\n').replace('\r', '\n')
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
 
     # Split on double newlines (paragraph boundaries)
-    paragraphs = re.split(r'\n\s*\n', content)
+    paragraphs = re.split(r"\n\s*\n", content)
 
     passages = []
     for para in paragraphs:
@@ -956,7 +1031,7 @@ def classify_passage(passage: str) -> tuple[bool, str]:
     Returns:
         (keep, reason): True if passage should be kept, with reason
     """
-    passage_lower = passage.lower()
+    passage.lower()
 
     # Filter promotional content
     if is_promotional(passage):
@@ -993,11 +1068,11 @@ def extract_context(passage: str, all_passages: list[str], idx: int) -> str:
             context_parts.append(prev.strip())
 
     # Use first sentence of passage as additional context
-    first_sentence = passage.split('.')[0]
+    first_sentence = passage.split(".")[0]
     if len(first_sentence) < 100:
         context_parts.append(first_sentence.strip())
 
-    return ' | '.join(context_parts[:2]) if context_parts else ""
+    return " | ".join(context_parts[:2]) if context_parts else ""
 
 
 def classify_interviews(input_dir: str, output_path: str) -> int:
@@ -1023,10 +1098,10 @@ def classify_interviews(input_dir: str, output_path: str) -> int:
     # Get all .md files
     md_files = sorted(input_path.glob("*.md"))
 
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         for md_file in md_files:
             try:
-                content = md_file.read_text(encoding='utf-8')
+                content = md_file.read_text(encoding="utf-8")
             except Exception:
                 continue
 
@@ -1057,7 +1132,7 @@ def classify_interviews(input_dir: str, output_path: str) -> int:
                         "context": context,
                     }
 
-                    f.write(json.dumps(record, ensure_ascii=False) + '\n')
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
                     classified_count += 1
 
     return classified_count
@@ -1072,12 +1147,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input-dir",
         default="data/interviews/",
-        help="Directory containing .md interview files (default: data/interviews/)"
+        help="Directory containing .md interview files (default: data/interviews/)",
     )
     parser.add_argument(
         "--output",
         default="data/interviews_classified.jsonl",
-        help="Output JSONL file path (default: data/interviews_classified.jsonl)"
+        help="Output JSONL file path (default: data/interviews_classified.jsonl)",
     )
 
     args = parser.parse_args()

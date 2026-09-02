@@ -10,21 +10,23 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import sys
 import signal
-import time
-import urllib.request
-import urllib.error
-from pathlib import Path
+import sys
 
 # Import config from the project package (adds .env loading + env var aliases)
 import sys as _sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
 from pathlib import Path as _Path
+
 _SRC = _Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in _sys.path:
     _sys.path.insert(0, str(_SRC))
-from torvalds_skill import config as project_config
+from torvalds_skill import (  # noqa: E402  # import not at top due to sys.path manipulation
+    config as project_config,
+)
 
 CHAT_URL = project_config.CHAT_URL
 
@@ -79,13 +81,13 @@ def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
         payload["max_tokens"] = project_config.GLM_MAX_TOKENS if project_config else 32000
 
     print("streaming...", file=sys.stderr)
-    
+
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(CHAT_URL, data=body, headers=headers(), method="POST")
-    
+
     content_parts = []
     reasoning_parts = []
-    read_timeout = getattr(project_config, 'READ_TIMEOUT', 120) if project_config else 120
+    read_timeout = getattr(project_config, "READ_TIMEOUT", 120) if project_config else 120
     with _WallClockTimeout(timeout):
         with urllib.request.urlopen(req, timeout=read_timeout) as resp:
             for raw in resp:
@@ -137,9 +139,9 @@ def main():
     if args.timeout:
         timeout = args.timeout
     elif "glm" in args.model.lower():
-        timeout = getattr(project_config, 'WALL_CLOCK_GLM', 1800) if project_config else 1800
+        timeout = getattr(project_config, "WALL_CLOCK_GLM", 1800) if project_config else 1800
     else:
-        timeout = getattr(project_config, 'WALL_CLOCK_LONG', 900) if project_config else 600
+        timeout = getattr(project_config, "WALL_CLOCK_LONG", 900) if project_config else 600
 
     # Call API with retry
     for attempt in range(2):

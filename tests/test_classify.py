@@ -38,8 +38,8 @@ class TestReviewFiltering:
         email = _make_email(
             subject="Re: Fix memory leak in network driver",
             body="The issue is that the buffer is allocated but never freed. "
-                 "You need to add a kfree() call in the error path. "
-                 "This is a critical bug that needs to be fixed before merging.",
+            "You need to add a kfree() call in the error path. "
+            "This is a critical bug that needs to be fixed before merging.",
         )
         assert is_review(email) is True
 
@@ -49,8 +49,8 @@ class TestReviewFiltering:
             subject="Patch review: network driver fixes",
             in_reply_to=None,
             body="This patch series has good overall structure but the error handling "
-                 "in the second patch needs work. The cleanup path should be more "
-                 "consistent with the rest of the kernel.",
+            "in the second patch needs work. The cleanup path should be more "
+            "consistent with the rest of the kernel.",
         )
         assert is_review(email) is True
 
@@ -58,14 +58,17 @@ class TestReviewFiltering:
 class TestAnnouncementFiltering:
     """Test that announcements are filtered out."""
 
-    @pytest.mark.parametrize("subject", [
-        "Linux 6.7 release",
-        "Linux 6.8-rc1",
-        "git pull request",
-        "Pull request for networking",
-        "merge branch topic",
-        "merge tag v6.7",
-    ])
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "Linux 6.7 release",
+            "Linux 6.8-rc1",
+            "git pull request",
+            "Pull request for networking",
+            "merge branch topic",
+            "merge tag v6.7",
+        ],
+    )
     def test_announcement_subjects_filtered(self, subject):
         """Announcement subjects should not be classified as reviews."""
         email = _make_email(subject=subject, in_reply_to=None)
@@ -84,12 +87,15 @@ class TestAnnouncementFiltering:
 class TestGitPullFiltering:
     """Test that [GIT PULL] requests are filtered out."""
 
-    @pytest.mark.parametrize("subject", [
-        "[GIT PULL] networking updates",
-        "[git pull] power management",
-        "Re: [GIT PULL] driver updates",
-        "Some text [GIT PULL] more text",
-    ])
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "[GIT PULL] networking updates",
+            "[git pull] power management",
+            "Re: [GIT PULL] driver updates",
+            "Some text [GIT PULL] more text",
+        ],
+    )
     def test_git_pull_subjects_filtered(self, subject):
         """[GIT PULL] subjects should be filtered regardless of position."""
         email = _make_email(subject=subject)
@@ -99,12 +105,15 @@ class TestGitPullFiltering:
 class TestPatchFiltering:
     """Test that [PATCH] submissions are filtered out."""
 
-    @pytest.mark.parametrize("subject", [
-        "[PATCH] fix memory leak",
-        "[PATCH 1/5] networking fix",
-        "Re: [PATCH] driver update",
-        "Re: [PATCH v2 0/3] series",
-    ])
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "[PATCH] fix memory leak",
+            "[PATCH 1/5] networking fix",
+            "Re: [PATCH] driver update",
+            "Re: [PATCH v2 0/3] series",
+        ],
+    )
     def test_patch_subjects_filtered(self, subject):
         """[PATCH] subjects should be filtered."""
         email = _make_email(subject=subject)
@@ -114,10 +123,13 @@ class TestPatchFiltering:
 class TestRFCFiltering:
     """Test that [RFC] discussions are filtered out."""
 
-    @pytest.mark.parametrize("subject", [
-        "[RFC] proposed API change",
-        "Re: [RFC] design question",
-    ])
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "[RFC] proposed API change",
+            "Re: [RFC] design question",
+        ],
+    )
     def test_rfc_subjects_filtered(self, subject):
         """[RFC] subjects should be filtered."""
         email = _make_email(subject=subject)
@@ -168,8 +180,8 @@ class TestSubstantiveBodyFiltering:
         """Body with at least one long substantive line should pass."""
         email = _make_email(
             body="The issue is that the buffer handling is incorrect in the error path. "
-                 "We need to ensure proper cleanup.\n\n"
-                 "Reviewed-by: John Doe <john@example.com>",
+            "We need to ensure proper cleanup.\n\n"
+            "Reviewed-by: John Doe <john@example.com>",
         )
         assert is_review(email) is True
 

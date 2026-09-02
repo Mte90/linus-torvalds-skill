@@ -4,13 +4,20 @@ Verifies the skill file validation logic that checks for forbidden terms,
 tables, quotes, and text normalization.
 """
 
-import pytest
 from pathlib import Path
 
+import pytest
+
 from scripts.verify_skill import (
-    normalize, check_forbidden_terms, check_no_tables, check_interview_quotes,
-    score_skill_quality, _score_trigger_diversity, _score_severity_distribution,
-    _score_language_agnosticism, _score_section_coverage
+    _score_language_agnosticism,
+    _score_section_coverage,
+    _score_severity_distribution,
+    _score_trigger_diversity,
+    check_forbidden_terms,
+    check_interview_quotes,
+    check_no_tables,
+    normalize,
+    score_skill_quality,
 )
 
 
@@ -387,7 +394,7 @@ As Linus said: "I use kmalloc all the time" (Interview: test.md)
 Testing, correctness, complexity, performance, concurrency, documentation, style, process, api-stability, error-handling, memory-safety, abstraction, security.
 """)
         result = score_skill_quality(skill_file)
-        
+
         # Should have good scores
         assert result["total"] > 50  # At least moderate score
         assert result["section_coverage"] == 25  # All sections present
@@ -441,7 +448,7 @@ class TestScoreSeverityDistribution:
         calibration_file = Path(__file__).parent.parent / "data" / "calibration.json"
         if not calibration_file.exists():
             pytest.skip("calibration.json not found")
-        
+
         score, details = _score_severity_distribution("just some text")
         assert score == 0
         assert "error" in details
@@ -451,7 +458,7 @@ class TestScoreSeverityDistribution:
         calibration_file = Path(__file__).parent.parent / "data" / "calibration.json"
         if not calibration_file.exists():
             pytest.skip("calibration.json not found")
-        
+
         # Text with balanced severity mentions
         text = "reject request-changes nitpick approve discussion"
         score, details = _score_severity_distribution(text)

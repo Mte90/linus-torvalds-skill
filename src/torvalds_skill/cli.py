@@ -20,15 +20,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import config
-from .models import iter_corpus, EmailRecord
-from .classify import is_review
-from .extract import extract_moves
-from .cluster import cluster_moves
-from .distill import distill_skill
-from .classify_interviews import classify_interviews
-from .extract_interviews import extract_interviews
-from .cluster_interviews import cluster_interviews
 from .calibrate_interviews import calibrate_interviews
+from .classify import is_review
+from .classify_interviews import classify_interviews
+from .cluster import cluster_moves
+from .cluster_interviews import cluster_interviews
+from .distill import distill_skill
+from .extract import extract_moves
+from .extract_interviews import extract_interviews
+from .models import EmailRecord, iter_corpus
 from .validate import validate_all
 
 DATA = Path("data")
@@ -80,20 +80,26 @@ def stage_classify():
         for email in iter_corpus(CORPUS):
             total += 1
             if is_review(email):
-                f.write(json.dumps({
-                    "message_id": email.message_id,
-                    "from_name": email.from_name,
-                    "from_email": email.from_email,
-                    "date": email.date,
-                    "subject": email.subject,
-                    "in_reply_to": email.in_reply_to,
-                    "body": email.body,
-                }, ensure_ascii=False) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "message_id": email.message_id,
+                            "from_name": email.from_name,
+                            "from_email": email.from_email,
+                            "date": email.date,
+                            "subject": email.subject,
+                            "in_reply_to": email.in_reply_to,
+                            "body": email.body,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
                 count += 1
     if total == 0:
         print("  no emails in corpus")
         return
-    print(f"  {count}/{total} emails are reviews ({count/total*100:.1f}%)")
+    print(f"  {count}/{total} emails are reviews ({count / total * 100:.1f}%)")
     print(f"  → {REVIEWS}")
 
 
@@ -119,7 +125,7 @@ def _sample_reviews(sample_size: int) -> list[EmailRecord]:
     # distribute sample_size across years, weighted by count
     total = len(all_reviews)
     sample = []
-    for year, emails in sorted(by_year.items()):
+    for _year, emails in sorted(by_year.items()):
         n = max(1, int(sample_size * len(emails) / total))
         sample.extend(emails[:n])
 
@@ -129,7 +135,7 @@ def _sample_reviews(sample_size: int) -> list[EmailRecord]:
     elif len(sample) < sample_size:
         remaining = [r for r in all_reviews if r not in sample]
         random.shuffle(remaining)
-        sample.extend(remaining[:sample_size - len(sample)])
+        sample.extend(remaining[: sample_size - len(sample)])
 
     print(f"  sampled {len(sample)} reviews (stratified by year + body length)")
     return sample
@@ -185,7 +191,7 @@ def stage_extract(sample_size: int, workers: int, resume: bool):
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for i in range(0, total, batch_size):
-            batch = reviews[i:i + batch_size]
+            batch = reviews[i : i + batch_size]
             futures = {pool.submit(extract_moves, email): email for email in batch}
 
             for future in as_completed(futures):
@@ -220,10 +226,7 @@ def stage_extract(sample_size: int, workers: int, resume: bool):
                     print(f"  checkpoint: {len(processed_ids)} emails persisted")
 
     elapsed = time.time() - start_time
-    print(
-        f"done: {processed} emails, {moves_count} moves, "
-        f"{errors} errors in {elapsed:.0f}s"
-    )
+    print(f"done: {processed} emails, {moves_count} moves, {errors} errors in {elapsed:.0f}s")
 
 
 def stage_cluster():
@@ -240,8 +243,14 @@ def stage_distill(top_n: int, model: str = None, out: str = None, single_call: b
         print(f"error: {PATTERNS} not found. Run cluster first.")
         sys.exit(1)
     target = Path(out) if out else SKILL
-    distill_skill(PATTERNS, target, top_n=top_n, model=model,
-                  calibration_path=CALIBRATION, single_call=single_call)
+    distill_skill(
+        PATTERNS,
+        target,
+        top_n=top_n,
+        model=model,
+        calibration_path=CALIBRATION,
+        single_call=single_call,
+    )
 
 
 def stage_run(sample_size: int, workers: int):
@@ -262,29 +271,20 @@ def stage_interviews_pipeline(model: str, resume: bool):
     # Step 2: Extract moves from interviews
     print("Step 2/4: Extracting interview moves...")
     extracted_count = extract_interviews(
-        "data/interviews_classified.jsonl",
-        "data/interview_moves.jsonl",
-        model=model,
-        resume=resume
+        "data/interviews_classified.jsonl", "data/interview_moves.jsonl", model=model, resume=resume
     )
     print(f"  Extracted {extracted_count} moves")
 
     # Step 3: Cluster interviews with email moves
     print("Step 3/4: Clustering interviews...")
     pattern_count = cluster_interviews(
-        "data/moves.jsonl",
-        "data/interview_moves.jsonl",
-        "data/patterns.json"
+        "data/moves.jsonl", "data/interview_moves.jsonl", "data/patterns.json"
     )
     print(f"  Generated {pattern_count} patterns")
 
     # Step 4: Calibrate interviews
     print("Step 4/4: Calibrating interviews...")
-    calibrate_interviews(
-        "data/moves.jsonl",
-        "data/interview_moves.jsonl",
-        "data/calibration.json"
-    )
+    calibrate_interviews("data/moves.jsonl", "data/interview_moves.jsonl", "data/calibration.json")
     print("  Calibration complete")
 
 
@@ -297,9 +297,7 @@ def stage_classify_interviews():
 def stage_extract_interviews(model: str, resume: bool):
     """Run extract_interviews stage."""
     count = extract_interviews(
-        "data/interviews_classified.jsonl",
-        "data/interview_moves.jsonl",
-        model=model
+        "data/interviews_classified.jsonl", "data/interview_moves.jsonl", model=model
     )
     print(f"Extracted {count} moves")
 
@@ -307,20 +305,14 @@ def stage_extract_interviews(model: str, resume: bool):
 def stage_cluster_interviews():
     """Run cluster_interviews stage."""
     count = cluster_interviews(
-        "data/moves.jsonl",
-        "data/interview_moves.jsonl",
-        "data/patterns.json"
+        "data/moves.jsonl", "data/interview_moves.jsonl", "data/patterns.json"
     )
     print(f"Generated {count} patterns")
 
 
 def stage_calibrate_interviews():
     """Run calibrate_interviews stage."""
-    calibrate_interviews(
-        "data/moves.jsonl",
-        "data/interview_moves.jsonl",
-        "data/calibration.json"
-    )
+    calibrate_interviews("data/moves.jsonl", "data/interview_moves.jsonl", "data/calibration.json")
 
 
 def stage_validate():
@@ -345,54 +337,71 @@ def main():
     sub.add_parser("classify", help="filter corpus → reviews")
 
     p_extract = sub.add_parser("extract", help="extract review moves via LLM")
-    p_extract.add_argument("--sample", type=int, default=2000,
-                           help="number of emails to sample (0 = all)")
-    p_extract.add_argument("--workers", type=int, default=8,
-                           help="concurrent LLM calls")
-    p_extract.add_argument("--resume", action="store_true",
-                           help="skip already-processed emails")
+    p_extract.add_argument(
+        "--sample", type=int, default=2000, help="number of emails to sample (0 = all)"
+    )
+    p_extract.add_argument("--workers", type=int, default=8, help="concurrent LLM calls")
+    p_extract.add_argument("--resume", action="store_true", help="skip already-processed emails")
 
     sub.add_parser("cluster", help="cluster moves → patterns")
 
     p_distill = sub.add_parser("distill", help="distill patterns → skill")
-    p_distill.add_argument("--top-n", type=int, default=40,
-                           help="top N patterns to include")
-    p_distill.add_argument("--model", type=str, default=None,
-                           help="override LLM model (default: from config)")
-    p_distill.add_argument("--out", type=str, default=None,
-                           help="output file path (default: linus-torvalds-skill/SKILL.md)")
-    p_distill.add_argument("--single-call", action="store_true",
-                           help="bypass per-category distillation (1 LLM call instead of 15, for GLM5.2)")
+    p_distill.add_argument("--top-n", type=int, default=40, help="top N patterns to include")
+    p_distill.add_argument(
+        "--model", type=str, default=None, help="override LLM model (default: from config)"
+    )
+    p_distill.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="output file path (default: linus-torvalds-skill/SKILL.md)",
+    )
+    p_distill.add_argument(
+        "--single-call",
+        action="store_true",
+        help="bypass per-category distillation (1 LLM call instead of 15, for GLM5.2)",
+    )
 
     p_run = sub.add_parser("run", help="run full pipeline")
-    p_run.add_argument("--sample", type=int, default=2000,
-                       help="number of emails to sample")
-    p_run.add_argument("--workers", type=int, default=8,
-                       help="concurrent LLM calls")
+    p_run.add_argument("--sample", type=int, default=2000, help="number of emails to sample")
+    p_run.add_argument("--workers", type=int, default=8, help="concurrent LLM calls")
 
     p_soul = sub.add_parser("soul", help="generate AI assistant soul document")
-    p_soul.add_argument("--model", type=str, default=None,
-                        help="override LLM model (default: from config)")
-    p_soul.add_argument("--out", type=str, default=None,
-                        help="output file path (default: soul/soul.md)")
+    p_soul.add_argument(
+        "--model", type=str, default=None, help="override LLM model (default: from config)"
+    )
+    p_soul.add_argument(
+        "--out", type=str, default=None, help="output file path (default: soul/soul.md)"
+    )
 
     sub.add_parser("interviews", help="fetch interview transcripts from configured sources")
 
     # Interview pipeline subcommand
-    p_interviews_pipeline = sub.add_parser("interviews-pipeline", help="run full interview pipeline")
-    p_interviews_pipeline.add_argument("--model", type=str, default="gpt-oss-120b",
-                                       help="LLM model for extraction (default: gpt-oss-120b)")
-    p_interviews_pipeline.add_argument("--resume", action="store_true",
-                                       help="resume from checkpoint")
+    p_interviews_pipeline = sub.add_parser(
+        "interviews-pipeline", help="run full interview pipeline"
+    )
+    p_interviews_pipeline.add_argument(
+        "--model",
+        type=str,
+        default="gpt-oss-120b",
+        help="LLM model for extraction (default: gpt-oss-120b)",
+    )
+    p_interviews_pipeline.add_argument(
+        "--resume", action="store_true", help="resume from checkpoint"
+    )
 
     # Individual interview stage subcommands
     sub.add_parser("classify-interviews", help="classify interview transcripts")
 
-    p_extract_interviews = sub.add_parser("extract-interviews", help="extract moves from interviews")
-    p_extract_interviews.add_argument("--model", type=str, default="gpt-oss-120b",
-                                      help="LLM model (default: gpt-oss-120b)")
-    p_extract_interviews.add_argument("--resume", action="store_true",
-                                      help="resume from checkpoint")
+    p_extract_interviews = sub.add_parser(
+        "extract-interviews", help="extract moves from interviews"
+    )
+    p_extract_interviews.add_argument(
+        "--model", type=str, default="gpt-oss-120b", help="LLM model (default: gpt-oss-120b)"
+    )
+    p_extract_interviews.add_argument(
+        "--resume", action="store_true", help="resume from checkpoint"
+    )
 
     sub.add_parser("cluster-interviews", help="cluster interview moves with email moves")
 
@@ -419,14 +428,18 @@ def main():
         stage_run(args.sample, args.workers)
     elif args.stage == "soul":
         from .soul import generate_soul
+
         patterns_path = Path(__file__).parent.parent.parent / "data" / "patterns.json"
         if not patterns_path.exists():
             print(f"ERROR: {patterns_path} not found. Run clustering first.")
             return 1
-        output_path = Path(args.out) if args.out else Path(__file__).parent.parent.parent / "soul" / "soul.md"
+        output_path = (
+            Path(args.out) if args.out else Path(__file__).parent.parent.parent / "soul" / "soul.md"
+        )
         generate_soul(patterns_path, output_path, model=args.model)
     elif args.stage == "interviews":
         from .interviews import fetch_interviews
+
         fetch_interviews()
     elif args.stage == "interviews-pipeline":
         try:
@@ -462,6 +475,7 @@ def main():
         stage_validate()
     elif args.stage == "audit":
         from .audit import run_audit
+
         run_audit()
 
 

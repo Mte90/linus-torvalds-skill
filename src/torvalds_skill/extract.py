@@ -22,13 +22,13 @@ import random
 import re
 import threading
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 from . import config
-from .models import EmailRecord, ReviewMove
 from .audit import log_decision
+from .models import EmailRecord
 
 # Logger setup - idempotent (safe to call multiple times)
 _LOGGER = logging.getLogger("torvalds_skill.extract")
@@ -36,14 +36,36 @@ _HANDLER = None
 
 # Severity consistency validation word lists (extensible, case-insensitive)
 HARD_LANGUAGE_INDICATORS = [
-    "broken", "crash", "wrong", "incorrect", "bug", "error", "fail",
-    "must", "should not", "cannot", "never", "always", "immediately",
-    "critical", "fatal"
+    "broken",
+    "crash",
+    "wrong",
+    "incorrect",
+    "bug",
+    "error",
+    "fail",
+    "must",
+    "should not",
+    "cannot",
+    "never",
+    "always",
+    "immediately",
+    "critical",
+    "fatal",
 ]
 
 SOFT_LANGUAGE_INDICATORS = [
-    "consider", "might", "could", "maybe", "perhaps", "nice to",
-    "would be", "suggest", "optional", "minor", "cosmetic", "style"
+    "consider",
+    "might",
+    "could",
+    "maybe",
+    "perhaps",
+    "nice to",
+    "would be",
+    "suggest",
+    "optional",
+    "minor",
+    "cosmetic",
+    "style",
 ]
 
 # Severities that require hard language
@@ -51,14 +73,17 @@ STRICT_SEVERITIES = {"reject", "request-changes"}
 # Severities that should not have hard language
 LENIENT_SEVERITIES = {"nitpick"}
 
+
 # Cache configuration - read at runtime, not import time
 def _get_cache_enabled():
     """Check if cache is enabled."""
     return os.environ.get("EXTRACT_CACHE", "1") != "0"
 
+
 def _get_cache_path():
     """Get cache path from environment."""
     return os.environ.get("EXTRACT_CACHE_PATH", "data/extract_cache.jsonl")
+
 
 # Thread lock for cache access
 _CACHE_LOCK = threading.Lock()
@@ -71,12 +96,11 @@ def _get_logger():
     if _HANDLER is None:
         Path("data").mkdir(parents=True, exist_ok=True)
         _HANDLER = logging.FileHandler("data/extract_errors.log")
-        _HANDLER.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-        )
+        _HANDLER.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
         _LOGGER.addHandler(_HANDLER)
         _LOGGER.setLevel(logging.ERROR)
     return _LOGGER
+
 
 SYSTEM_PROMPT = """\
 You are analyzing an email from Linus Torvalds on the Linux kernel mailing list.
@@ -129,14 +153,14 @@ Return ONLY valid JSON, no markdown fences, in this exact format:
 
 def _parse_batch_response(content: str, batch_size: int) -> list[dict]:
     """Parse JSON array response from batched LLM call.
-    
+
     Args:
         content: Raw LLM response text (may include markdown fences)
         batch_size: Expected number of emails in the batch
-        
+
     Returns:
         List of parsed dicts, one per email
-        
+
     Raises:
         json.JSONDecodeError: If response is not valid JSON
         ValueError: If array length doesn't match batch_size
@@ -150,17 +174,15 @@ def _parse_batch_response(content: str, batch_size: int) -> list[dict]:
             lines = lines[:-1]
         text = "\n".join(lines)
     text = text.strip()
-    
+
     parsed = json.loads(text)
-    
+
     if not isinstance(parsed, list):
         raise ValueError(f"Expected JSON array, got {type(parsed).__name__}")
-    
+
     if len(parsed) != batch_size:
-        raise ValueError(
-            f"Expected {batch_size} results, got {len(parsed)}"
-        )
-    
+        raise ValueError(f"Expected {batch_size} results, got {len(parsed)}")
+
     return parsed
 
 
@@ -177,7 +199,7 @@ def _get_cache_logger():
 
 def _compute_cache_key(model_name: str, prompt_text: str) -> str:
     """Compute SHA-256 cache key from model name and prompt text."""
-    return hashlib.sha256(f"{model_name}:{prompt_text}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{model_name}:{prompt_text}".encode()).hexdigest()
 
 
 def _load_cache() -> dict[str, dict]:
@@ -185,16 +207,16 @@ def _load_cache() -> dict[str, dict]:
     global _CACHE_DATA
     if _CACHE_DATA is not None:
         return _CACHE_DATA
-    
+
     cache = {}
     cache_path = Path(_get_cache_path())
-    
+
     if not cache_path.exists():
         _CACHE_DATA = cache
         return cache
-    
+
     try:
-        with open(cache_path, "r", encoding="utf-8") as f:
+        with open(cache_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -207,10 +229,10 @@ def _load_cache() -> dict[str, dict]:
                 except json.JSONDecodeError:
                     # Skip corrupt lines silently
                     continue
-    except (IOError, OSError):
+    except OSError:
         # If we can't read the file, start with empty cache
         pass
-    
+
     _CACHE_DATA = cache
     return cache
 
@@ -219,17 +241,17 @@ def _save_cache_entry(key: str, response: str):
     """Append a cache entry to the JSONL file. Thread-safe."""
     cache_path = Path(_get_cache_path())
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     entry = {
         "key": key,
         "response": response,
         "ts": int(time.time()),
     }
-    
+
     with _CACHE_LOCK:
         with open(cache_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        
+
         # Update in-memory cache
         if _CACHE_DATA is not None:
             _CACHE_DATA[key] = entry
@@ -249,14 +271,10 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
     """Call the LLM API for one email. Returns parsed JSON dict."""
     retries = retries if retries is not None else config.MAX_RETRIES
 
-    user_content = (
-        f"Subject: {email.subject}\n"
-        f"Date: {email.date}\n\n"
-        f"{email.body[:8000]}"
-    )
+    user_content = f"Subject: {email.subject}\nDate: {email.date}\n\n{email.body[:8000]}"
 
     prompt_hash = hashlib.sha256((SYSTEM_PROMPT + user_content).encode("utf-8")).hexdigest()
-    
+
     log_decision(
         "extract",
         model=config.MODEL,
@@ -295,10 +313,14 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
         except urllib.error.HTTPError as e:
             last_err = e
             if e.code == 429:
-                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(0, config.RETRY_DELAY)
+                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(
+                    0, config.RETRY_DELAY
+                )
                 time.sleep(wait)
             elif e.code >= 500:
-                time.sleep(config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY))
+                time.sleep(
+                    config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
+                )
             else:
                 raise
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
@@ -327,13 +349,13 @@ def _parse_json_response(content: str) -> dict:
 
 def _validate_severity_consistency(move: dict) -> tuple[bool, str]:
     """Validate that move severity matches the language intensity in description/trigger.
-    
+
     Args:
         move: A move dict with at least 'severity' and 'description' (or 'trigger') keys.
-        
+
     Returns:
         (is_consistent, reason) where reason is empty string if consistent.
-        
+
     Logic:
         - If severity is "reject" or "request-changes" and description contains ONLY
           soft language (no hard language) → inconsistent
@@ -346,17 +368,15 @@ def _validate_severity_consistency(move: dict) -> tuple[bool, str]:
     description = move.get("description", "") or ""
     trigger = move.get("trigger", "") or ""
     text = (description + " " + trigger).lower()
-    
+
     # Detect hard and soft language (case-insensitive, word boundary matching)
     has_hard_language = any(
-        re.search(r'\b' + re.escape(phrase) + r'\b', text)
-        for phrase in HARD_LANGUAGE_INDICATORS
+        re.search(r"\b" + re.escape(phrase) + r"\b", text) for phrase in HARD_LANGUAGE_INDICATORS
     )
     has_soft_language = any(
-        re.search(r'\b' + re.escape(phrase) + r'\b', text)
-        for phrase in SOFT_LANGUAGE_INDICATORS
+        re.search(r"\b" + re.escape(phrase) + r"\b", text) for phrase in SOFT_LANGUAGE_INDICATORS
     )
-    
+
     # Check for inconsistency
     if severity in STRICT_SEVERITIES:
         # Reject/request-changes should have hard language, not just soft
@@ -366,7 +386,7 @@ def _validate_severity_consistency(move: dict) -> tuple[bool, str]:
         # Nitpick should not have hard language without soft language
         if has_hard_language and not has_soft_language:
             return False, f"severity '{severity}' uses hard language"
-    
+
     return True, ""
 
 
@@ -374,47 +394,63 @@ def extract_moves(email: EmailRecord) -> dict:
     """Extract review moves from one email. Returns a dict with moves list."""
     # Input validation
     logger = _get_logger()
-    
+
     # Stats tracking for severity warnings
     severity_warnings = 0
-    
+
     # Check required fields exist and are non-empty strings
     if not email.body or not isinstance(email.body, str) or not email.body.strip():
         msg = "missing or empty body"
         logger.warning("Validation failed for %s: %s", getattr(email, "message_id", "unknown"), msg)
-        return {"email_message_id": getattr(email, "message_id", "unknown"), "moves": [], "error": f"validation_failed: {msg}"}
-    
-    if not email.message_id or not isinstance(email.message_id, str) or not email.message_id.strip():
+        return {
+            "email_message_id": getattr(email, "message_id", "unknown"),
+            "moves": [],
+            "error": f"validation_failed: {msg}",
+        }
+
+    if (
+        not email.message_id
+        or not isinstance(email.message_id, str)
+        or not email.message_id.strip()
+    ):
         msg = "missing or empty message_id"
         logger.warning("Validation failed for %s: %s", getattr(email, "message_id", "unknown"), msg)
-        return {"email_message_id": getattr(email, "message_id", "unknown"), "moves": [], "error": f"validation_failed: {msg}"}
-    
+        return {
+            "email_message_id": getattr(email, "message_id", "unknown"),
+            "moves": [],
+            "error": f"validation_failed: {msg}",
+        }
+
     if not email.subject or not isinstance(email.subject, str) or not email.subject.strip():
         msg = "missing or empty subject"
         logger.warning("Validation failed for %s: %s", getattr(email, "message_id", "unknown"), msg)
-        return {"email_message_id": getattr(email, "message_id", "unknown"), "moves": [], "error": f"validation_failed: {msg}"}
-    
+        return {
+            "email_message_id": getattr(email, "message_id", "unknown"),
+            "moves": [],
+            "error": f"validation_failed: {msg}",
+        }
+
     if not email.from_name or not isinstance(email.from_name, str) or not email.from_name.strip():
         msg = "missing or empty from_name"
         logger.warning("Validation failed for %s: %s", getattr(email, "message_id", "unknown"), msg)
-        return {"email_message_id": getattr(email, "message_id", "unknown"), "moves": [], "error": f"validation_failed: {msg}"}
-    
+        return {
+            "email_message_id": getattr(email, "message_id", "unknown"),
+            "moves": [],
+            "error": f"validation_failed: {msg}",
+        }
+
     # Body length warnings (don't block extraction)
     body_len = len(email.body)
     if body_len <= 10:
         logger.warning("Very short body (%d chars) for message %s", body_len, email.message_id)
     elif body_len > 100000:
         logger.warning("Very long body (%d chars) for message %s", body_len, email.message_id)
-    
+
     # Build user content for cache key computation
-    user_content = (
-        f"Subject: {email.subject}\n"
-        f"Date: {email.date}\n\n"
-        f"{email.body[:8000]}"
-    )
+    user_content = f"Subject: {email.subject}\nDate: {email.date}\n\n{email.body[:8000]}"
     prompt_text = SYSTEM_PROMPT + user_content
     cache_key = _compute_cache_key(config.MODEL, prompt_text)
-    
+
     # Check cache before calling LLM
     if _get_cache_enabled():
         cached_response = _get_cached_response(cache_key)
@@ -434,28 +470,25 @@ def extract_moves(email: EmailRecord) -> dict:
             except (json.JSONDecodeError, KeyError):
                 # Corrupt cache entry, fall through to LLM call
                 pass
-    
+
     try:
         result = _call_llm(email)
         moves = result.get("moves", [])
-        
+
         # Validate severity consistency for each move
         for move in moves:
             is_consistent, reason = _validate_severity_consistency(move)
             if not is_consistent:
                 severity_warnings += 1
                 move_id = move.get("trigger", "unknown")[:50]
-                logger.warning(
-                    "Severity inconsistency detected for move '%s': %s",
-                    move_id, reason
-                )
-        
+                logger.warning("Severity inconsistency detected for move '%s': %s", move_id, reason)
+
         # Cache all successful responses (including 0-move valid responses)
         if _get_cache_enabled():
             raw_response = result.get("_raw_content")
             if raw_response:
                 _save_cache_entry(cache_key, raw_response)
-        
+
         return {
             "email_message_id": email.message_id,
             "email_date": email.date,
@@ -484,7 +517,7 @@ def extract_moves(email: EmailRecord) -> dict:
 
 def extract_batch(emails, output_path, append=False, batch_size=1, batch_retry=True):
     """Extract moves from a batch of emails, writing to JSONL.
-    
+
     Args:
         emails: List of email records to process
         output_path: Path to output JSONL file
@@ -522,12 +555,10 @@ def extract_batch(emails, output_path, append=False, batch_size=1, batch_retry=T
     return {"processed": done, "moves": moves_count, "errors": errors}
 
 
-
-
 def _call_llm_batch(emails, batch_size, retries=None):
     """Call the LLM API for a batch of emails. Returns list of parsed JSON dicts."""
     retries = retries if retries is not None else config.MAX_RETRIES
-    
+
     # Build batch user content
     batch_content = ""
     for i, email in enumerate(emails):
@@ -537,10 +568,10 @@ def _call_llm_batch(emails, batch_size, retries=None):
             f"Date: {email.date}\n\n"
             f"{email.body[:8000]}\n"
         )
-    
+
     prompt_text = BATCH_SYSTEM_PROMPT.format(batch_size=batch_size) + batch_content
     prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
-    
+
     log_decision(
         "extract_batch",
         model=config.MODEL,
@@ -580,10 +611,14 @@ def _call_llm_batch(emails, batch_size, retries=None):
         except urllib.error.HTTPError as e:
             last_err = e
             if e.code == 429:
-                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(0, config.RETRY_DELAY)
+                wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(
+                    0, config.RETRY_DELAY
+                )
                 time.sleep(wait)
             elif e.code >= 500:
-                time.sleep(config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY))
+                time.sleep(
+                    config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
+                )
             else:
                 raise
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
@@ -599,46 +634,46 @@ def _call_llm_batch(emails, batch_size, retries=None):
 
 def extract_moves_batch(emails, batch_size=1, batch_retry=True):
     """Extract moves from a batch of emails with optional batching and retry.
-    
+
     Args:
         emails: List of email records to process
         batch_size: Number of emails per LLM call (1 = sequential)
         batch_retry: If True, retry failed batches with individual emails
-        
+
     Returns:
         List of extraction results, one per email
     """
     results = []
     total = len(emails)
-    
+
     # Process emails in batches
     for batch_start in range(0, total, batch_size):
         batch_end = min(batch_start + batch_size, total)
         batch_emails = emails[batch_start:batch_end]
         actual_batch_size = len(batch_emails)
-        
+
         # If batch_size is 1, use sequential extraction
         if actual_batch_size == 1:
             result = extract_moves(batch_emails[0])
             results.append(result)
             continue
-        
+
         # Try batch extraction
         try:
             batch_results = _call_llm_batch(batch_emails, actual_batch_size)
-            
+
             # Convert batch results to individual result format
             for i, email in enumerate(batch_emails):
                 batch_result = batch_results[i]
                 moves = batch_result.get("moves", [])
-                
+
                 # Validate severity consistency
                 severity_warnings = 0
                 for move in moves:
                     is_consistent, reason = _validate_severity_consistency(move)
                     if not is_consistent:
                         severity_warnings += 1
-                
+
                 result = {
                     "email_message_id": email.message_id,
                     "email_date": email.date,
@@ -648,15 +683,17 @@ def extract_moves_batch(emails, batch_size=1, batch_retry=True):
                     "cached": False,
                 }
                 results.append(result)
-                
+
         except (json.JSONDecodeError, ValueError, RuntimeError) as e:
             # Batch failed
             logger = _get_logger()
             logger.warning(
                 "Batch extraction failed for %d emails: %s. %s.",
-                actual_batch_size, type(e).__name__, str(e)
+                actual_batch_size,
+                type(e).__name__,
+                str(e),
             )
-            
+
             if batch_retry:
                 # Fall back to sequential extraction for failed batch
                 logger.info("Retrying %d emails sequentially...", actual_batch_size)
@@ -666,64 +703,61 @@ def extract_moves_batch(emails, batch_size=1, batch_retry=True):
             else:
                 # Return error results for all emails in batch
                 for email in batch_emails:
-                    results.append({
-                        "email_message_id": email.message_id,
-                        "email_date": email.date,
-                        "email_subject": email.subject,
-                        "moves": [],
-                        "error": f"batch_failed: {str(e)}",
-                        "severity_warnings": 0,
-                    })
-    
+                    results.append(
+                        {
+                            "email_message_id": email.message_id,
+                            "email_date": email.date,
+                            "email_subject": email.subject,
+                            "moves": [],
+                            "error": f"batch_failed: {str(e)}",
+                            "severity_warnings": 0,
+                        }
+                    )
+
     return results
+
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Extract review moves from emails using LLM"
-    )
+    parser = argparse.ArgumentParser(description="Extract review moves from emails using LLM")
     parser.add_argument(
         "--input",
         default="data/corpus.jsonl",
-        help="Input file path (mbox or jsonl) (default: data/corpus.jsonl)"
+        help="Input file path (mbox or jsonl) (default: data/corpus.jsonl)",
     )
     parser.add_argument(
         "--output",
         default="data/moves.jsonl",
-        help="Output JSONL file path (default: data/moves.jsonl)"
+        help="Output JSONL file path (default: data/moves.jsonl)",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=1,
-        help="Number of emails per LLM call (default: 1 = sequential)"
+        help="Number of emails per LLM call (default: 1 = sequential)",
     )
     parser.add_argument(
         "--batch-retry",
         action="store_true",
         default=True,
-        help="Retry failed batches with individual emails (default: True)"
+        help="Retry failed batches with individual emails (default: True)",
     )
     parser.add_argument(
-        "--no-batch-retry",
-        action="store_true",
-        help="Disable retry for failed batches"
+        "--no-batch-retry", action="store_true", help="Disable retry for failed batches"
     )
     parser.add_argument(
-        "--append",
-        action="store_true",
-        help="Append to output file instead of overwriting"
+        "--append", action="store_true", help="Append to output file instead of overwriting"
     )
 
     args = parser.parse_args()
 
     # Read emails from input file
     input_file = Path(args.input)
-    
+
     if input_file.suffix == ".jsonl":
         emails = []
-        with open(input_file, "r", encoding="utf-8") as f:
+        with open(input_file, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -746,17 +780,18 @@ if __name__ == "__main__":
                     continue
     else:
         import mailbox
+
         mbox = mailbox.mbox(input_file)
         emails = []
         for msg in mbox:
             message_id = msg.get("Message-ID", "")
             if not message_id:
                 continue
-            
+
             subject = msg.get("Subject", "")
             date = msg.get("Date", "")
             body = str(msg.get_payload(decode=True), errors="ignore")
-            
+
             email = EmailRecord(
                 message_id=message_id,
                 from_name="",
@@ -769,12 +804,12 @@ if __name__ == "__main__":
                 cc=msg.get("Cc", ""),
             )
             emails.append(email)
-    
+
     print(f"Loaded {len(emails)} emails from {args.input}")
-    
+
     # Disable batch retry if --no-batch-retry is specified
     batch_retry = args.batch_retry and not args.no_batch_retry
-    
+
     # Extract moves
     extract_batch(
         emails,

@@ -33,15 +33,17 @@ def _load_email_moves(moves_path: Path) -> list[dict]:
             record = json.loads(line)
             email_date = record.get("email_date", "")
             for move in record.get("moves", []):
-                moves.append({
-                    "category": move["category"],
-                    "severity": move["severity"],
-                    "trigger": move["trigger"],
-                    "principle": move["principle"],
-                    "quote": move["response"],
-                    "source": "email",
-                    "email_date": email_date,
-                })
+                moves.append(
+                    {
+                        "category": move["category"],
+                        "severity": move["severity"],
+                        "trigger": move["trigger"],
+                        "principle": move["principle"],
+                        "quote": move["response"],
+                        "source": "email",
+                        "email_date": email_date,
+                    }
+                )
     return moves
 
 
@@ -55,14 +57,16 @@ def _load_interview_moves(moves_path: Path) -> list[dict]:
                 continue
             record = json.loads(line)
             for move in record.get("moves", []):
-                moves.append({
-                    "category": move["category"],
-                    "severity": move["severity"],
-                    "trigger": move["trigger"],
-                    "principle": move["principle"],
-                    "quote": move.get("response", move.get("quote", "")),
-                    "source": "interview",
-                })
+                moves.append(
+                    {
+                        "category": move["category"],
+                        "severity": move["severity"],
+                        "trigger": move["trigger"],
+                        "principle": move["principle"],
+                        "quote": move.get("response", move.get("quote", "")),
+                        "source": "interview",
+                    }
+                )
     return moves
 
 
@@ -82,7 +86,7 @@ def _stratified_sample_diverse(
     for category in CATEGORIES:
         cat_moves = []
         # Get all severities present for this category
-        for (cat, sev), bucket in moves_by_cat_sev.items():
+        for (cat, _sev), bucket in moves_by_cat_sev.items():
             if cat == category:
                 cat_moves.extend(bucket)
 
@@ -101,8 +105,13 @@ def _stratified_sample_diverse(
             source_samples = {sources[0]: target_per_category}
         else:
             # Split roughly evenly, prefer interview if available
-            interview_target = min(len(by_source.get("interview", [])), target_per_category // 2 + target_per_category % 2)
-            email_target = min(len(by_source.get("email", [])), target_per_category - interview_target)
+            interview_target = min(
+                len(by_source.get("interview", [])),
+                target_per_category // 2 + target_per_category % 2,
+            )
+            email_target = min(
+                len(by_source.get("email", [])), target_per_category - interview_target
+            )
             source_samples = {"interview": interview_target, "email": email_target}
 
         # Sample from each source
@@ -159,7 +168,10 @@ def cluster_interviews(email_moves_path: str, interview_moves_path: str, output_
     if interview_path.exists():
         interview_moves = _load_interview_moves(interview_path)
     else:
-        print(f"Warning: interview moves file not found: {interview_path}. Using email-only patterns.", file=sys.stderr)
+        print(
+            f"Warning: interview moves file not found: {interview_path}. Using email-only patterns.",
+            file=sys.stderr,
+        )
 
     # Combine with source tracking
     all_moves = email_moves + interview_moves
@@ -177,14 +189,16 @@ def cluster_interviews(email_moves_path: str, interview_moves_path: str, output_
     # Write output (strip internal fields)
     patterns = []
     for m in sampled:
-        patterns.append({
-            "category": m["category"],
-            "severity": m["severity"],
-            "trigger": m["trigger"],
-            "principle": m["principle"],
-            "quote": m["quote"],
-            "source": m["source"],
-        })
+        patterns.append(
+            {
+                "category": m["category"],
+                "severity": m["severity"],
+                "trigger": m["trigger"],
+                "principle": m["principle"],
+                "quote": m["quote"],
+                "source": m["source"],
+            }
+        )
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with open(output, "w", encoding="utf-8") as f:
@@ -209,17 +223,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--email-moves",
         default="data/moves.jsonl",
-        help="Path to email moves jsonl (default: data/moves.jsonl)"
+        help="Path to email moves jsonl (default: data/moves.jsonl)",
     )
     parser.add_argument(
         "--interview-moves",
         default="data/interview_moves.jsonl",
-        help="Path to interview moves jsonl (default: data/interview_moves.jsonl)"
+        help="Path to interview moves jsonl (default: data/interview_moves.jsonl)",
     )
     parser.add_argument(
         "--output",
         default="data/patterns.json",
-        help="Output patterns.json path (default: data/patterns.json)"
+        help="Output patterns.json path (default: data/patterns.json)",
     )
 
     args = parser.parse_args()

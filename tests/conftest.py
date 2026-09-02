@@ -1,4 +1,5 @@
 """Pytest configuration for torvalds-skill tests."""
+
 import sys
 from pathlib import Path
 

@@ -19,7 +19,6 @@ import aiohttp
 from . import config
 from .models import EmailRecord
 
-
 SYSTEM_PROMPT = """\
 You are analyzing an email from Linus Torvalds on the Linux kernel mailing list.
 
@@ -71,14 +70,14 @@ Return ONLY valid JSON, no markdown fences, in this exact format:
 
 def _parse_batch_response(content: str, batch_size: int) -> list[dict]:
     """Parse JSON array response from batched LLM call.
-    
+
     Args:
         content: Raw LLM response text (may include markdown fences)
         batch_size: Expected number of emails in the batch
-        
+
     Returns:
         List of parsed dicts, one per email
-        
+
     Raises:
         json.JSONDecodeError: If response is not valid JSON
         ValueError: If array length doesn't match batch_size
@@ -92,17 +91,15 @@ def _parse_batch_response(content: str, batch_size: int) -> list[dict]:
             lines = lines[:-1]
         text = "\n".join(lines)
     text = text.strip()
-    
+
     parsed = json.loads(text)
-    
+
     if not isinstance(parsed, list):
         raise ValueError(f"Expected JSON array, got {type(parsed).__name__}")
-    
+
     if len(parsed) != batch_size:
-        raise ValueError(
-            f"Expected {batch_size} results, got {len(parsed)}"
-        )
-    
+        raise ValueError(f"Expected {batch_size} results, got {len(parsed)}")
+
     return parsed
 
 
@@ -115,7 +112,7 @@ async def _call_llm_batch_async(
 ) -> list[dict]:
     """Call the LLM API for a batch of emails asynchronously. Returns list of parsed JSON dicts."""
     retries = retries if retries is not None else config.MAX_RETRIES
-    
+
     # Build batch user content
     batch_content = ""
     for i, email in enumerate(emails):
@@ -125,7 +122,7 @@ async def _call_llm_batch_async(
             f"Date: {email.date}\n\n"
             f"{email.body[:8000]}\n"
         )
-    
+
     payload = {
         "model": config.MODEL,
         "messages": [
@@ -150,17 +147,21 @@ async def _call_llm_batch_async(
                         content = data["choices"][0]["message"]["content"]
                         return _parse_batch_response(content, batch_size)
                     elif resp.status == 429:
-                        last_err = f"HTTP 429 (rate limit)"
-                        wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(0, config.RETRY_DELAY)
+                        last_err = "HTTP 429 (rate limit)"
+                        wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(
+                            0, config.RETRY_DELAY
+                        )
                         await asyncio.sleep(wait)
                     elif resp.status >= 500:
                         last_err = f"HTTP {resp.status}"
-                        wait = config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
+                        wait = config.RETRY_DELAY * (attempt + 1) + random.uniform(
+                            0, config.RETRY_DELAY
+                        )
                         await asyncio.sleep(wait)
                     else:
                         last_err = f"HTTP {resp.status}"
                         raise RuntimeError(f"LLM API error: {resp.status}")
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except (TimeoutError, aiohttp.ClientError) as e:
                 last_err = e
                 wait = config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
                 await asyncio.sleep(wait)
@@ -179,49 +180,51 @@ async def extract_moves_batch_async(
     batch_retry: bool = True,
 ) -> list[dict]:
     """Extract moves from a batch of emails with optional batching and retry.
-    
+
     Args:
         session: aiohttp ClientSession
         emails: List of email records to process
         semaphore: asyncio.Semaphore for concurrency control
         batch_size: Number of emails per LLM call (1 = sequential)
         batch_retry: If True, retry failed batches with individual emails
-        
+
     Returns:
         List of extraction results, one per email
     """
     results = []
     total = len(emails)
-    
+
     # Process emails in batches
     for batch_start in range(0, total, batch_size):
         batch_end = min(batch_start + batch_size, total)
         batch_emails = emails[batch_start:batch_end]
         actual_batch_size = len(batch_emails)
-        
+
         # If batch_size is 1, use sequential extraction
         if actual_batch_size == 1:
             result = await extract_moves_async(session, batch_emails[0], semaphore)
             results.append(result)
             continue
-        
+
         # Try batch extraction
         try:
             batch_results = await _call_llm_batch_async(
                 session, batch_emails, semaphore, actual_batch_size
             )
-            
+
             # Convert batch results to individual result format
             for i, email in enumerate(batch_emails):
                 batch_result = batch_results[i]
                 moves = batch_result.get("moves", [])
-                results.append({
-                    "email_message_id": email.message_id,
-                    "email_date": email.date,
-                    "email_subject": email.subject,
-                    "moves": moves,
-                })
-                
+                results.append(
+                    {
+                        "email_message_id": email.message_id,
+                        "email_date": email.date,
+                        "email_subject": email.subject,
+                        "moves": moves,
+                    }
+                )
+
         except (json.JSONDecodeError, ValueError, RuntimeError) as e:
             # Batch failed
             if batch_retry:
@@ -232,14 +235,16 @@ async def extract_moves_batch_async(
             else:
                 # Return error results for all emails in batch
                 for email in batch_emails:
-                    results.append({
-                        "email_message_id": email.message_id,
-                        "email_date": email.date,
-                        "email_subject": email.subject,
-                        "moves": [],
-                        "error": f"batch_failed: {str(e)}",
-                    })
-    
+                    results.append(
+                        {
+                            "email_message_id": email.message_id,
+                            "email_date": email.date,
+                            "email_subject": email.subject,
+                            "moves": [],
+                            "error": f"batch_failed: {str(e)}",
+                        }
+                    )
+
     return results
 
 
@@ -252,11 +257,7 @@ async def _call_llm_async(
     """Call the LLM API for one email asynchronously. Returns parsed JSON dict."""
     retries = retries if retries is not None else config.MAX_RETRIES
 
-    user_content = (
-        f"Subject: {email.subject}\n"
-        f"Date: {email.date}\n\n"
-        f"{email.body[:8000]}"
-    )
+    user_content = f"Subject: {email.subject}\nDate: {email.date}\n\n{email.body[:8000]}"
 
     payload = {
         "model": config.MODEL,
@@ -282,17 +283,21 @@ async def _call_llm_async(
                         content = data["choices"][0]["message"]["content"]
                         return _parse_json_response(content)
                     elif resp.status == 429:
-                        last_err = f"HTTP 429 (rate limit)"
-                        wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(0, config.RETRY_DELAY)
+                        last_err = "HTTP 429 (rate limit)"
+                        wait = config.RETRY_DELAY * (attempt + 1) * 2 + random.uniform(
+                            0, config.RETRY_DELAY
+                        )
                         await asyncio.sleep(wait)
                     elif resp.status >= 500:
                         last_err = f"HTTP {resp.status}"
-                        wait = config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
+                        wait = config.RETRY_DELAY * (attempt + 1) + random.uniform(
+                            0, config.RETRY_DELAY
+                        )
                         await asyncio.sleep(wait)
                     else:
                         last_err = f"HTTP {resp.status}"
                         raise RuntimeError(f"LLM API error: {resp.status}")
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except (TimeoutError, aiohttp.ClientError) as e:
                 last_err = e
                 wait = config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY)
                 await asyncio.sleep(wait)
@@ -323,7 +328,7 @@ def _load_checkpoint(checkpoint_path: Path) -> set[str]:
         return set()
 
     processed = set()
-    with open(checkpoint_path, "r", encoding="utf-8") as f:
+    with open(checkpoint_path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -342,7 +347,7 @@ def _load_skip_list(skip_list_path: Path) -> set[str]:
         return set()
 
     skipped = set()
-    with open(skip_list_path, "r", encoding="utf-8") as f:
+    with open(skip_list_path, encoding="utf-8") as f:
         try:
             data = json.load(f)
             skipped = set(data.get("skipped_ids", []))
@@ -376,14 +381,16 @@ async def extract_moves_async(
         }
 
 
-def _read_emails(input_path: Path, resume: bool, checkpoint_path: Path, skip_list_path: Path) -> list[EmailRecord]:
+def _read_emails(
+    input_path: Path, resume: bool, checkpoint_path: Path, skip_list_path: Path
+) -> list[EmailRecord]:
     """Read emails from input file (mbox or jsonl), applying resume logic."""
     checkpoint_ids = _load_checkpoint(checkpoint_path) if resume else set()
     skip_ids = _load_skip_list(skip_list_path) if resume else set()
 
     emails = []
     if input_path.suffix == ".jsonl":
-        with open(input_path, "r", encoding="utf-8") as f:
+        with open(input_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -406,10 +413,11 @@ def _read_emails(input_path: Path, resume: bool, checkpoint_path: Path, skip_lis
                     if resume and email.message_id in skip_ids:
                         continue
                     emails.append(email)
-                except (json.JSONDecodeError, KeyError) as e:
+                except (json.JSONDecodeError, KeyError):
                     continue
     else:
         import mailbox
+
         mbox = mailbox.mbox(input_path)
         for msg in mbox:
             message_id = msg.get("Message-ID", "")
@@ -549,7 +557,7 @@ async def extract_async(
                             existing_skips = set()
                             if skip_list_path.exists():
                                 try:
-                                    with open(skip_list_path, "r", encoding="utf-8") as ef:
+                                    with open(skip_list_path, encoding="utf-8") as ef:
                                         data = json.load(ef)
                                         existing_skips = set(data.get("skipped_ids", []))
                                 except (json.JSONDecodeError, KeyError):
@@ -567,7 +575,7 @@ async def extract_async(
         existing_skips = set()
         if skip_list_path.exists():
             try:
-                with open(skip_list_path, "r", encoding="utf-8") as ef:
+                with open(skip_list_path, encoding="utf-8") as ef:
                     data = json.load(ef)
                     existing_skips = set(data.get("skipped_ids", []))
             except (json.JSONDecodeError, KeyError):
@@ -589,45 +597,38 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input",
         default="data/corpus.jsonl",
-        help="Input file path (mbox or jsonl) (default: data/corpus.jsonl)"
+        help="Input file path (mbox or jsonl) (default: data/corpus.jsonl)",
     )
     parser.add_argument(
         "--output",
         default="data/moves_async.jsonl",
-        help="Output JSONL file path (default: data/moves_async.jsonl)"
+        help="Output JSONL file path (default: data/moves_async.jsonl)",
     )
     parser.add_argument(
-        "--model",
-        default="gpt-oss-120b",
-        help="Model name to use (default: gpt-oss-120b)"
+        "--model", default="gpt-oss-120b", help="Model name to use (default: gpt-oss-120b)"
     )
     parser.add_argument(
-        "--max-workers",
-        type=int,
-        default=20,
-        help="Maximum concurrent LLM calls (default: 20)"
+        "--max-workers", type=int, default=20, help="Maximum concurrent LLM calls (default: 20)"
     )
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume from checkpoint, skipping already-processed emails"
+        help="Resume from checkpoint, skipping already-processed emails",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=1,
-        help="Number of emails per LLM call (default: 1 = sequential)"
+        help="Number of emails per LLM call (default: 1 = sequential)",
     )
     parser.add_argument(
         "--batch-retry",
         action="store_true",
         default=True,
-        help="Retry failed batches with individual emails (default: True)"
+        help="Retry failed batches with individual emails (default: True)",
     )
     parser.add_argument(
-        "--no-batch-retry",
-        action="store_true",
-        help="Disable retry for failed batches"
+        "--no-batch-retry", action="store_true", help="Disable retry for failed batches"
     )
 
     args = parser.parse_args()

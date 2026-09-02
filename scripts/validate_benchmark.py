@@ -11,7 +11,6 @@ import json
 import sys
 from pathlib import Path
 
-
 # Valid severities matching the skill calibration
 VALID_SEVERITIES = {"reject", "request-changes", "nitpick"}
 
@@ -33,7 +32,16 @@ VALID_CATEGORIES = {
 }
 
 # Valid SmallChat files
-VALID_FILES = {"inputbuffer.c", "terminal.c", "chat-common.c", "smallchat-server.c", "smallchat-client.c", "chatlib.c", "chatlib.h", "Makefile"}
+VALID_FILES = {
+    "inputbuffer.c",
+    "terminal.c",
+    "chat-common.c",
+    "smallchat-server.c",
+    "smallchat-client.c",
+    "chatlib.c",
+    "chatlib.h",
+    "Makefile",
+}
 
 # SmallChat line range (approximate)
 MIN_LINE = 1
@@ -42,14 +50,14 @@ MAX_LINE = 706
 
 def load_schema(schema_path: Path) -> dict:
     """Load JSON schema file."""
-    with open(schema_path, "r") as f:
+    with open(schema_path) as f:
         return json.load(f)
 
 
 def load_benchmark(benchmark_path: Path) -> list[dict]:
     """Load JSONL benchmark file."""
     records = []
-    with open(benchmark_path, "r") as f:
+    with open(benchmark_path) as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -58,7 +66,7 @@ def load_benchmark(benchmark_path: Path) -> list[dict]:
                 record = json.loads(line)
                 records.append(record)
             except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid JSON at line {line_num}: {e}")
+                raise ValueError(f"Invalid JSON at line {line_num}: {e}") from e
     return records
 
 
@@ -67,7 +75,16 @@ def validate_record(record: dict, line_num: int) -> list[str]:
     errors = []
 
     # Check required fields
-    required_fields = ["id", "file", "line", "severity", "category", "trigger", "description", "expected_severity"]
+    required_fields = [
+        "id",
+        "file",
+        "line",
+        "severity",
+        "category",
+        "trigger",
+        "description",
+        "expected_severity",
+    ]
     for field in required_fields:
         if field not in record:
             errors.append(f"Line {line_num}: Missing required field '{field}'")
@@ -88,17 +105,23 @@ def validate_record(record: dict, line_num: int) -> list[str]:
     # Validate line number
     line_val = record.get("line")
     if not isinstance(line_val, int) or line_val < MIN_LINE or line_val > MAX_LINE:
-        errors.append(f"Line {line_num}: Invalid line number {line_val} (must be {MIN_LINE}-{MAX_LINE})")
+        errors.append(
+            f"Line {line_num}: Invalid line number {line_val} (must be {MIN_LINE}-{MAX_LINE})"
+        )
 
     # Validate severity
     severity_val = record.get("severity", "")
     if severity_val not in VALID_SEVERITIES:
-        errors.append(f"Line {line_num}: Invalid severity '{severity_val}' (must be one of {VALID_SEVERITIES})")
+        errors.append(
+            f"Line {line_num}: Invalid severity '{severity_val}' (must be one of {VALID_SEVERITIES})"
+        )
 
     # Validate category
     category_val = record.get("category", "")
     if category_val not in VALID_CATEGORIES:
-        errors.append(f"Line {line_num}: Invalid category '{category_val}' (must be one of {VALID_CATEGORIES})")
+        errors.append(
+            f"Line {line_num}: Invalid category '{category_val}' (must be one of {VALID_CATEGORIES})"
+        )
 
     # Validate trigger
     trigger_val = record.get("trigger", "")
@@ -113,11 +136,15 @@ def validate_record(record: dict, line_num: int) -> list[str]:
     # Validate expected_severity
     expected_val = record.get("expected_severity", "")
     if expected_val not in VALID_SEVERITIES:
-        errors.append(f"Line {line_num}: Invalid expected_severity '{expected_val}' (must be one of {VALID_SEVERITIES})")
+        errors.append(
+            f"Line {line_num}: Invalid expected_severity '{expected_val}' (must be one of {VALID_SEVERITIES})"
+        )
 
     # Check consistency between severity and expected_severity
     if severity_val != expected_val:
-        errors.append(f"Line {line_num}: severity '{severity_val}' does not match expected_severity '{expected_val}'")
+        errors.append(
+            f"Line {line_num}: severity '{severity_val}' does not match expected_severity '{expected_val}'"
+        )
 
     return errors
 
@@ -132,12 +159,12 @@ def validate_schema_conformance(records: list[dict], schema: dict) -> list[str]:
         # Check required fields
         for field in schema_required:
             if field not in record:
-                errors.append(f"Record {i+1}: Missing required field '{field}' per schema")
+                errors.append(f"Record {i + 1}: Missing required field '{field}' per schema")
 
         # Check for additional properties
         for key in record:
             if key not in schema_props:
-                errors.append(f"Record {i+1}: Unexpected field '{key}' not in schema")
+                errors.append(f"Record {i + 1}: Unexpected field '{key}' not in schema")
 
     return errors
 
@@ -170,7 +197,9 @@ def validate_benchmark_requirements(records: list[dict]) -> list[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate benchmark.jsonl against schema and requirements")
+    parser = argparse.ArgumentParser(
+        description="Validate benchmark.jsonl against schema and requirements"
+    )
     parser.add_argument(
         "--benchmark",
         default="data/benchmark.jsonl",
@@ -260,8 +289,12 @@ def main():
     print("=" * 50)
     print(f"Total records: {len(records)}")
     print(f"Files covered: {len(files_covered)} ({', '.join(sorted(files_covered))})")
-    print(f"Severities covered: {len(severities_covered)} ({', '.join(sorted(severities_covered))})")
-    print(f"Categories covered: {len(categories_covered)} ({', '.join(sorted(categories_covered))})")
+    print(
+        f"Severities covered: {len(severities_covered)} ({', '.join(sorted(severities_covered))})"
+    )
+    print(
+        f"Categories covered: {len(categories_covered)} ({', '.join(sorted(categories_covered))})"
+    )
     print("=" * 50)
     print("✓ All validations passed!")
 

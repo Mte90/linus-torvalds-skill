@@ -1,12 +1,12 @@
 """Tests for run_review.py - multi-model code review pipeline."""
 
-import pytest
-import sys
-from pathlib import Path
 import importlib.util
 import json
 import os
-from unittest.mock import patch, MagicMock
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 # Load run_review module
 spec = importlib.util.spec_from_file_location("run_review", "report/run_review.py")
@@ -19,28 +19,28 @@ class TestCLIArgumentParsing:
 
     def test_force_flag_parsing(self):
         """--force flag should set force=True."""
-        with patch.object(run_review.sys, 'argv', ['run_review.py', '--force']):
+        with patch.object(run_review.sys, "argv", ["run_review.py", "--force"]):
             args = run_review.parse_args()
             assert args.force is True
             assert args.clean_logs is False
 
     def test_clean_logs_flag_parsing(self):
         """--clean-logs flag should set clean_logs=True."""
-        with patch.object(run_review.sys, 'argv', ['run_review.py', '--clean-logs']):
+        with patch.object(run_review.sys, "argv", ["run_review.py", "--clean-logs"]):
             args = run_review.parse_args()
             assert args.force is False
             assert args.clean_logs is True
 
     def test_no_flags_defaults(self):
         """No flags should default to False for both."""
-        with patch.object(run_review.sys, 'argv', ['run_review.py']):
+        with patch.object(run_review.sys, "argv", ["run_review.py"]):
             args = run_review.parse_args()
             assert args.force is False
             assert args.clean_logs is False
 
     def test_both_flags_parsing(self):
         """Both flags can be combined."""
-        with patch.object(run_review.sys, 'argv', ['run_review.py', '--force', '--clean-logs']):
+        with patch.object(run_review.sys, "argv", ["run_review.py", "--force", "--clean-logs"]):
             args = run_review.parse_args()
             assert args.force is True
             assert args.clean_logs is True
@@ -118,7 +118,9 @@ class TestChunkedModelsParsing:
 
     def test_chunked_models_with_spaces(self):
         """CHUNKED_MODELS with spaces around commas should be trimmed."""
-        with patch.dict(os.environ, {"CHUNKED_MODELS": "gpt-oss-120b , glm5.2 , mistral-small-4-119b"}):
+        with patch.dict(
+            os.environ, {"CHUNKED_MODELS": "gpt-oss-120b , glm5.2 , mistral-small-4-119b"}
+        ):
             chunked_str = os.environ.get("CHUNKED_MODELS", "")
             chunked_models = set(m.strip() for m in chunked_str.split(",") if m.strip())
             assert chunked_models == {"gpt-oss-120b", "glm5.2", "mistral-small-4-119b"}
@@ -602,7 +604,7 @@ class TestCleanLogs:
         (report_dir / "review.md").write_text("review content")
 
         with patch.object(run_review, "REPORT_DIR", report_dir):
-            with patch.object(run_review.sys, 'exit') as mock_exit:
+            with patch.object(run_review.sys, "exit") as mock_exit:
                 run_review.clean_logs()
 
                 # Log files should be removed

@@ -27,12 +27,10 @@ raw sockets).
 import argparse
 import hashlib
 import json
-import os
-import re
 import socket
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.parser import BytesParser
 from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
@@ -259,10 +257,10 @@ def from_separator(msg):
         if dt is None:
             raise ValueError
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         datestr = dt.strftime("%a %b %d %H:%M:%S %Y")
     except Exception:
-        datestr = datetime.now(timezone.utc).strftime("%a %b %d %H:%M:%S %Y")
+        datestr = datetime.now(UTC).strftime("%a %b %d %H:%M:%S %Y")
     return f"From {addr} {datestr}\n"
 
 
@@ -340,7 +338,7 @@ def phase_fetch(client, numbers):
                 except RuntimeError as e2:
                     print(f"[fetch] ARTICLE {num} retry failed: {e2} — skipping")
                     continue
-            except (ConnectionError, socket.timeout, OSError) as e:
+            except (TimeoutError, ConnectionError, OSError) as e:
                 print(f"[fetch] connection error on {num}: {e} — reconnecting")
                 client = reconnect()
                 try:
@@ -392,7 +390,7 @@ def write_manifest(numbers, source="gmane-nntp"):
         "mbox_path": str(MBOX_PATH.relative_to(PROJECT_ROOT)),
         "mbox_bytes": total_bytes,
         "mbox_sha256": h.hexdigest(),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
     print(f"[manifest] written to {MANIFEST_PATH}")

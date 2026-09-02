@@ -11,16 +11,12 @@ similarity-based grouping.
 import json
 from pathlib import Path
 
-import pytest
-
 from torvalds_skill.cluster import (
-    _stratified_sample,
-    cluster_moves,
     TFIDFClustering,
-    _tokenize,
     _cosine_similarity,
-    SAMPLES_PER_CATEGORY,
-    SUBSTANTIVE_FRACTION,
+    _stratified_sample,
+    _tokenize,
+    cluster_moves,
 )
 from torvalds_skill.models import ReviewMove
 
@@ -82,8 +78,7 @@ class TestStratifiedSample:
 
     def test_deterministic_with_seed(self):
         moves = [
-            _make_move(mid=f"m{i}", date=f"20{i:02d}-01-01", severity="reject")
-            for i in range(50)
+            _make_move(mid=f"m{i}", date=f"20{i:02d}-01-01", severity="reject") for i in range(50)
         ]
         r1 = _stratified_sample(moves, 10, seed=42)
         r2 = _stratified_sample(moves, 10, seed=42)
@@ -91,8 +86,7 @@ class TestStratifiedSample:
 
     def test_different_seeds_different_samples(self):
         moves = [
-            _make_move(mid=f"m{i}", date=f"20{i:02d}-01-01", severity="reject")
-            for i in range(50)
+            _make_move(mid=f"m{i}", date=f"20{i:02d}-01-01", severity="reject") for i in range(50)
         ]
         r1 = _stratified_sample(moves, 10, seed=42)
         r2 = _stratified_sample(moves, 10, seed=99)
@@ -147,12 +141,8 @@ class TestClusterMoves:
 
     def test_groups_by_category(self, tmp_path):
         moves = [
-            _make_move(mid=f"t{i}", category="testing", trigger=f"t{i}")
-            for i in range(10)
-        ] + [
-            _make_move(mid=f"c{i}", category="correctness", trigger=f"c{i}")
-            for i in range(10)
-        ]
+            _make_move(mid=f"t{i}", category="testing", trigger=f"t{i}") for i in range(10)
+        ] + [_make_move(mid=f"c{i}", category="correctness", trigger=f"c{i}") for i in range(10)]
         moves_path = tmp_path / "moves.jsonl"
         out_path = tmp_path / "patterns.json"
         _write_moves_jsonl(moves_path, moves)
@@ -212,9 +202,7 @@ class TestClusterMoves:
             assert "date" in sample
 
     def test_severity_distribution_counts(self, tmp_path):
-        moves = [
-            _make_move(mid=f"r{i}", severity="reject") for i in range(5)
-        ] + [
+        moves = [_make_move(mid=f"r{i}", severity="reject") for i in range(5)] + [
             _make_move(mid=f"a{i}", severity="approve") for i in range(3)
         ]
         moves_path = tmp_path / "moves.jsonl"
@@ -283,9 +271,10 @@ class TestTFIDFClustering:
         vec = {"test": 1.0, "word": 2.0}
         # Normalize the vector first
         import math
+
         mag = math.sqrt(sum(v * v for v in vec.values()))
         normalized = {k: v / mag for k, v in vec.items()}
-        
+
         sim = _cosine_similarity(normalized, normalized)
         assert abs(sim - 1.0) < 0.0001
 
@@ -293,14 +282,15 @@ class TestTFIDFClustering:
         """Orthogonal vectors (no common terms) should have similarity 0."""
         vec1 = {"test": 1.0, "word": 2.0}
         vec2 = {"other": 1.0, "different": 3.0}
-        
+
         # Normalize
         import math
+
         mag1 = math.sqrt(sum(v * v for v in vec1.values()))
         mag2 = math.sqrt(sum(v * v for v in vec2.values()))
         norm1 = {k: v / mag1 for k, v in vec1.items()}
         norm2 = {k: v / mag2 for k, v in vec2.items()}
-        
+
         sim = _cosine_similarity(norm1, norm2)
         assert sim == 0.0
 
@@ -328,7 +318,7 @@ class TestTFIDFClustering:
             "completely unrelated document about cooking recipes",
         ]
         clusters = clustering.cluster(documents)
-        
+
         # First three should be in one cluster, last one separate
         # (at threshold 0.3, semantically similar documents cluster together)
         assert len(clusters) >= 1
@@ -343,7 +333,7 @@ class TestTFIDFClustering:
             "quantum physics principles explained simply",
         ]
         clusters = clustering.cluster(documents)
-        
+
         # With high threshold and very different topics, expect separate clusters
         # or at least the unrelated ones separated
         assert len(clusters) >= 1
@@ -357,15 +347,15 @@ class TestTFIDFClustering:
             "cooking is an art form",
             "baking bread requires patience",
         ]
-        
+
         clusters1 = clustering.cluster(documents)
         clusters2 = TFIDFClustering(threshold=0.35).cluster(documents)
-        
+
         assert clusters1 == clusters2
 
     def test_clustering_fewer_clusters_than_jaccard(self):
         """TF-IDF clustering should produce fewer clusters than lexical Jaccard.
-        
+
         This is the key success criterion: TF-IDF + cosine similarity groups
         semantically similar documents even when they share few words,
         resulting in fewer, more coherent clusters.
@@ -383,20 +373,20 @@ class TestTFIDFClustering:
             "understanding quantum physics basics",
             "physics explained for beginners",
         ]
-        
+
         clustering = TFIDFClustering(threshold=0.25)
         clusters = clustering.cluster(documents)
-        
+
         # With TF-IDF, we expect semantic clustering:
         # - Testing/kernel docs should cluster together (some merge)
         # - Italian cooking docs should cluster (2-3 docs)
         # - Physics docs should cluster (2-3 docs)
         # Result: fewer clusters than documents (Jaccard would give 10)
-        assert len(clusters) < len(documents), \
+        assert len(clusters) < len(documents), (
             f"TF-IDF should cluster: got {len(clusters)} clusters for {len(documents)} docs"
+        )
         # At threshold 0.25, expect 4-7 clusters (still much better than 10)
-        assert len(clusters) <= 7, \
-            f"Expected semantic clustering, got {len(clusters)} clusters"
+        assert len(clusters) <= 7, f"Expected semantic clustering, got {len(clusters)} clusters"
 
     def test_cluster_with_labels(self):
         """cluster_with_labels should return one label per document."""
@@ -406,9 +396,9 @@ class TestTFIDFClustering:
             "code must be tested",
             "cooking recipes",
         ]
-        
+
         labels = clustering.cluster_with_labels(documents)
-        
+
         assert len(labels) == len(documents)
         assert all(isinstance(label, int) for label in labels)
 
@@ -416,9 +406,9 @@ class TestTFIDFClustering:
         """fit_transform should return TF-IDF vectors."""
         clustering = TFIDFClustering()
         documents = ["test document one", "test document two", "different content"]
-        
+
         vectors = clustering.fit_transform(documents)
-        
+
         assert len(vectors) == len(documents)
         assert all(isinstance(v, dict) for v in vectors)
 
@@ -430,14 +420,14 @@ class TestTFIDFClustering:
             "cooking Italian recipes",
             "Italian food preparation",
         ]
-        
+
         # Lower threshold = more permissive = fewer clusters
         clustering_low = TFIDFClustering(threshold=0.2)
         clusters_low = clustering_low.cluster(documents)
-        
+
         # Higher threshold = stricter = more clusters
         clustering_high = TFIDFClustering(threshold=0.6)
         clusters_high = clustering_high.cluster(documents)
-        
+
         # Higher threshold should give >= clusters (stricter = less merging)
         assert len(clusters_high) >= len(clusters_low)
