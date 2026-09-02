@@ -116,6 +116,22 @@ def generate_markdown(
     # Insert scorecard after title
     lines.append(scorecard)
     
+    # Skill Generation Per Model section
+    lines.append("## Skill Generation Per Model")
+    lines.append("")
+    lines.append("Skills are NOT identical — each variant is distilled from the same 350 patterns but with model-specific prompt calibration, token budgets, and execution mode.")
+    lines.append("")
+    lines.append("| Model | Skill file | Distill mode | Token budget | Wall-clock timeout | Severity bias note |")
+    lines.append("|-------|------------|--------------|--------------|-------------------|-------------------|")
+    lines.append("| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | two-stage (14 categories + synthesis) | 16000 | 120s (WALL_CLOCK_DEFAULT) | balanced |")
+    lines.append("| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single-call | 16000 (GLM_MAX_TOKENS) | 600s / 1800s (WALL_CLOCK_GLM) | downgrade ONLY style/docs borderline, never correctness/error-handling (see `MODEL_SEVERITY_BIAS` in `distill.py`) |")
+    lines.append("| mistral-small-4-119b | `linus-torvalds-skill/SKILL-Mistral.md` | two-stage | 16000 | 120s | under-rates → upgrade borderline |")
+    lines.append("")
+    lines.append("**Source:** `src/torvalds_skill/distill.py:MODEL_SEVERITY_BIAS`, `src/torvalds_skill/config.py:_MODEL_TIMEOUTS` and `GLM_MAX_TOKENS`. Regenerate per `docs/CONTRIBUTING.md`.")
+    lines.append("")
+    lines.append("This explains why glm5.2 previously lost 3 criticals (over-filtering style) and why trigger coverage differs across models.")
+    lines.append("")
+    
     lines.append(f"{len(model_names)} models reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.")
     lines.append("")
 

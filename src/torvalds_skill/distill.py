@@ -47,10 +47,12 @@ _data_cache: dict[tuple, tuple[float, object]] = {}
 
 
 # Model-specific severity bias calibration
-# These biases are observed from empirical testing across multiple distillation runs
+# These biases are observed from empirical testing across multiple distillation runs.
+# NOTE: glm5.2 over-rates severity on style/docs issues but must NOT suppress critical
+# error-handling bugs — the guidance below explicitly protects correctness issues.
 MODEL_SEVERITY_BIAS = {
     "gpt-oss-120b": "balanced — no systematic bias detected",
-    "glm5.2": "over-rates severity — tends to assign 'reject' to borderline cases; deliberately downgrade borderline cases by one level",
+    "glm5.2": "over-rates severity on style/docs — downgrade ONLY borderline style/documentation cases by one level; NEVER downgrade correctness, error-handling, or resource-bound bugs (e.g., SIGPIPE, fd bounds, unchecked return values); when in doubt on correctness/error-handling, keep the higher severity",
     "mistral-small-4-119b": "under-rates severity — tends to assign 'nitpick' to borderline cases; deliberately upgrade borderline cases by one level",
 }
 

@@ -1,6 +1,6 @@
 ---
 title: Model Comparison — SmallChat Review
-date: 2026-08-26
+date: 2026-09-02
 codebase: antirez/smallchat
 models: gpt-oss-120b, glm5.2, mistral
 skill: linus-torvalds-skill (language-agnostic)
@@ -15,11 +15,25 @@ Quick summary for non-technical readers:
 
 | Model | Total Findings | Critical Findings | Skill-Only Critical | Verdict |
 |-------|---------------|-------------------|---------------------|---------|
-| gpt-oss-120b | 10 | 2 | 1 | Skill reduces coverage |
-| glm5.2 | 9 | 4 | 4 | Skill adds value |
-| mistral | 18 | 4 | 2 | Skill reduces coverage |
+| gpt-oss-120b | 11 | 6 | 5 | Skill adds value |
+| glm5.2 | 21 | 4 | 3 | Skill adds value |
+| mistral | 10 | 3 | 2 | Skill adds value |
 
-The skill adds the most value for glm5.2, which gained 4 critical finding(s) exclusive to the with-skill review.
+The skill adds the most value for gpt-oss-120b, which gained 5 critical finding(s) exclusive to the with-skill review.
+
+## Skill Generation Per Model
+
+Skills are NOT identical — each variant is distilled from the same 350 patterns but with model-specific prompt calibration, token budgets, and execution mode.
+
+| Model | Skill file | Distill mode | Token budget | Wall-clock timeout | Severity bias note |
+|-------|------------|--------------|--------------|-------------------|-------------------|
+| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | two-stage (14 categories + synthesis) | 16000 | 120s (WALL_CLOCK_DEFAULT) | balanced |
+| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single-call | 16000 (GLM_MAX_TOKENS) | 600s / 1800s (WALL_CLOCK_GLM) | downgrade ONLY style/docs borderline, never correctness/error-handling (see `MODEL_SEVERITY_BIAS` in `distill.py`) |
+| mistral-small-4-119b | `linus-torvalds-skill/SKILL-Mistral.md` | two-stage | 16000 | 120s | under-rates → upgrade borderline |
+
+**Source:** `src/torvalds_skill/distill.py:MODEL_SEVERITY_BIAS`, `src/torvalds_skill/config.py:_MODEL_TIMEOUTS` and `GLM_MAX_TOKENS`. Regenerate per `docs/CONTRIBUTING.md`.
+
+This explains why glm5.2 previously lost 3 criticals (over-filtering style) and why trigger coverage differs across models.
 
 3 models reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.
 
@@ -27,12 +41,12 @@ The skill adds the most value for glm5.2, which gained 4 critical finding(s) exc
 
 | Metric | gpt-oss-120b | glm5.2 | mistral |
 |--------|:---:|:---:|:---:|
-| Findings | 10 | 9 | 18 |
-| Critical | 2 | 4 | 4 |
-| High | 7 | 2 | 7 |
-| Medium | 1 | 3 | 5 |
-| Low | 0 | 0 | 2 |
-| Words | 1048 | 2795 | 1418 |
+| Findings | 11 | 21 | 10 |
+| Critical | 6 | 4 | 3 |
+| High | 2 | 5 | 2 |
+| Medium | 2 | 5 | 2 |
+| Low | 1 | 7 | 3 |
+| Words | 1027 | 2893 | 1001 |
 
 **Key insight:** Finding count is a poor quality signal. The consensus matrix below shows which models caught which bugs — and that is where the real signal lives.
 
@@ -46,46 +60,51 @@ Every finding from all three reviews, mapped to the underlying issue. ✓ = foun
 
 | # | Issue | gpt-oss-120b | glm5.2 | mistral | Consensus |
 |---|:---:|:---:|:---:|:---:|
-| 1 | Ignored return value of `setsockopt()` in `socketS... | ✓ (HIGH) | ✗ | ✓ (LOW) | 2/3 |
-| 2 | Finding: Inconsistent error handling conventions | ✗ | ✗ | ✓ (HIGH) | mistral only |
-| 3 | Finding: Premature abstraction | ✗ | ✗ | ✓ (MEDIUM) | mistral only |
+| 1 | Ignoring possible error from `setsockopt` in `sock... | ✓ (MEDIUM) | ✗ | ✓ (LOW) | 2/3 |
+| 2 | TCPConnect breaks on connect failure instead of co... | ✗ | ✓ (HIGH) | ✗ | glm5.2 only |
+| 3 | chatMalloc/chatRealloc exit on OOM — recoverable e... | ✗ | ✓ (HIGH) | ✗ | glm5.2 only |
+| 4 | acceptClient only handles EINTR — other transient ... | ✗ | ✓ (LOW) | ✗ | glm5.2 only |
+| 5 | Style: Redundant casts | ✗ | ✗ | ✓ (LOW) | mistral only |
+
+### chatlib.h
+
+| # | Issue | gpt-oss-120b | glm5.2 | mistral | Consensus |
+|---|:---:|:---:|:---:|:---:|
+| 6 | Invalid compiler flag `-W` | ✓ (LOW) | ✓ (LOW) | ✗ | 2/3 |
+| 7 | No debug symbols — hinders debugging | ✗ | ✓ (LOW) | ✗ | glm5.2 only |
 
 ### smallchat-client.c
 
 | # | Issue | gpt-oss-120b | glm5.2 | mistral | Consensus |
 |---|:---:|:---:|:---:|:---:|
-| 4 | Ignored return value of `write()` when sending use... | ✓ (HIGH) | ✗ | ✗ | gpt-oss-120b only |
-| 5 | No handling of `inputBufferAppend()` failure | ✓ (HIGH) | ✗ | ✗ | gpt-oss-120b only |
-| 6 | /nick with no argument gives misleading "Unsupport... | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
-| 7 | Finding: Lack of input validation | ✗ | ✗ | ✓ (HIGH) | mistral only |
-| 8 | Finding: Resource leak in client cleanup | ✗ | ✗ | ✓ (HIGH) | mistral only |
+| 8 | Partial writes are not handled | ✓ (HIGH) | ✗ | ✗ | gpt-oss-120b only |
+| 9 | Event‑loop drops simultaneous stdin + socket activ... | ✓ (CRITICAL) | ✗ | ✗ | gpt-oss-120b only |
+| 10 | Buffer overflow not reported in `inputBufferFeedCh... | ✓ (CRITICAL) | ✗ | ✗ | gpt-oss-120b only |
+| 11 | Ignoring the return value of `write(s, ib.buf, ib.... | ✓ (HIGH) | ✓ (MEDIUM) | ✗ | 2/3 |
+| 12 | `setRawMode` return value ignored | ✓ (MEDIUM) | ✗ | ✗ | gpt-oss-120b only |
+| 13 | read() from stdin ignores errors | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
+| 14 | Dead code after infinite loop | ✗ | ✓ (LOW) | ✗ | glm5.2 only |
+| 15 | atoi(argv[2]) has no validation | ✗ | ✓ (LOW) | ✗ | glm5.2 only |
+| 16 | Backspace key code 127 is not portable | ✗ | ✓ (LOW) | ✗ | glm5.2 only |
 
 ### smallchat-server.c
 
 | # | Issue | gpt-oss-120b | glm5.2 | mistral | Consensus |
 |---|:---:|:---:|:---:|:---:|
-| 9 | Fatal assertion on recoverable condition | ✓ (CRITICAL) | ✓ (HIGH) | ✓ (CRITICAL) | 3/3 |
-| 10 | Fixed‑size client table can overflow | ✓ (CRITICAL) | ✗ | ✗ | gpt-oss-120b only |
-| 11 | Ignored return value of `write()` in broadcast loo... | ✓ (HIGH) | ✓ (CRITICAL) | ✗ | 2/3 |
-| 12 | Ignored result of `socketSetNonBlockNoDelay()` in ... | ✓ (HIGH) | ✗ | ✗ | gpt-oss-120b only |
-| 13 | Nick string not NUL‑terminated | ✓ (HIGH) | ✗ | ✗ | gpt-oss-120b only |
-| 14 | Missing error handling for writes to client socket... | ✓ (HIGH) | ✓ (CRITICAL) | ✓ (CRITICAL) | 3/3 |
-| 15 | Magic constant `MAX_CLIENTS` | ✓ (MEDIUM) | ✗ | ✗ | gpt-oss-120b only |
-| 16 | No bounds check on fd against MAX_CLIENTS — buffer... | ✗ | ✓ (CRITICAL) | ✓ (HIGH) | 2/3 |
-| 17 | select() exits on EINTR — any signal kills the ser... | ✗ | ✓ (CRITICAL) | ✗ | glm5.2 only |
-| 18 | write() return values ignored on non-blocking sock... | ✗ | ✓ (HIGH) | ✗ | glm5.2 only |
-| 19 | select() 1-second timeout is speculative generalit... | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
-| 20 | No nick length validation — memory exhaustion DoS | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
-| 21 | Finding: Unsafe boundary crossing without validati... | ✗ | ✗ | ✓ (CRITICAL) | mistral only |
-| 22 | Finding: Memory leak in client creation | ✗ | ✗ | ✓ (CRITICAL) | mistral only |
-| 23 | Finding: Breaking documented behavior without migr... | ✗ | ✗ | ✓ (HIGH) | mistral only |
-| 24 | Finding: Race condition in client cleanup | ✗ | ✗ | ✓ (HIGH) | mistral only |
-| 25 | Finding: Undocumented workarounds | ✗ | ✗ | ✓ (HIGH) | mistral only |
-| 26 | Finding: Special-case handling for rare or edge ca... | ✗ | ✗ | ✓ (MEDIUM) | mistral only |
-| 27 | Finding: Duplicated logic | ✗ | ✗ | ✓ (MEDIUM) | mistral only |
-| 28 | Finding: Inaccurate comments | ✗ | ✗ | ✓ (MEDIUM) | mistral only |
-| 29 | Finding: Overly complex control flow | ✗ | ✗ | ✓ (MEDIUM) | mistral only |
-| 30 | Finding: Dead or unnecessary code constructs | ✗ | ✗ | ✓ (LOW) | mistral only |
+| 17 | Out‑of‑bounds access of `Chat->clients` array | ✓ (CRITICAL) | ✓ (CRITICAL) | ✓ (LOW) | 3/3 |
+| 18 | Nickname strings are not NUL‑terminated | ✓ (CRITICAL) | ✓ (CRITICAL) | ✗ | 2/3 |
+| 19 | Use of `assert` aborts the whole program on a reco... | ✓ (CRITICAL) | ✓ (HIGH) | ✗ | 2/3 |
+| 20 | Ignoring write errors when broadcasting messages | ✓ (CRITICAL) | ✓ (MEDIUM) | ✓ (CRITICAL) | 3/3 |
+| 21 | acceptClient return value unchecked — fd=-1 passed... | ✗ | ✓ (CRITICAL) | ✓ (MEDIUM) | 2/3 |
+| 22 | sendMsgToAllClientsBut ignores write() return on n... | ✗ | ✓ (HIGH) | ✓ (CRITICAL) | 2/3 |
+| 23 | MAX_CLIENTS comment is misleading | ✗ | ✓ (LOW) | ✓ (MEDIUM) | 2/3 |
+| 24 | select() exits on EINTR — recoverable signal inter... | ✗ | ✓ (CRITICAL) | ✗ | glm5.2 only |
+| 25 | No connection limit — resource exhaustion and OOB ... | ✗ | ✓ (HIGH) | ✗ | glm5.2 only |
+| 26 | socketSetNonBlockNoDelay failure silently ignored ... | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
+| 27 | /nick command accepts unvalidated input — format i... | ✗ | ✓ (MEDIUM) | ✗ | glm5.2 only |
+| 28 | Unvalidated read() results | ✗ | ✗ | ✓ (CRITICAL) | mistral only |
+| 29 | Public interface instability (nickname exposure) | ✗ | ✗ | ✓ (HIGH) | mistral only |
+| 30 | Missing fallbacks for fallible allocations | ✗ | ✗ | ✓ (HIGH) | mistral only |
 
 ---
 
@@ -95,11 +114,14 @@ Cases where 2+ models found the same issue but assigned different severities:
 
 | Issue | gpt-oss-120b | glm5.2 | mistral |
 |-------|:---:|:---:|:---:|
-| Ignored return value of `setsockopt()` i... | HIGH | — | LOW |
-| Fatal assertion on recoverable condition | CRITICAL | HIGH | CRITICAL |
-| Ignored return value of `write()` in bro... | HIGH | CRITICAL | — |
-| Missing error handling for writes to cli... | HIGH | CRITICAL | CRITICAL |
-| No bounds check on fd against MAX_CLIENT... | — | CRITICAL | HIGH |
+| Ignoring possible error from `setsockopt... | MEDIUM | — | LOW |
+| Ignoring the return value of `write(s, i... | HIGH | MEDIUM | — |
+| Out‑of‑bounds access of `Chat->clients` ... | CRITICAL | CRITICAL | LOW |
+| Use of `assert` aborts the whole program... | CRITICAL | HIGH | — |
+| Ignoring write errors when broadcasting ... | CRITICAL | MEDIUM | CRITICAL |
+| acceptClient return value unchecked — fd... | — | CRITICAL | MEDIUM |
+| sendMsgToAllClientsBut ignores write() r... | — | HIGH | CRITICAL |
+| MAX_CLIENTS comment is misleading | — | LOW | MEDIUM |
 
 ---
 
@@ -109,37 +131,32 @@ Which skill triggers fired in each review:
 
 | Trigger theme | gpt-oss-120b | glm5.2 | mistral |
 |---------------|:---:|:---:|:---:|
-| A fatal assertion, panic, or a... | ✗ | ✓ (2) | ✗ |
-| A patch adds support for sizes... | ✗ | ✓ (1) | ✗ |
-| A resource is freed while it m... | ✗ | ✓ (1) | ✗ |
-| An error message that misdescr... | ✗ | ✓ (1) | ✗ |
-| Breaking documented behavior o... | ✗ | ✗ | ✓ (1) |
-| Code allocates memory but late... | ✗ | ✓ (1) | ✗ |
-| Code uses an algorithm or data... | ✗ | ✓ (1) | ✗ |
-| Dead or unnecessary code const... | ✗ | ✗ | ✓ (1) |
-| Duplicating logic instead of f... | ✗ | ✗ | ✓ (1) |
-| Error‑handling & return conven... | ✓ (6) | ✗ | ✗ |
-| Fatal assertion used for a rec... | ✓ (1) | ✗ | ✗ |
-| Fatal assertion/panic used for... | ✗ | ✗ | ✓ (1) |
-| Hard-coded magic constants or ... | ✗ | ✗ | ✓ (1) |
-| Hard-coded magic constants or ... | ✗ | ✗ | ✓ (1) |
-| Hard‑coded magic constants wit... | ✓ (1) | ✗ | ✗ |
-| Inaccurate or misleading comme... | ✗ | ✗ | ✓ (1) |
-| Interfaces that return mislead... | ✗ | ✓ (1) | ✗ |
-| Manual memory allocation/deall... | ✗ | ✗ | ✓ (1) |
-| Manual resource cleanup instea... | ✗ | ✗ | ✓ (1) |
-| Not validating boundary-crossi... | ✗ | ✗ | ✓ (1) |
-| Obscure or non-descriptive nam... | ✗ | ✗ | ✓ (1) |
-| Overly complex control flow | ✗ | ✗ | ✓ (1) |
-| Premature abstraction or helpe... | ✗ | ✗ | ✓ (1) |
-| Returning magic error codes in... | ✗ | ✗ | ✓ (1) |
-| Security is ordinary bug-fixin... | ✗ | ✓ (1) | ✗ |
-| Silent swallowing of serious e... | ✗ | ✗ | ✓ (1) |
-| Special-case handling for rare... | ✗ | ✗ | ✓ (1) |
-| Unbounded format‑string or buf... | ✓ (1) | ✗ | ✗ |
-| Unbounded format‑string or buf... | ✓ (1) | ✗ | ✗ |
-| Unsafe or untrusted boundary c... | ✗ | ✗ | ✓ (1) |
-| Unsynchronized access to share... | ✗ | ✗ | ✓ (1) |
+| (unmatched) | ✗ | ✓ (4) | ✗ |
+| All Error‑Handling Paths Must ... | ✓ (3) | ✗ | ✗ |
+| Avoid exposing internal detail... | ✗ | ✗ | ✓ (1) |
+| Avoid special-case hacks and m... | ✗ | ✗ | ✓ (1) |
+| Avoid unnecessary abstractions... | ✗ | ✗ | ✓ (1) |
+| Binary Correctness | ✓ (3) | ✗ | ✗ |
+| Code that produces incorrect o... | ✗ | ✓ (2) | ✗ |
+| Code that produces incorrect o... | ✗ | ✓ (1) | ✗ |
+| Comments that do not match the... | ✗ | ✓ (2) | ✗ |
+| Dead or redundant code providi... | ✗ | ✓ (1) | ✗ |
+| Demand evidence for performanc... | ✗ | ✗ | ✓ (1) |
+| Error code returned that calle... | ✗ | ✓ (3) | ✗ |
+| Fatal assertion or abort used ... | ✗ | ✓ (3) | ✗ |
+| Handle fallible allocations ex... | ✗ | ✗ | ✓ (1) |
+| Hot‑Path Code Must Remain Low‑... | ✓ (1) | ✗ | ✗ |
+| Never Use Custom Synchronisati... | ✓ (1) | ✗ | ✗ |
+| No Unbounded Resource Allocati... | ✓ (1) | ✗ | ✗ |
+| No race conditions in resource... | ✗ | ✗ | ✓ (1) |
+| Prefer Existing, Well‑Tested A... | ✓ (1) | ✗ | ✗ |
+| Prefer Simple, Un‑Clever Code | ✓ (1) | ✗ | ✗ |
+| Return value that is ambiguous... | ✗ | ✓ (3) | ✗ |
+| Security-critical state not in... | ✗ | ✓ (1) | ✗ |
+| Separate core logic from resou... | ✗ | ✗ | ✓ (1) |
+| Stack-allocated object referen... | ✗ | ✓ (1) | ✗ |
+| Use the simplest solution that... | ✗ | ✗ | ✓ (1) |
+| Validate inputs and preserve i... | ✗ | ✗ | ✓ (2) |
 
 ---
 
@@ -149,9 +166,9 @@ For each model, comparing findings with the skill vs without (baseline):
 
 | Model | Baseline Total | With-Skill Total | Baseline CRITICAL | With-Skill CRITICAL | Critical Overlap | Skill-Only CRITICAL | Baseline-Only CRITICAL | Skill Added Value |
 |-------|----------------|------------------|-------------------|---------------------|------------------|---------------------|------------------------|-------------------|
-| gpt-oss-120b | 20 | 10 | 4 | 2 | 1 | 1 | 3 | no (-2 net critical: 1 found, 3 lost) |
-| glm5.2 | 35 | 9 | 2 | 4 | 0 | 4 | 2 | yes (+2 net critical: 4 found, 2 lost) |
-| mistral | 19 | 18 | 7 | 4 | 2 | 2 | 5 | no (-3 net critical: 2 found, 5 lost) |
+| gpt-oss-120b | 15 | 11 | 1 | 6 | 1 | 5 | 0 | yes (+5 net critical: 5 found, 0 lost) |
+| glm5.2 | 26 | 21 | 2 | 4 | 1 | 3 | 1 | yes (+2 net critical: 3 found, 1 lost) |
+| mistral | 19 | 10 | 2 | 3 | 1 | 2 | 1 | yes (+1 net critical: 2 found, 1 lost) |
 
 ---
 
@@ -165,38 +182,36 @@ Bug-by-bug comparison for each model: which bugs were found by both, only baseli
 
 | Issue | File | Baseline | Skill | Severity changed? |
 |-------|------|----------|-------|-------------------|
-| Fatal assertion on recoverable condition | smallchat-server.c | CRITICAL | CRITICAL | no |
-| Fixed‑size client table can overflow | smallchat-server.c | MEDIUM | CRITICAL | YES: MEDIUM→CRITICAL |
-| Ignored result of `socketSetNonBlockNoDelay()` in `createCli... | smallchat-server.c | CRITICAL | HIGH | YES: CRITICAL→HIGH |
-| Nick string not NUL‑terminated | smallchat-server.c | LOW | HIGH | YES: LOW→HIGH |
-| Missing error handling for writes to client sockets (welcome... | smallchat-server.c | HIGH | HIGH | no |
-| Ignored return value of `write()` when sending user input | smallchat-client.c | CRITICAL | HIGH | YES: CRITICAL→HIGH |
-| No handling of `inputBufferAppend()` failure | smallchat-client.c | MEDIUM | HIGH | YES: MEDIUM→HIGH |
-| Ignored return value of `setsockopt()` in `socketSetNonBlock... | chatlib.c | MEDIUM | HIGH | YES: MEDIUM→HIGH |
+| Nickname strings are not NUL‑terminated | smallchat-server.c | MEDIUM | CRITICAL | YES: MEDIUM→CRITICAL |
+| Use of `assert` aborts the whole program on a recoverable co... | smallchat-server.c | MEDIUM | CRITICAL | YES: MEDIUM→CRITICAL |
+| Ignoring the return value of `write(s, ib.buf, ib.len)` | smallchat-client.c | LOW | HIGH | YES: LOW→HIGH |
+| `setRawMode` return value ignored | smallchat-client.c | LOW | MEDIUM | YES: LOW→MEDIUM |
+| Ignoring possible error from `setsockopt` in `socketSetNonBl... | chatlib.c | LOW | MEDIUM | YES: LOW→MEDIUM |
+| Out‑of‑bounds access of `Chat->clients` array | smallchat-server.c | CRITICAL | CRITICAL | no |
 
 **Baseline-only (skill missed):**
 
 | Issue | File | Severity | Skill trigger covers? |
 |-------|------|----------|-----------------------|
-| Unchecked `write()` may raise `SIGPIPE` and terminate the se... | smallchat-server.c | CRITICAL | out of scope |
-| Ignoring return values of `write()` and `socketSetNonBlockNo... | smallchat-server.c | HIGH | out of scope |
-| Partial writes are ignored | smallchat-server.c | MEDIUM | out of scope |
-| Lack of error handling for `acceptClient()` | smallchat-server.c | LOW | Mixed error‑code conventions |
-| Non‑blocking read errors are not handled | smallchat-client.c | HIGH | out of scope |
-| Input buffer overflow handling is silent | smallchat-client.c | MEDIUM | Returning a pointer to a stack‑allocated buffer |
-| No validation of command‑line arguments | smallchat-client.c | LOW | Skipping input validation on a boundary crossing |
-| `make` does not enable `-Wextra` or `-pedantic` | chatlib.c | LOW | Comment that does not match code |
-| `TCPConnect()` breaks out of the address‑iteration loop on `... | chatlib.c | MEDIUM | Out‑of‑tree code dictating core changes |
-| No `#pragma` or attribute to silence unused‑parameter warnin... | chatlib.c | LOW | out of scope |
-| Header lacks include guards for C++ compatibility | chatlib.h | LOW | out of scope |
-| No `clean` rule removes object files; only binaries are dele... | chatlib.h | LOW | Missing reference‑count on shared object |
+| Potential SIGPIPE termination on writes | smallchat-server.c | MEDIUM | out of scope |
+| Unhandled partial writes | smallchat-server.c | LOW | out of scope |
+| No newline handling for long messages | smallchat-server.c | LOW | out of scope |
+| No explicit handling of `SIGINT`/graceful shutdown | smallchat-client.c | LOW | out of scope |
+| Unhandled SIGPIPE on writes to the server | smallchat-client.c | MEDIUM | out of scope |
+| Unchecked partial writes to the server socket | smallchat-client.c | LOW | out of scope |
+| Input buffer overflow silently dropped | smallchat-client.c | LOW | out of scope |
+| `TCPConnect` aborts address iteration on `socketSetNonBlockN... | chatlib.c | LOW | out of scope |
+| Server socket is created blocking | chatlib.c | LOW | out of scope |
 
 **Skill-only (skill added):**
 
 | Issue | File | Severity | Trigger |
 |-------|------|----------|---------|
-| Ignored return value of `write()` in broadcast loop | smallchat-server.c | HIGH | Error‑handling & return conventions – mi... |
-| Magic constant `MAX_CLIENTS` | smallchat-server.c | MEDIUM | Hard‑coded magic constants without docum... |
+| Ignoring write errors when broadcasting messages | smallchat-server.c | CRITICAL | All Error‑Handling Paths Must Be Reliabl... |
+| Partial writes are not handled | smallchat-client.c | HIGH | Hot‑Path Code Must Remain Low‑Overhead (... |
+| Event‑loop drops simultaneous stdin + socket activity | smallchat-client.c | CRITICAL | Binary Correctness |
+| Buffer overflow not reported in `inputBufferFeedChar` | smallchat-client.c | CRITICAL | Binary Correctness |
+| Invalid compiler flag `-W` | chatlib.h | LOW | Prefer Simple, Un‑Clever Code |
 
 ### glm5.2
 
@@ -204,59 +219,48 @@ Bug-by-bug comparison for each model: which bugs were found by both, only baseli
 
 | Issue | File | Baseline | Skill | Severity changed? |
 |-------|------|----------|-------|-------------------|
-| select() exits on EINTR — any signal kills the server | smallchat-server.c | HIGH | CRITICAL | YES: HIGH→CRITICAL |
+| Nickname not null-terminated in createClient — heap over-rea... | smallchat-server.c | HIGH | CRITICAL | YES: HIGH→CRITICAL |
+| acceptClient return value unchecked — fd=-1 passed to create... | smallchat-server.c | CRITICAL | CRITICAL | no |
+| fd used as array index without bounds check — out-of-bounds ... | smallchat-server.c | HIGH | CRITICAL | YES: HIGH→CRITICAL |
+| select() exits on EINTR — recoverable signal interruption cr... | smallchat-server.c | HIGH | CRITICAL | YES: HIGH→CRITICAL |
+| sendMsgToAllClientsBut ignores write() return on non-blockin... | smallchat-server.c | CRITICAL | HIGH | YES: CRITICAL→HIGH |
+| assert in createClient crashes server for recoverable condit... | smallchat-server.c | LOW | HIGH | YES: LOW→HIGH |
+| /nick command accepts unvalidated input — format injection a... | smallchat-server.c | MEDIUM | MEDIUM | no |
+| MAX_CLIENTS comment is misleading | smallchat-server.c | LOW | LOW | no |
+| Dead code after infinite loop | smallchat-client.c | HIGH | LOW | YES: HIGH→LOW |
+| Backspace key code 127 is not portable | smallchat-client.c | LOW | LOW | no |
+| TCPConnect breaks on connect failure instead of continuing —... | chatlib.c | MEDIUM | HIGH | YES: MEDIUM→HIGH |
+| acceptClient only handles EINTR — other transient errors not... | chatlib.c | MEDIUM | LOW | YES: MEDIUM→LOW |
+| CFLAGS placed after source files — unconventional and fragil... | chatlib.h | LOW | LOW | no |
+| No debug symbols — hinders debugging | chatlib.h | LOW | LOW | no |
+| write() return values ignored for welcome and error messages | smallchat-server.c | MEDIUM | MEDIUM | no |
 
 **Baseline-only (skill missed):**
 
 | Issue | File | Severity | Skill trigger covers? |
 |-------|------|----------|-----------------------|
-| Out-of-bounds write when client fd >= MAX_CLIENTS | smallchat-server.c | CRITICAL | Out‑of‑tree code dictating core changes |
-| `acceptClient` return value unchecked before `createClient` | smallchat-server.c | CRITICAL | Special‑case handling for a single value |
-| Missing NUL terminator on initial nickname | smallchat-server.c | HIGH | Commit message missing rationale |
-| No SIGPIPE handling — server dies on client disconnect | smallchat-server.c | HIGH | Special‑case handling for a single value |
-| FD_SET / FD_SETSIZE overflow | smallchat-server.c | MEDIUM | out of scope |
-| `write()` return values ignored in fan-out | smallchat-server.c | MEDIUM | Out‑of‑tree code dictating core changes |
-| No validation/length cap on `/nick` argument | smallchat-server.c | MEDIUM | Skipping input validation on a boundary crossing |
-| `freeClient` invalidates loop bound mid-iteration | smallchat-server.c | MEDIUM | Calling a virtual function inside a tight inner lo... |
-| `socketSetNonBlockNoDelay` failure ignored | smallchat-server.c | LOW | out of scope |
-| Hardcoded server port | smallchat-server.c | LOW | out of scope |
-| `/nick` with no argument reports "Unsupported command" | smallchat-server.c | LOW | out of scope |
-| `assert` in `createClient` compiled out in release | smallchat-server.c | LOW | Out‑of‑tree code dictating core changes |
-| Client `select()` exits on EINTR | smallchat-client.c | HIGH | out of scope |
-| No SIGPIPE handling in client | smallchat-client.c | HIGH | Special‑case handling for a single value |
-| `inputBufferAppend` after `IB_GOTLINE` silently drops newlin... | smallchat-client.c | MEDIUM | Returning a pointer to a stack‑allocated buffer |
-| `read()` from server not checked for partial/short reads on ... | smallchat-client.c | MEDIUM | out of scope |
-| Terminal injection from server-relayed messages | smallchat-client.c | MEDIUM | out of scope |
-| `setRawMode` static state is not fd-aware | smallchat-client.c | MEDIUM | out of scope |
-| Backspace handling limited to DEL (127) | smallchat-client.c | LOW | Special‑case handling for a single value |
-| No handling of arrow keys / escape sequences | smallchat-client.c | LOW | Special‑case handling for a single value |
-| `close(s)` after `while(1)` is unreachable | smallchat-client.c | LOW | out of scope |
-| `atoi(argv[2])` with no validation | smallchat-client.c | LOW | Skipping input validation on a boundary crossing |
-| Sender sees both "you> " echo and server broadcast | smallchat-client.c | LOW | out of scope |
-| `TCPConnect` leaks `addrinfo` on non-blocking EINPROGRESS | chatlib.c | MEDIUM | out of scope |
-| `TCPConnect` non-blocking `connect` failure aborts remaining... | chatlib.c | MEDIUM | out of scope |
-| `acceptClient` ignores peer address it collects | chatlib.c | MEDIUM | out of scope |
-| `createTCPServer` is IPv4-only | chatlib.c | LOW | Introducing a new abstraction that is used only on... |
-| `socketSetNonBlockNoDelay` does not preserve other `fcntl` f... | chatlib.c | LOW | Comment that does not match code |
-| `chatRealloc` leaks original pointer on failure (moot due to... | chatlib.c | LOW | Returning a pointer to a stack‑allocated buffer |
-| No `const` correctness on string parameters | chatlib.h | LOW | Unbounded format‑string or buffer‑size mismatch |
-| No `extern "C"` guard for C++ consumers | chatlib.h | LOW | out of scope |
-| `CFLAGS` placed after source files | chatlib.h | LOW | out of scope |
-| Missing `.PHONY` declarations | chatlib.h | LOW | Commit message missing rationale |
-| No `install` target, no dependency tracking | chatlib.h | LOW | out of scope |
+| Nickname not validated for length or content | smallchat-server.c | MEDIUM | out of scope |
+| `select()` with `fd_set` has an implicit `FD_SETSIZE` limit | smallchat-server.c | LOW | out of scope |
+| Busy-loop at 100% CPU when stdin reaches EOF | smallchat-client.c | MEDIUM | out of scope |
+| No SIGPIPE handling — client killed when writing to closed s... | smallchat-client.c | MEDIUM | out of scope |
+| Mixed `printf()` and `write()` output can cause interleaving | smallchat-client.c | LOW | out of scope |
+| No feedback when input buffer is full | smallchat-client.c | LOW | out of scope |
+| `acceptClient()` uses `struct sockaddr_in` — cannot accept I... | chatlib.c | LOW | out of scope |
+| `socketSetNonBlockNoDelay()` ignores `setsockopt()` failure | chatlib.c | LOW | out of scope |
+| No `extern "C"` guard for C++ compatibility | chatlib.h | LOW | out of scope |
+| No `const` correctness on string parameters | chatlib.h | LOW | out of scope |
+| No `.PHONY` declaration for `all` and `clean` | chatlib.h | LOW | out of scope |
 
 **Skill-only (skill added):**
 
 | Issue | File | Severity | Trigger |
 |-------|------|----------|---------|
-| No SIGPIPE handling — server crashes when writing to a disco... | smallchat-server.c | CRITICAL | Security is ordinary bug-fixing — "secur... |
-| No bounds check on fd against MAX_CLIENTS — buffer overflow | smallchat-server.c | CRITICAL | A resource is freed while it may still b... |
-| acceptClient return value not checked — createClient(-1) cor... | smallchat-server.c | CRITICAL | Code allocates memory but later cannot d... |
-| assert in createClient for a recoverable condition — server ... | smallchat-server.c | HIGH | A fatal assertion, panic, or abort is us... |
-| write() return values ignored on non-blocking sockets — mess... | smallchat-server.c | HIGH | Interfaces that return misleading or fab... |
-| select() 1-second timeout is speculative generality — serves... | smallchat-server.c | MEDIUM | A patch adds support for sizes, ranges, ... |
-| No nick length validation — memory exhaustion DoS | smallchat-server.c | MEDIUM | Code uses an algorithm or data structure... |
-| /nick with no argument gives misleading "Unsupported command... | smallchat-client.c | MEDIUM | An error message that misdescribes the a... |
+| No connection limit — resource exhaustion and OOB access | smallchat-server.c | HIGH | Security-critical state not initialized ... |
+| socketSetNonBlockNoDelay failure silently ignored — server m... | smallchat-server.c | MEDIUM | Error code returned that callers cannot ... |
+| inputBufferAppend return value not checked when appending ne... | smallchat-client.c | MEDIUM | Return value that is ambiguous between s... |
+| read() from stdin ignores errors | smallchat-client.c | MEDIUM | Error code returned that callers cannot ... |
+| atoi(argv[2]) has no validation | smallchat-client.c | LOW | Error code returned that callers cannot ... |
+| chatMalloc/chatRealloc exit on OOM — recoverable error crash... | chatlib.c | HIGH | Fatal assertion or abort used for a reco... |
 
 ### mistral
 
@@ -264,49 +268,40 @@ Bug-by-bug comparison for each model: which bugs were found by both, only baseli
 
 | Issue | File | Baseline | Skill | Severity changed? |
 |-------|------|----------|-------|-------------------|
-| Finding: Fatal assertion used for recoverable condition | smallchat-server.c | HIGH | CRITICAL | YES: HIGH→CRITICAL |
-| Finding: Silent swallowing of serious errors | smallchat-server.c | CRITICAL | CRITICAL | no |
-| Finding: Unsafe boundary crossing without validation | smallchat-server.c | CRITICAL | CRITICAL | no |
-| Finding: Undocumented workarounds | smallchat-server.c | HIGH | HIGH | no |
+| Race condition in maxclient update | smallchat-server.c | LOW | CRITICAL | YES: LOW→CRITICAL |
+| Unvalidated read() results | smallchat-server.c | LOW | CRITICAL | YES: LOW→CRITICAL |
+| Inefficient select() loop | smallchat-server.c | MEDIUM | MEDIUM | no |
+| Style: Redundant casts | chatlib.c | MEDIUM | LOW | YES: MEDIUM→LOW |
+| Buffer overflow in nickname handling | smallchat-server.c | CRITICAL | CRITICAL | no |
 
 **Baseline-only (skill missed):**
 
 | Issue | File | Severity | Skill trigger covers? |
 |-------|------|----------|-----------------------|
-| Missing Error Handling in `socketSetNonBlockNoDelay()` | smallchat-server.c | MEDIUM | Mixed error‑code conventions |
-| Hardcoded Limits | smallchat-server.c | MEDIUM | out of scope |
-| Unused Variable | smallchat-client.c | LOW | out of scope |
-| Terminal Escape Injection | smallchat-client.c | CRITICAL | out of scope |
-| Buffer Overflow in `inputBufferFeedChar()` | smallchat-client.c | CRITICAL | Returning a pointer to a stack‑allocated buffer |
-| Resource Leak in `setRawMode()` | smallchat-client.c | HIGH | out of scope |
-| No Timeout for Server Reads | smallchat-client.c | MEDIUM | out of scope |
-| Uninitialized `readbuf` in `main()` | chatlib.c | LOW | out of scope |
-| Missing Error Handling in `TCPConnect()` | chatlib.c | CRITICAL | Mixed error‑code conventions |
-| Race Condition in `acceptClient()` | chatlib.c | CRITICAL | out of scope |
-| No IPv6 Support | chatlib.c | MEDIUM | out of scope |
-| Unused Variable | chatlib.h | LOW | out of scope |
-| Missing Documentation | chatlib.h | LOW | Commit message missing rationale |
-| No Compiler Warnings for Implicit Functions | chatlib.h | CRITICAL | Reading a shared flag without atomic/implicit lang... |
-| No Debug Symbols | chatlib.h | LOW | out of scope |
+| Finding: Missing Error Handling in socketSetNonBlockNoDelay | smallchat-server.c | HIGH | out of scope |
+| Finding: Unsafe String Handling | smallchat-server.c | MEDIUM | out of scope |
+| Finding: Terminal Raw Mode Not Restored on Crash | smallchat-client.c | CRITICAL | out of scope |
+| Finding: Potential Buffer Overflow in Input Handling | smallchat-client.c | HIGH | out of scope |
+| Finding: No Timeout Handling in select() | smallchat-client.c | MEDIUM | out of scope |
+| Finding: Magic Numbers in Terminal Codes | smallchat-client.c | LOW | out of scope |
+| Finding: Potential Resource Leak in TCPConnect | chatlib.c | HIGH | out of scope |
+| Finding: No Port Range Validation | chatlib.c | MEDIUM | out of scope |
+| Finding: No IPv6 Support | chatlib.c | LOW | out of scope |
+| Finding: Inconsistent Error Handling | chatlib.h | LOW | out of scope |
+| Finding: Missing Function Prototypes | chatlib.h | LOW | out of scope |
+| Finding: No Documentation | chatlib.h | LOW | out of scope |
+| Finding: No Compiler Warnings for All Files | chatlib.h | LOW | out of scope |
+| Finding: No Debug Symbols or Sanitizers | chatlib.h | LOW | out of scope |
 
 **Skill-only (skill added):**
 
 | Issue | File | Severity | Trigger |
 |-------|------|----------|---------|
-| Finding: Memory leak in client creation | smallchat-server.c | CRITICAL | Manual memory allocation/deallocation wi... |
-| Finding: Breaking documented behavior without migration path | smallchat-server.c | HIGH | Breaking documented behavior or public i... |
-| Finding: Inconsistent error handling conventions | chatlib.c | HIGH | Returning magic error codes instead of t... |
-| Finding: Potential buffer overflow in message handling | smallchat-server.c | HIGH | Hard-coded magic constants or unsafe sta... |
-| Finding: Race condition in client cleanup | smallchat-server.c | HIGH | Unsynchronized access to shared mutable ... |
-| Finding: Lack of input validation | smallchat-client.c | HIGH | Not validating boundary-crossing returns... |
-| Finding: Resource leak in client cleanup | smallchat-client.c | HIGH | Manual resource cleanup instead of RAII/... |
-| Finding: Special-case handling for rare or edge cases | smallchat-server.c | MEDIUM | Special-case handling for rare or edge c... |
-| Finding: Duplicated logic | smallchat-server.c | MEDIUM | Duplicating logic instead of factoring i... |
-| Finding: Premature abstraction | chatlib.c | MEDIUM | Premature abstraction or helper function... |
-| Finding: Inaccurate comments | smallchat-server.c | MEDIUM | Inaccurate or misleading comments |
-| Finding: Overly complex control flow | smallchat-server.c | MEDIUM | Overly complex control flow |
-| Finding: Obscure or non-descriptive naming | chatlib.c | LOW | Obscure or non-descriptive naming |
-| Finding: Dead or unnecessary code constructs | smallchat-server.c | LOW | Dead or unnecessary code constructs |
+| Public interface instability (nickname exposure) | smallchat-server.c | HIGH | Avoid exposing internal details in publi... |
+| Missing fallbacks for fallible allocations | smallchat-server.c | HIGH | Handle fallible allocations explicitly |
+| Unnecessary global state | smallchat-server.c | MEDIUM | Separate core logic from resource manage... |
+| Style: Inconsistent error handling | chatlib.c | LOW | Use the simplest solution that works |
+| Style: Magic constants | smallchat-server.c | LOW | Avoid special-case hacks and magic const... |
 
 ---
 
@@ -318,9 +313,9 @@ Findings confirmed by 2+ models are treated as real bugs. Findings reported by o
 
 | Model | Total Findings | Confirmed (2+ models) | Unverified (1 model only) | Consensus Rate |
 |-------|:--------------:|:---------------------:|:--------------------------:|:--------------:|
-| gpt-oss-120b | 10 | 4 | 6 | 40% |
-| glm5.2 | 9 | 4 | 5 | 44% |
-| mistral | 18 | 4 | 14 | 22% |
+| gpt-oss-120b | 11 | 7 | 4 | 64% |
+| glm5.2 | 21 | 9 | 12 | 43% |
+| mistral | 10 | 6 | 4 | 60% |
 
 ### Severity Calibration
 
@@ -328,13 +323,16 @@ Cases where 2+ models found the same issue but assigned different severities:
 
 | Issue | gpt-oss-120b | glm5.2 | mistral |
 |-------|:---:|:---:|:---:|
-| Ignored return value of `setsockopt()` i... | HIGH | — | LOW |
-| Fatal assertion on recoverable condition | CRITICAL | HIGH | CRITICAL |
-| Ignored return value of `write()` in bro... | HIGH | CRITICAL | — |
-| Missing error handling for writes to cli... | HIGH | CRITICAL | CRITICAL |
-| No bounds check on fd against MAX_CLIENT... | — | CRITICAL | HIGH |
+| Ignoring possible error from `setsockopt... | MEDIUM | — | LOW |
+| Ignoring the return value of `write(s, i... | HIGH | MEDIUM | — |
+| Out‑of‑bounds access of `Chat->clients` ... | CRITICAL | CRITICAL | LOW |
+| Use of `assert` aborts the whole program... | CRITICAL | HIGH | — |
+| Ignoring write errors when broadcasting ... | CRITICAL | MEDIUM | CRITICAL |
+| acceptClient return value unchecked — fd... | — | CRITICAL | MEDIUM |
+| sendMsgToAllClientsBut ignores write() r... | — | HIGH | CRITICAL |
+| MAX_CLIENTS comment is misleading | — | LOW | MEDIUM |
 
-Total severity disagreements: 5. Lower is better — it means the model's severity assessment aligns with the consensus.
+Total severity disagreements: 8. Lower is better — it means the model's severity assessment aligns with the consensus.
 
 ### Unique Findings (Single-Model Discoveries)
 
@@ -342,9 +340,9 @@ Findings reported by only one model. These represent either unique insight or fa
 
 | Model | Unique Findings |
 |-------|:--------------:|
-| gpt-oss-120b | 6 |
-| glm5.2 | 5 |
-| mistral | 14 |
+| gpt-oss-120b | 4 |
+| glm5.2 | 12 |
+| mistral | 4 |
 
 A high unique count with a low consensus rate suggests false positives. A high unique count with a high consensus rate suggests the model found real bugs others missed.
 
@@ -352,11 +350,11 @@ A high unique count with a low consensus rate suggests false positives. A high u
 
 How the skill changed each model's review:
 
-**gpt-oss-120b:** Baseline 20 findings (4 CRITICAL) → With-skill 10 findings (2 CRITICAL). Skill found 1 critical bug(s) the baseline missed; baseline found 3 critical bug(s) the skill missed.
+**gpt-oss-120b:** Baseline 15 findings (1 CRITICAL) → With-skill 11 findings (6 CRITICAL). Skill found 5 critical bug(s) the baseline missed; baseline found 0 critical bug(s) the skill missed.
 
-**glm5.2:** Baseline 35 findings (2 CRITICAL) → With-skill 9 findings (4 CRITICAL). Skill found 4 critical bug(s) the baseline missed; baseline found 2 critical bug(s) the skill missed.
+**glm5.2:** Baseline 26 findings (2 CRITICAL) → With-skill 21 findings (4 CRITICAL). Skill found 3 critical bug(s) the baseline missed; baseline found 1 critical bug(s) the skill missed.
 
-**mistral:** Baseline 19 findings (7 CRITICAL) → With-skill 18 findings (4 CRITICAL). Skill found 2 critical bug(s) the baseline missed; baseline found 5 critical bug(s) the skill missed.
+**mistral:** Baseline 19 findings (2 CRITICAL) → With-skill 10 findings (3 CRITICAL). Skill found 2 critical bug(s) the baseline missed; baseline found 1 critical bug(s) the skill missed.
 
 #### Skill Tradeoff Analysis
 
@@ -364,29 +362,29 @@ The skill narrows reviewer focus toward memory-safety and correctness (Linus's p
 
 | Model | Skill-Only CRITICAL | Baseline-Only CRITICAL | Net Critical Impact | Total Finding Delta |
 |-------|:-------------------:|:----------------------:|:-------------------:|:-------------------:|
-| gpt-oss-120b | 1 | 3 | -2 | -10 |
-| glm5.2 | 4 | 2 | +2 | -26 |
-| mistral | 2 | 5 | -3 | -1 |
+| gpt-oss-120b | 5 | 0 | +5 | -4 |
+| glm5.2 | 3 | 1 | +2 | -5 |
+| mistral | 2 | 1 | +1 | -9 |
 
 **Interpretation:** A positive net critical impact means the skill found real bugs the baseline missed. A negative value means the skill suppressed critical findings the baseline caught — a coverage gap. A large negative total finding delta with neutral critical impact means the skill filtered noise without losing signal.
 
 **Per-model read:**
-- **gpt-oss-120b:** Net negative on critical coverage. The skill cut 10 findings and suppressed 3 critical(s) the baseline caught, while only adding 1 new critical. The skill narrowed focus too aggressively — the 3 lost critical(s) are a real coverage gap worth investigating.
-- **glm5.2:** Net positive. The skill cut 26 findings and added 2 critical bug(s) the baseline missed.
-- **mistral:** Net negative on critical coverage. The skill cut 1 findings and suppressed 5 critical(s) the baseline caught, while only adding 2 new critical. The skill narrowed focus too aggressively — the 5 lost critical(s) are a real coverage gap worth investigating.
+- **gpt-oss-120b:** Net positive. The skill cut 4 findings and added 5 critical bug(s) the baseline missed.
+- **glm5.2:** Net positive. The skill cut 5 findings and added 2 critical bug(s) the baseline missed.
+- **mistral:** Net positive. The skill cut 9 findings and added 1 critical bug(s) the baseline missed.
 
 ### Trigger Coverage Analysis
 
 Which skill triggers each model fired:
 
-**gpt-oss-120b:** 5 distinct triggers fired, 10 total trigger firings.
-  Top triggers: Error‑handling & return conventions – missing error handling (6x), Fatal assertion used for a recoverable error (1x), Unbounded format‑string or buffer‑size mismatch (applied to array bounds) (1x)
+**gpt-oss-120b:** 7 distinct triggers fired, 11 total trigger firings.
+  Top triggers: Binary Correctness (3x), All Error‑Handling Paths Must Be Reliable (3x), No Unbounded Resource Allocation Without Bounds (1x)
 
-**glm5.2:** 8 distinct triggers fired, 9 total trigger firings.
-  Top triggers: A fatal assertion, panic, or abort is used for a condition that could be handled gracefully by returning an error or falling back to a safe path (2x), Security is ordinary bug-fixing — "security is bugs" (1x), A resource is freed while it may still be referenced as part of a data structure, or a code path exists that may free the same resource twice (memory safety) (1x)
+**glm5.2:** 10 distinct triggers fired, 21 total trigger firings.
+  Top triggers: (unmatched) (4x), Fatal assertion or abort used for a recoverable condition (3x), Return value that is ambiguous between success and error (3x)
 
-**mistral:** 18 distinct triggers fired, 18 total trigger firings.
-  Top triggers: Fatal assertion/panic used for a recoverable condition (1x), Silent swallowing of serious errors (1x), Unsafe or untrusted boundary crossing without validation (1x)
+**mistral:** 9 distinct triggers fired, 10 total trigger firings.
+  Top triggers: Validate inputs and preserve invariants (2x), No race conditions in resource management (1x), Avoid exposing internal details in public interfaces (1x)
 
 ### Verdict
 
@@ -394,13 +392,13 @@ Based on consensus-confirmed CRITICAL findings, net critical impact (skill-only 
 
 | Model | Confirmed CRITICAL | Skill-Only CRITICAL | Baseline-Only CRITICAL | Net Critical | Severity Disagreements | Score |
 |-------|:------------------:|:-------------------:|:----------------------:|:-------------:|:----------------------:|:-----:|
-| gpt-oss-120b | 1 | 1 | 3 | -2 | 4 | -5 |
-| glm5.2 | 3 | 4 | 2 | +2 | 4 | 1 |
-| mistral | 2 | 2 | 5 | -3 | 4 | -5 |
+| gpt-oss-120b | 4 | 5 | 0 | +5 | 5 | 4 |
+| glm5.2 | 3 | 3 | 1 | +2 | 7 | -2 |
+| mistral | 2 | 2 | 1 | +1 | 6 | -3 |
 
 **Scoring:** `confirmed_critical + skill_only_critical - baseline_only_critical - severity_disagreements`. All terms are CRITICAL-only for unit consistency. The baseline-only penalty makes coverage gaps visible: a model that suppresses real bugs the baseline caught scores lower, even if it found other bugs the baseline missed.
 
 **Honest read:** 
-glm5.2 wins clearly with score 1. 
-gpt-oss-120b follows at -5.
+gpt-oss-120b wins clearly with score 4. 
+glm5.2 follows at -2.
  The skill helps differently per model — see the per-model read above for the tradeoff details.
