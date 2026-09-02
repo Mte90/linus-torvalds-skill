@@ -1,3 +1,4 @@
+# CI never calls LLM — all AI generation (distill, soul, review) is local-only. CI only runs deterministic checks.
 name: CI
 
 on:
@@ -33,6 +34,7 @@ jobs:
         run: mypy src/
 
   secrets-scan:
+    # Deterministic only — scans for secrets, no LLM calls
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -44,3 +46,30 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  verify-artifacts:
+    # No secrets needed — deterministic only
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Verify skill file (strict mode)
+        run: python scripts/verify_skill.py --strict
+
+      - name: Validate benchmark schema
+        run: python scripts/validate_benchmark.py
+
+      - name: Compile deterministic report modules
+        run: python -m py_compile report/build_comparison.py report/comparison_render.py
