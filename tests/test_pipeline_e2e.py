@@ -119,7 +119,9 @@ class TestExtractToClusterFlow:
 
         # Build nested structure: email entries with moves arrays
         email_entries = []
-        for i, (cat, sev) in enumerate(zip(categories_to_use * 5, severities_to_use * 2, strict=False)):
+        for i, (cat, sev) in enumerate(
+            zip(categories_to_use * 5, severities_to_use * 2, strict=False)
+        ):
             entry = {
                 "email_message_id": f"move{i}@example.com",
                 "email_date": f"2024-{(i % 12) + 1:02d}-01",
