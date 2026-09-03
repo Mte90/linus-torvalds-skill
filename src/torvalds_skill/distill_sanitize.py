@@ -187,7 +187,9 @@ def _soft_language_score(text: str) -> int:
     return len(words & _SOFT_WORDS) - len(words & _HARD_WORDS)
 
 
-def rebalance_severities(skill_text: str, calibration: dict) -> str:
+def rebalance_severities(
+    skill_text: str, calibration: dict, strict: bool = False
+) -> tuple[str, dict]:
     """Rebalance severity labels to match the corpus distribution.
 
     Model-agnostic post-processor: works on any model's output.  When a
@@ -197,12 +199,27 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
     first; triggers with hard-language terms (crash, overflow, race, …) are
     kept at their original severity.
 
-    Returns the skill text unchanged when calibration data is missing, when
-    fewer than two triggers are found, or when the distribution is already
-    within tolerance.
+    Args:
+        skill_text: The skill markdown text to process.
+        calibration: Calibration data with corpus_stats.severity_distribution.
+        strict: If True, raise ValueError when any severity share moves >10 points.
+                If False (default), emit a warning to stderr instead.
+
+    Returns:
+        A tuple of (processed_skill_text, delta_report) where delta_report is:
+        {
+            "before": {"reject": 5, "request-changes": 3, "nitpick": 2},
+            "after": {"reject": 3, "request-changes": 5, "nitpick": 2},
+            "share_change": {"reject": -20.0, "request-changes": 20.0, "nitpick": 0.0},
+            "relabeled_ids": ["trigger-1", "trigger-3"],  # line indices as strings
+        }
+        When no rebalancing occurs, returns (skill_text, {"before": {}, "after": {}, "share_change": {}, "relabeled_ids": []}).
+
+    Raises:
+        ValueError: If strict=True and any severity share moves more than 10 points.
     """
     if not calibration:
-        return skill_text
+        return skill_text, {"before": {}, "after": {}, "share_change": {}, "relabeled_ids": []}
 
     lines = skill_text.splitlines()
 
@@ -230,7 +247,7 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
                     sev_line = j
                     break
                 j += 1
-            if severity and sev_line is not None:
+            if severity and sev_line is not None and sm is not None:
                 triggers.append(
                     {
                         "sev_line": sev_line,
@@ -244,7 +261,7 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
             i += 1
 
     if len(triggers) < 2:
-        return skill_text
+        return skill_text, {"before": {}, "after": {}, "share_change": {}, "relabeled_ids": []}
 
     # Current distribution
     current: dict[str, int] = {}
@@ -256,7 +273,7 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
     corpus_dist = calibration.get("corpus_stats", {}).get("severity_distribution", {})
     total_corpus_pct = sum(corpus_dist.get(s, {}).get("percentage", 0) for s in _SEVERITY_LADDER)
     if total_corpus_pct == 0:
-        return skill_text
+        return skill_text, {"before": {}, "after": {}, "share_change": {}, "relabeled_ids": []}
 
     total_triggers = len(triggers)
     target: dict[str, int] = {}
@@ -268,7 +285,7 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
     _fix_target_rounding(target, total_triggers, _SEVERITY_LADDER)
 
     if all(current.get(s, 0) == target.get(s, 0) for s in _SEVERITY_LADDER):
-        return skill_text
+        return skill_text, {"before": {}, "after": {}, "share_change": {}, "relabeled_ids": []}
 
     # Demote through the ladder.  For each severity from harshest to mildest,
     # if it is over target, demote the excess to the next-lower rung.
@@ -315,7 +332,7 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
     # differs from the raw original (covers both demotion and alias
     # normalisation, e.g.  request → request-changes).
     result_lines = list(lines)
-    changed = 0
+    relabeled_ids: list[str] = []
     for t in triggers:
         if t["severity"] != t["raw_original"]:
             result_lines[t["sev_line"]] = re.sub(
@@ -323,18 +340,53 @@ def rebalance_severities(skill_text: str, calibration: dict) -> str:
                 f"\\g<1>{t['severity']}",
                 result_lines[t["sev_line"]],
             )
-            changed += 1
+            relabeled_ids.append(str(t["sev_line"]))
 
-    if changed:
+    # Compute delta report
+    after: dict[str, int] = {}
+    for t in triggers:
+        after[t["severity"]] = after.get(t["severity"], 0) + 1
+
+    total = len(triggers)
+    share_change: dict[str, float] = {}
+    for s in _SEVERITY_LADDER:
+        before_share = (current.get(s, 0) / total * 100) if total > 0 else 0.0
+        after_share = (after.get(s, 0) / total * 100) if total > 0 else 0.0
+        share_change[s] = round(after_share - before_share, 1)
+
+    # Loud signal: check for >10 point movement
+    loud_alerts = []
+    for s, change in share_change.items():
+        if abs(change) > 10:
+            loud_alerts.append(
+                f"  {s}: {change:+.1f} pts ({current.get(s, 0)} → {after.get(s, 0)})"
+            )
+
+    if loud_alerts:
+        alert_msg = "SEVERITY REBALANCE ALERT:\n" + "\n".join(loud_alerts)
+        if relabeled_ids:
+            alert_msg += f"\n  Relabeled triggers: {len(relabeled_ids)} (lines {', '.join(relabeled_ids[:5])}{'...' if len(relabeled_ids) > 5 else ''})"
+        if strict:
+            raise ValueError(alert_msg)
+        print(alert_msg, file=sys.stderr)
+    elif relabeled_ids:
+        # Normal case: some relabeling but no major shifts
         print(
-            f"  rebalance: {changed} trigger(s) relabelled ({current} → {target})",
+            f"  rebalance: {len(relabeled_ids)} trigger(s) relabelled ({current} → {after})",
             file=sys.stderr,
         )
 
     result = "\n".join(result_lines)
     if skill_text.endswith("\n") and not result.endswith("\n"):
         result += "\n"
-    return result
+
+    delta_report = {
+        "before": current,
+        "after": after,
+        "share_change": share_change,
+        "relabeled_ids": relabeled_ids,
+    }
+    return result, delta_report
 
 
 def _fix_target_rounding(target: dict[str, int], total: int, sevs: list[str]) -> None:
@@ -346,4 +398,4 @@ def _fix_target_rounding(target: dict[str, int], total: int, sevs: list[str]) ->
         target[max(deficits, key=lambda s: -deficits[s])] += 1
     while sum(target.values()) > total:
         surpluses = {s: target[s] for s in sevs}
-        target[max(surpluses, key=surpluses.get)] -= 1
+        target[max(surpluses, key=lambda s: surpluses[s])] -= 1

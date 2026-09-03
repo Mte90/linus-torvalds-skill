@@ -208,7 +208,7 @@ def _load_cache() -> dict[str, dict]:
     if _CACHE_DATA is not None:
         return _CACHE_DATA
 
-    cache = {}
+    cache: dict[str, dict] = {}
     cache_path = Path(_get_cache_path())
 
     if not cache_path.exists():
@@ -267,7 +267,7 @@ def _get_cached_response(key: str) -> str | None:
     return None
 
 
-def _call_llm(email: EmailRecord, retries: int = None) -> dict:
+def _call_llm(email: EmailRecord, retries: int | None = None) -> dict:
     """Call the LLM API for one email. Returns parsed JSON dict."""
     retries = retries if retries is not None else config.MAX_RETRIES
 
@@ -300,7 +300,7 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
         method="POST",
     )
 
-    last_err = None
+    last_err: Exception | None = None
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=config.REQUEST_TIMEOUT) as resp:
@@ -344,7 +344,7 @@ def _parse_json_response(content: str) -> dict:
             lines = lines[:-1]
         text = "\n".join(lines)
     text = text.strip()
-    return json.loads(text)
+    return json.loads(text)  # type: ignore[no-any-return]
 
 
 def _validate_severity_consistency(move: dict) -> tuple[bool, str]:
@@ -597,7 +597,7 @@ def _call_llm_batch(emails, batch_size, retries=None):
         method="POST",
     )
 
-    last_err = None
+    last_err: Exception | None = None
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=config.REQUEST_TIMEOUT) as resp:
@@ -790,7 +790,10 @@ if __name__ == "__main__":
 
             subject = msg.get("Subject", "")
             date = msg.get("Date", "")
-            body = str(msg.get_payload(decode=True), errors="ignore")
+            payload = msg.get_payload(decode=True)
+            body = (
+                str(payload, errors="ignore") if isinstance(payload, bytes) else str(payload or "")
+            )
 
             email = EmailRecord(
                 message_id=message_id,

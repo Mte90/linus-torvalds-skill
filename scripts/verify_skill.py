@@ -65,6 +65,21 @@ BANNED_PATTERNS = [
     r"NotImplementedError",
 ]
 
+# Non-fire list: triggers that must NOT be reported as blockers
+# Regex patterns matching build-trivia and style noise
+NON_FIRE_PATTERNS = [
+    r"\bphony\b",  # .PHONY declarations
+    r"\bCFLAGS\b",  # CFLAGS assignments
+    r"\bmissing\s+(docs|documentation)\b",  # Missing documentation
+    r"\bcomment\s+style\b",  # Comment style
+    r"\bredundant\s+rm\b",  # Redundant rm commands
+    r"\bheader\s+guard\b",  # Header guard style
+    r"\binclude\s+order\b",  # Include ordering
+]
+
+# Maximum allowed proportion of style-category triggers (~20%)
+MAX_STYLE_PROPORTION = 0.20
+
 # C/kernel-specific tokens forbidden outside verbatim quote blocks
 FORBIDDEN_TERMS = [
     "BUG_ON",
@@ -162,6 +177,111 @@ def check_no_tables(path: Path) -> tuple[bool, list[tuple[int, str]]]:
             )
 
     return len(violations) == 0, violations
+
+
+def check_non_fire_violations(path: Path) -> list[tuple[int, str, str]]:
+    """Check for triggers that bless non-fire build trivia as blockers.
+
+    Args:
+        path: Path to the skill file
+
+    Returns:
+        List of (line_number, pattern, line_content) tuples for violations.
+        A violation occurs when a trigger mentions non-fire trivia AND
+        assigns it reject or request-changes severity.
+    """
+    violations: list[tuple[int, str, str]] = []
+    content = path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+
+    # Track trigger blocks and their severities
+    in_trigger_block = False
+    current_trigger_line = 0
+    current_trigger_text = ""
+    current_severity = ""
+
+    for line_num, line in enumerate(lines, start=1):
+        # Detect trigger start
+        if "**Trigger**:" in line or "Trigger:" in line:
+            in_trigger_block = True
+            current_trigger_line = line_num
+            current_trigger_text = line.lower()
+            current_severity = ""
+        elif in_trigger_block:
+            # Check for severity in this trigger block
+            if "**severity**:" in line.lower() or "severity:" in line.lower():
+                current_severity = line.lower()
+            # Check if we've exited the trigger block (new trigger or section)
+            if line.strip().startswith("###") or ("**Trigger**:" in line or "Trigger:" in line):
+                # Check previous trigger for violations
+                if current_trigger_text:
+                    for pattern in NON_FIRE_PATTERNS:
+                        if re.search(pattern, current_trigger_text, re.IGNORECASE):
+                            # Check if severity is blocking
+                            if (
+                                "reject" in current_severity
+                                or "request-changes" in current_severity
+                            ):
+                                violations.append(
+                                    (current_trigger_line, pattern, current_trigger_text)
+                                )
+                # Reset for new trigger
+                current_trigger_line = line_num
+                current_trigger_text = line.lower()
+                current_severity = ""
+
+    # Check last trigger
+    if in_trigger_block and current_trigger_text:
+        for pattern in NON_FIRE_PATTERNS:
+            if re.search(pattern, current_trigger_text, re.IGNORECASE):
+                if "reject" in current_severity or "request-changes" in current_severity:
+                    violations.append((current_trigger_line, pattern, current_trigger_text))
+
+    return violations
+
+
+def check_style_proportion(path: Path) -> tuple[bool, float]:
+    """Check that style-category triggers don't exceed ~20% of total triggers.
+
+    Args:
+        path: Path to the skill file
+
+    Returns:
+        Tuple of (passes, style_proportion). Passes if proportion <= MAX_STYLE_PROPORTION.
+    """
+    content = path.read_text(encoding="utf-8")
+    text_lower = content.lower()
+
+    # Count total triggers (case-insensitive)
+    total_triggers = len(re.findall(r"\*\*trigger\*\*", text_lower))
+    if total_triggers == 0:
+        return True, 0.0
+
+    # Count style-related triggers by looking for style keywords in trigger text
+    style_keywords = [
+        "style",
+        "formatting",
+        "indentation",
+        "whitespace",
+        "naming",
+        "cosmetic",
+        "readability",
+    ]
+
+    # Parse trigger blocks to count style triggers more accurately
+    style_trigger_count = 0
+    trigger_blocks = re.split(r"\*\*trigger\*\*", text_lower)
+
+    for block in trigger_blocks[1:]:  # Skip first empty split
+        # Check if this block contains style keywords
+        for keyword in style_keywords:
+            if keyword in block[:500]:  # Check within first 500 chars of trigger block
+                style_trigger_count += 1
+                break
+
+    style_proportion = style_trigger_count / total_triggers if total_triggers > 0 else 0.0
+
+    return style_proportion <= MAX_STYLE_PROPORTION, style_proportion
 
 
 def check_interview_quotes(path: Path) -> tuple[int, list[str]]:
@@ -508,9 +628,15 @@ def main() -> int:
     parser.add_argument(
         "--score", action="store_true", help="Print quality score instead of verification"
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Enable strict mode: fail on non-fire trivia and high style proportion",
+    )
     args = parser.parse_args()
 
     skill_path = args.skill_path
+    strict_mode = args.strict
 
     # Handle --score flag
     if args.score:
@@ -532,7 +658,10 @@ def main() -> int:
     words = text.split()
     word_count = len(words)
 
-    print(f"=== Skill Verification: {skill_path.name} ===\n")
+    print(f"=== Skill Verification: {skill_path.name} ===")
+    if strict_mode:
+        print("Mode: STRICT (non-fire trivia and style proportion checks enabled)")
+    print()
 
     # 1. File non-empty
     all_pass &= check("File non-empty", len(raw_text.strip()) > 0)
@@ -639,6 +768,25 @@ def main() -> int:
         no_tables,
         f"violations: {table_violations}" if table_violations else "clean",
     )
+
+    # 10. Strict mode checks
+    if strict_mode:
+        print()
+        # Check for non-fire trivia violations
+        non_fire_violations = check_non_fire_violations(skill_path)
+        all_pass &= check(
+            "No non-fire trivia blessed as blockers",
+            len(non_fire_violations) == 0,
+            f"violations: {non_fire_violations}" if non_fire_violations else "clean",
+        )
+
+        # Check style proportion
+        style_pass, style_prop = check_style_proportion(skill_path)
+        all_pass &= check(
+            f"Style triggers ≤ {MAX_STYLE_PROPORTION * 100:.0f}%",
+            style_pass,
+            f"style proportion: {style_prop * 100:.1f}%",
+        )
 
     # Summary
     print(f"\n{'=' * 40}")

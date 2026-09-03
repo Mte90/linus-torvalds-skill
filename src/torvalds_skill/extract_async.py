@@ -108,7 +108,7 @@ async def _call_llm_batch_async(
     emails: list[EmailRecord],
     semaphore: asyncio.Semaphore,
     batch_size: int,
-    retries: int = None,
+    retries: int | None = None,
 ) -> list[dict]:
     """Call the LLM API for a batch of emails asynchronously. Returns list of parsed JSON dicts."""
     retries = retries if retries is not None else config.MAX_RETRIES
@@ -252,7 +252,7 @@ async def _call_llm_async(
     session: aiohttp.ClientSession,
     email: EmailRecord,
     semaphore: asyncio.Semaphore,
-    retries: int = None,
+    retries: int | None = None,
 ) -> dict:
     """Call the LLM API for one email asynchronously. Returns parsed JSON dict."""
     retries = retries if retries is not None else config.MAX_RETRIES
@@ -319,7 +319,7 @@ def _parse_json_response(content: str) -> dict:
             lines = lines[:-1]
         text = "\n".join(lines)
     text = text.strip()
-    return json.loads(text)
+    return json.loads(text)  # type: ignore[no-any-return]
 
 
 def _load_checkpoint(checkpoint_path: Path) -> set[str]:
@@ -430,7 +430,11 @@ def _read_emails(
 
             subject = msg.get("Subject", "")
             date = msg.get("Date", "")
-            body = str(msg.get_payload(decode=True), errors="ignore")
+            body_raw = msg.get_payload(decode=True)
+            if isinstance(body_raw, bytes):
+                body = body_raw.decode(errors="ignore")
+            else:
+                body = str(body_raw)
 
             email = EmailRecord(
                 message_id=message_id,

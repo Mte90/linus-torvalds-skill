@@ -83,7 +83,7 @@ def fetch_url(url: str, timeout: int = 30) -> str:
     req = Request(url, headers=headers)
     with urlopen(req, timeout=timeout) as response:
         charset = response.headers.get_content_charset() or "utf-8"
-        return response.read().decode(charset, errors="replace")
+        return response.read().decode(charset, errors="replace")  # type: ignore[no-any-return]
 
 
 def is_youtube_url(url: str) -> bool:
@@ -95,7 +95,7 @@ def extract_text_from_html(html: str) -> str:
     """Extract visible text from HTML content."""
     parser = HTMLTextExtractor()
     parser.feed(html)
-    return parser.get_text()
+    return parser.get_text()  # type: ignore[no-any-return]
 
 
 def format_metadata_header(source: dict) -> str:

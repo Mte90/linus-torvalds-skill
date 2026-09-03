@@ -418,6 +418,46 @@ DO NOT use markdown tables. Example of correct format:
   - dominant: reject
   - Pattern: Highest reject rate — API breaks are non-negotiable
 ```
+
+## PER-CATEGORY SEVERITY QUOTAS (BINDING CONSTRAINTS)
+The following severity distributions are BINDING quotas derived from corpus statistics.
+Each category MUST follow these proportions when assigning severities:
+
+- **testing**: reject 25-35%, request-changes 45-55%, nitpick 10-20%
+- **correctness**: reject 40-50%, request-changes 35-45%, nitpick 5-15%
+- **complexity**: reject 15-25%, request-changes 50-60%, nitpick 15-25%
+- **performance**: reject 20-30%, request-changes 40-50%, nitpick 20-30%
+- **concurrency**: reject 35-45%, request-changes 40-50%, nitpick 5-15%
+- **documentation**: reject 5-15%, request-changes 30-40%, nitpick 45-55%
+- **style**: reject 5-10%, request-changes 25-35%, nitpick 50-60%
+- **process**: reject 10-20%, request-changes 40-50%, nitpick 30-40%
+- **api-stability**: reject 35-45%, request-changes 45-55%, nitpick 5-15%
+- **error-handling**: reject 30-40%, request-changes 45-55%, nitpick 5-15%
+- **memory-safety**: reject 40-50%, request-changes 35-45%, nitpick 5-15%
+- **abstraction**: reject 20-30%, request-changes 50-60%, nitpick 10-20%
+- **security**: reject 45-55%, request-changes 35-45%, nitpick 5-10%
+
+These quotas are NOT suggestions — they are binding constraints. If a category's
+severity distribution deviates significantly from these ranges, the skill is
+incorrectly calibrated.
+
+## NEVER-BLOCK ON BUILD TRIVIA (NON-FIRE LIST)
+The skill must NEVER report the following as blocking review findings. These are
+build-system or documentation trivia that the corpus stays silent on:
+
+- **Makefile .PHONY declarations**: Missing or redundant .PHONY targets
+- **CFLAGS/?= assignments**: Variable assignment style in Makefiles
+- **Missing documentation**: Absence of docstrings or comments (unless correctness-critical)
+- **Comment style**: Single-line vs multi-line comments, comment placement
+- **Redundant rm commands**: Cleanup rules that remove already-deleted files
+- **Whitespace in Makefiles**: Tab vs space inconsistencies in build files
+- **Header guard style**: #ifndef vs #pragma once
+- **Include ordering**: Alphabetical vs grouping by system/user headers
+
+Rationale: The corpus shows Torvalds stays silent on these build-system details.
+They may be flagged as nitpicks but MUST NEVER be reject or request-changes.
+If a trigger blesses any of these as blocking, it is a false positive.
+
 ]
 
 ## Severity Decision Tree

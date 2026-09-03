@@ -14,11 +14,15 @@ Produces, in report/:
 
 Crash-proof features:
   - Skips reviews whose output already exists (use --force to override)
+  - Per-model checkpoint/resume with state tracking
+  - Per-model timing metrics logged to metrics.jsonl
   - Per-review timeout (40 min for GLM5.2, 15 min for others)
   - One automatic retry per review on failure/timeout
   - Each review is independent: one crash doesn't kill the others
   - Logs are preserved (not deleted on exit) for post-mortem
   - Exit 0 if >=5/6 reviews succeed
+  - Optional --parallel-models for concurrent execution (max 2 workers)
+  - Optional --models filter for subset selection
 
 Prerequisites:
   - Python 3 with stdlib urllib/json
@@ -27,15 +31,18 @@ Prerequisites:
 
 Environment variables:
   CHUNKED_MODELS — comma-separated list of models to use chunked pipeline
-                   (e.g., "gpt-oss-120b,glm5.2"). Default: all models use chunked.
+                    (e.g., "gpt-oss-120b,glm5.2"). Default: all models use chunked.
 
 Run from the repository root:
-  python3 report/run_review.py              # skip existing, run missing
-  python3 report/run_review.py --force      # regenerate all six
-  python3 report/run_review.py --clean-logs # remove .log files and exit
+  python3 report/run_review.py                    # skip existing, run missing
+  python3 report/run_review.py --force            # regenerate all six
+  python3 report/run_review.py --models glm5.2    # run only glm5.2
+  python3 report/run_review.py --parallel-models  # run models in parallel (risk: OOM)
+  python3 report/run_review.py --clean-logs       # remove .log files and exit
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -74,10 +81,21 @@ TIMEOUTS = {
 }
 DEFAULT_TIMEOUT = 900
 
+# State file for per-model checkpoints
+STATE_FILE = REPORT_DIR / ".review_state.json"
+
 
 def parse_args():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Run multi-model code review pipeline")
+    parser = argparse.ArgumentParser(
+        description="Run multi-model code review pipeline",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Parallelism note:
+  --parallel-models runs models concurrently (max 2 workers). This can
+  speed up runs but may cause OOM kills on machines with limited RAM.
+  Default is sequential execution (safer for all machines).
+""",
+    )
     parser.add_argument(
         "--force",
         action="store_true",
@@ -87,6 +105,17 @@ def parse_args():
         "--clean-logs",
         action="store_true",
         help="Remove .log files and exit",
+    )
+    parser.add_argument(
+        "--models",
+        type=str,
+        default=None,
+        help="Comma-separated subset of models to run (e.g., --models glm5.2 or --models gpt-oss-120b,mistral-small-4-119b). Default: all models.",
+    )
+    parser.add_argument(
+        "--parallel-models",
+        action="store_true",
+        help="Run models in parallel (max 2 workers). WARNING: May cause OOM kills on machines with limited RAM. Default is sequential.",
     )
     return parser.parse_args()
 
@@ -98,6 +127,106 @@ def clean_logs():
         log_file.unlink()
     print("Cleaned review logs.")
     sys.exit(0)
+
+
+def load_state() -> dict:
+    """Load checkpoint state from disk."""
+    if STATE_FILE.exists():
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def save_state(state: dict) -> None:
+    """Save checkpoint state to disk."""
+    try:
+        STATE_FILE.write_text(json.dumps(state, indent=2))
+    except OSError:
+        pass  # Silently ignore state write failures
+
+
+def compute_file_hash(path: Path) -> str | None:
+    """Compute SHA256 hash of a file. Returns None if file missing."""
+    if not path.exists():
+        return None
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def should_skip_model(model: str, mode: str, force: bool) -> tuple[bool, str]:
+    """Check if a model/mode combination should be skipped.
+
+    Returns (should_skip, reason).
+    """
+    if force:
+        return False, "--force flag set"
+
+    state = load_state()
+    key = f"{model}:{mode}"
+
+    if key not in state:
+        return False, "no checkpoint found"
+
+    checkpoint = state[key]
+
+    # Check if output file still exists
+    if mode == "baseline":
+        out_file = BASELINE_DIR / f"review-baseline-{model}.md"
+    else:
+        out_file = REPORT_DIR / f"review-{model}.md"
+
+    if not out_file.exists():
+        return False, "output file missing"
+
+    # Check if output hash matches
+    current_hash = compute_file_hash(out_file)
+    if current_hash != checkpoint.get("output_hash"):
+        return False, "output hash mismatch"
+
+    # Check if inputs are newer than checkpoint
+    input_files = []
+    if mode != "baseline":
+        skill_file = MODELS.get(model)
+        if skill_file:
+            input_files.append(skill_file)
+
+    # Add source files to input check
+    for src in SOURCE_FILES:
+        input_files.append(TARGET / src)
+
+    checkpoint_ts = checkpoint.get("timestamp")
+    for inp in input_files:
+        if inp.exists():
+            try:
+                inp_mtime = inp.stat().st_mtime
+                if checkpoint_ts and inp_mtime > checkpoint_ts:
+                    return False, f"input {inp.name} newer than checkpoint"
+            except OSError:
+                pass
+
+    return True, "checkpoint valid"
+
+
+def record_checkpoint(model: str, mode: str, out_file: Path, status: str) -> None:
+    """Record a checkpoint for a model/mode combination."""
+    state = load_state()
+    key = f"{model}:{mode}"
+
+    state[key] = {
+        "timestamp": datetime.now(UTC).timestamp(),
+        "output_hash": compute_file_hash(out_file) if out_file.exists() else None,
+        "status": status,
+    }
+
+    save_state(state)
 
 
 def ensure_target_exists():
@@ -128,12 +257,36 @@ def read_source_file(source_file: str) -> str:
     return (TARGET / source_file).read_text()
 
 
+def _build_two_pass_rule() -> str:
+    """Build the two-pass review rule text."""
+    return """TWO-PASS REVIEW RULE (enforced strictly):
+
+Pass 1 — Correctness and Memory Safety ONLY:
+  - Report ONLY: crashes, corruption, OOB access, unchecked errors, resource leaks.
+  - Severity: CRITICAL or HIGH only.
+  - Label each finding: `Pass: 1`
+
+Pass 2 — Style and Build Findings (capped):
+  - Report ONLY for files that have ZERO Pass-1 findings.
+  - Max 2 findings per file.
+  - Severity: MEDIUM or LOW only.
+  - Label each finding: `Pass: 2`
+
+Precedence hierarchy (from skill): correctness > performance > complexity > style > API stability.
+This rule enforces that precedence: Pass 1 (correctness) always takes priority over Pass 2 (style).
+
+Merge rule: If a file has any Pass-1 findings, ALL Pass-2 findings for that file are dropped.
+"""
+
+
 def build_review_prompt(skill_file: Path, out_file: Path) -> str:
     """Build the with-skill review prompt."""
     skill_content = skill_file.read_text()
     sources_block = ""
     for src in SOURCE_FILES:
         sources_block += f"== SOURCE: {src} =={read_source_file(src)}\n\n"
+
+    two_pass_rule = _build_two_pass_rule()
 
     return f"""You are a code reviewer applying the Linus Torvalds reviewer skill to a real codebase.
 
@@ -163,6 +316,8 @@ Structured assessment of:
 - Severity calibration: are CRITICAL/HIGH/MEDIUM/LOW assignments justified?
 - Precedence adherence: correctness > performance > complexity > style > API stability
 
+{two_pass_rule}
+
 ## Strengths
 
 3-5 bullet points on what the skill gets right.
@@ -183,6 +338,7 @@ Deliverable: a review report with YAML frontmatter, one section per source file,
 - **Location:** file:line
 - **Issue:** what's wrong
 - **Fix:** concrete action
+- **Pass:** 1 | 2
 
 **Format rules:**
 - Use exactly `###` (three hash marks) for severity headings — not `####` or `##`
@@ -209,6 +365,7 @@ def build_chunk_prompt(skill_file: Path, source_file: str, chunk_file: Path) -> 
     """Build the chunk review prompt (single file)."""
     skill_content = skill_file.read_text()
     source_content = read_source_file(source_file)
+    two_pass_rule = _build_two_pass_rule()
 
     return f"""You are a code reviewer applying the Linus Torvalds reviewer skill.
 
@@ -220,6 +377,8 @@ Do NOT use any tools. Do NOT read any files. Everything you need is inlined belo
 == SOURCE: {source_file} ==
 {source_content}
 
+{two_pass_rule}
+
 Review the source above using the skill rules. For each finding use:
 ### [SEVERITY] Finding title
 - **Type:** invariant-true | invariant-false | precedence | guideline
@@ -227,6 +386,7 @@ Review the source above using the skill rules. For each finding use:
 - **Location:** file:line
 - **Issue:** what's wrong
 - **Fix:** concrete action
+- **Pass:** 1 | 2
 
 **Format rules:**
 - Use exactly `###` (three hash marks) for severity headings — not `####` or `##`
@@ -326,7 +486,7 @@ def log_metrics(
     chunk: str | None = None,
     chunked: bool = False,
 ):
-    """Log metrics to metrics.jsonl."""
+    """Log metrics to metrics.jsonl (legacy format for compatibility)."""
     ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     word_count = 0
     findings_count = 0
@@ -354,8 +514,35 @@ def log_metrics(
     }
 
     metrics_file = REPORT_DIR / "metrics.jsonl"
-    with open(metrics_file, "a") as f:
-        f.write(json.dumps(metrics) + "\n")
+    try:
+        with open(metrics_file, "a") as f:
+            f.write(json.dumps(metrics) + "\n")
+    except OSError as e:
+        print(f"WARNING: Failed to write metrics: {e}", file=sys.stderr)
+
+
+def log_model_metrics(
+    model: str, mode: str, started_iso: str, elapsed_s: float, status: str, out_file: Path
+) -> None:
+    """Log per-model timing to metrics.jsonl (new schema: model, mode, started_iso, elapsed_s, status, out_file.
+
+    Never crashes if write fails - warns to stderr instead.
+    """
+    metrics = {
+        "model": model,
+        "mode": mode,
+        "started_iso": started_iso,
+        "elapsed_s": elapsed_s,
+        "status": status,
+        "out_file": str(out_file),
+    }
+
+    metrics_file = REPORT_DIR / "metrics.jsonl"
+    try:
+        with open(metrics_file, "a") as f:
+            f.write(json.dumps(metrics) + "\n")
+    except OSError as e:
+        print(f"WARNING: Failed to write model metrics: {e}", file=sys.stderr)
 
 
 def run_chunk_review(
@@ -370,7 +557,7 @@ def run_chunk_review(
     if not force and chunk_file.exists() and chunk_file.stat().st_size > 0:
         word_count = len(chunk_file.read_text().split())
         print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file} already exists ({word_count} words), skipping"
+            f"[{datetime.now().strftime('%H:%M:%S')}] [skip] {model_label} chunk {source_file} already exists ({word_count} words)"
         )
         return True
 
@@ -445,29 +632,132 @@ def _clean_chunk_content(text: str) -> str:
     return text.strip("\n")
 
 
-def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
-    """Merge chunks mechanically into final review file. Returns True on success."""
-    total_findings = 0
-    files_reviewed = 0
-    severity_totals = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+def _parse_findings_from_chunk(content: str) -> list[dict]:
+    """Parse findings from chunk content. Returns list of finding dicts.
 
+    Each finding dict has keys: 'severity', 'pass_num', 'location', 'raw_block'
+    """
     import re
 
-    # Tolerant heading match: 3-4 hashes, brackets optional.
-    # Models emit both '### [CRITICAL] Title' and '### CRITICAL Title'.
-    sev_re = re.compile(r"^#{3,4}\s+\[?(CRITICAL|HIGH|MEDIUM|LOW)\]?(?:\s|$)", re.MULTILINE)
+    findings = []
+    # Match severity headings: ### [SEVERITY] or ### SEVERITY
+    heading_re = re.compile(r"^#{3,4}\s+\[?(CRITICAL|HIGH|MEDIUM|LOW)\]?(?:\s|$)", re.MULTILINE)
+    # Match Pass field (with or without bold markers)
+    pass_re = re.compile(r"^\s*-?\s*\*\*Pass:\*\*\s*(\d+)", re.MULTILINE)
+    # Match Location field (with or without bold markers)
+    location_re = re.compile(
+        r"^\s*-?\s*(?:\*\*)?Location(?:\*\*)?:\s*(?:\*\*)?\s*(.+)", re.MULTILINE
+    )
 
-    cleaned_chunks = {}
+    # Split content into finding blocks (each starts with ### heading)
+    blocks = re.split(
+        r"^(?=#{3,4}\s+\[?(?:CRITICAL|HIGH|MEDIUM|LOW)\]?(?:\s|$))", content, flags=re.MULTILINE
+    )
+
+    for block in blocks:
+        if not block.strip():
+            continue
+        heading_match = heading_re.search(block)
+        if not heading_match:
+            continue
+
+        severity = heading_match.group(1)
+        pass_match = pass_re.search(block)
+        pass_num = int(pass_match.group(1)) if pass_match else 1  # Default to Pass 1
+
+        location_match = location_re.search(block)
+        location = location_match.group(1).strip() if location_match else "unknown"
+
+        findings.append(
+            {
+                "severity": severity,
+                "pass_num": pass_num,
+                "location": location,
+                "raw_block": block.strip(),
+            }
+        )
+
+    return findings
+
+
+def _filter_findings_by_pass(findings: list[dict], file_has_pass1: dict[str, bool]) -> list[dict]:
+    """Filter findings based on two-pass rule.
+
+    Args:
+        findings: List of finding dicts with 'pass_num', 'location', 'raw_block'
+        file_has_pass1: Dict mapping filename -> True if file has Pass-1 findings
+
+    Returns:
+        Filtered list of findings
+    """
+    # Group findings by file
+    findings_by_file: dict[str, list[dict]] = {}
+    for finding in findings:
+        location = finding["location"]
+        # Extract filename from location (format: file:line)
+        filename = location.split(":")[0] if ":" in location else location
+        if filename not in findings_by_file:
+            findings_by_file[filename] = []
+        findings_by_file[filename].append(finding)
+
+    # Apply filtering rules
+    filtered = []
+    for filename, file_findings in findings_by_file.items():
+        has_pass1 = file_has_pass1.get(filename, False)
+
+        if has_pass1:
+            # Drop all Pass-2 findings for this file
+            filtered.extend([f for f in file_findings if f["pass_num"] == 1])
+        else:
+            # Cap Pass-2 findings at 2 per file
+            pass1_findings = [f for f in file_findings if f["pass_num"] == 1]
+            pass2_findings = [f for f in file_findings if f["pass_num"] == 2]
+
+            filtered.extend(pass1_findings)
+            filtered.extend(pass2_findings[:2])  # Cap at 2
+
+    return filtered
+
+
+def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
+    """Merge chunks mechanically into final review file. Returns True on success.
+
+    Applies two-pass filtering: drops Pass-2 findings for files with Pass-1 findings,
+    caps Pass-2 at 2 per file.
+    """
+
+    # First pass: collect all findings and track which files have Pass-1
+    all_findings: list[dict] = []
+    file_has_pass1: dict[str, bool] = {}
+    files_reviewed = 0
+    cleaned_chunks: dict[str, str] = {}
+
     for src in SOURCE_FILES:
         chunk = chunk_dir / f"{src}.md"
         if chunk.exists() and chunk.stat().st_size > 0:
             files_reviewed += 1
             content = _clean_chunk_content(chunk.read_text())
             cleaned_chunks[src] = content
-            for sev in sev_re.findall(content):
-                total_findings += 1
-                severity_totals[sev] += 1
 
+            # Parse findings from this chunk
+            findings = _parse_findings_from_chunk(content)
+            all_findings.extend(findings)
+
+            # Track if this file has Pass-1 findings
+            for f in findings:
+                if f["pass_num"] == 1:
+                    file_has_pass1[src] = True
+
+    # Apply two-pass filtering
+    filtered_findings = _filter_findings_by_pass(all_findings, file_has_pass1)
+
+    # Count findings by severity from filtered results
+    total_findings = len(filtered_findings)
+    severity_totals = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    for f in filtered_findings:
+        severity_totals[f["severity"]] += 1
+
+    # Build frontmatter
     verdict = "passes review" if total_findings == 0 else "needs review"
     timestamp = datetime.now(UTC).strftime("%Y-%m-%d")
 
@@ -495,12 +785,23 @@ def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
         "",
     ]
 
-    # Concatenate all chunk findings
+    # Rebuild findings section from filtered findings, grouped by file
+    findings_by_file: dict[str, list[str]] = {}
+    for f in filtered_findings:
+        location = f["location"]
+        filename = location.split(":")[0] if ":" in location else location
+        if filename not in findings_by_file:
+            findings_by_file[filename] = []
+        findings_by_file[filename].append(f["raw_block"])
+
     for src in SOURCE_FILES:
         if src in cleaned_chunks:
             output_lines.append(f"### {src}")
             output_lines.append("")
-            output_lines.append(cleaned_chunks[src])
+            if src in findings_by_file:
+                output_lines.append("\n\n".join(findings_by_file[src]))
+            else:
+                output_lines.append("No findings.")
             output_lines.append("")
 
     final_file.write_text("\n".join(output_lines))
@@ -526,13 +827,19 @@ def run_review_chunked(
     force: bool,
 ) -> bool:
     """Run chunked review pipeline. Returns True on success."""
-    # Skip if final output already exists (unless --force).
-    if not force and out_file.exists() and out_file.stat().st_size > 0:
-        word_count = len(out_file.read_text().split())
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review already exists ({word_count} words), skipping"
-        )
+    started_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    start_ts = datetime.now()
+
+    # Check checkpoint
+    skip, reason = should_skip_model(model_label, "with-skill", force)
+    if skip:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] [skip] {model_label} with-skill: {reason}")
+        elapsed = (datetime.now() - start_ts).total_seconds()
+        log_model_metrics(model_label, "with-skill", started_iso, elapsed, "skip", out_file)
+        record_checkpoint(model_label, "with-skill", out_file, "skip")
         return True
+
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] [run] {model_label} with-skill")
 
     # Handle interrupted merge: final file exists but chunks dir also exists
     chunk_dir = REPORT_DIR / "chunks" / model_label
@@ -584,18 +891,27 @@ def run_review_chunked(
         )
         return False
 
+    elapsed = (datetime.now() - start_ts).total_seconds()
+    log_model_metrics(model_label, "with-skill", started_iso, elapsed, "ok", out_file)
+    record_checkpoint(model_label, "with-skill", out_file, "ok")
     return True
 
 
 def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) -> bool:
     """Run a single with-skill review with timeout + retry. Returns True on success."""
-    # Skip if already done (unless --force).
-    if not force and out_file.exists() and out_file.stat().st_size > 0:
-        word_count = len(out_file.read_text().split())
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review already exists ({word_count} words), skipping"
-        )
+    started_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    start_ts = datetime.now()
+
+    # Check checkpoint
+    skip, reason = should_skip_model(model_label, "with-skill", force)
+    if skip:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] [skip] {model_label} with-skill: {reason}")
+        elapsed = (datetime.now() - start_ts).total_seconds()
+        log_model_metrics(model_label, "with-skill", started_iso, elapsed, "skip", out_file)
+        record_checkpoint(model_label, "with-skill", out_file, "skip")
         return True
+
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] [run] {model_label} with-skill")
 
     prompt = build_review_prompt(skill_file, out_file)
     timeout_sec = TIMEOUTS.get(model_label, DEFAULT_TIMEOUT)
@@ -603,8 +919,6 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
     print(
         f"[{datetime.now().strftime('%H:%M:%S')}] Starting {model_label} review -> {out_file.name} (timeout {timeout_sec}s)"
     )
-
-    start_ts = datetime.now()
 
     for attempt in range(1, 4):
         if attempt > 1:
@@ -631,6 +945,9 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
                 f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review done: {word_count} words"
             )
             log_metrics(model_label, "with-skill", out_file, duration, 0, chunk=None, chunked=False)
+            elapsed = (datetime.now() - start_ts).total_seconds()
+            log_model_metrics(model_label, "with-skill", started_iso, elapsed, "ok", out_file)
+            record_checkpoint(model_label, "with-skill", out_file, "ok")
             return True
 
         if exit_code == 124:
@@ -646,6 +963,9 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
 
     duration = int((datetime.now() - start_ts).total_seconds())
     log_metrics(model_label, "with-skill", out_file, duration, exit_code, chunk=None, chunked=False)
+    elapsed = (datetime.now() - start_ts).total_seconds()
+    log_model_metrics(model_label, "with-skill", started_iso, elapsed, "fail", out_file)
+    record_checkpoint(model_label, "with-skill", out_file, "fail")
     print(
         f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} review FAILED after 3 attempts",
         file=sys.stderr,
@@ -655,13 +975,19 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
 
 def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
     """Run a single baseline review with timeout + retry. Returns True on success."""
-    # Skip if already done (unless --force).
-    if not force and out_file.exists() and out_file.stat().st_size > 0:
-        word_count = len(out_file.read_text().split())
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review already exists ({word_count} words), skipping"
-        )
+    started_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    start_ts = datetime.now()
+
+    # Check checkpoint
+    skip, reason = should_skip_model(model_label, "baseline", force)
+    if skip:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] [skip] {model_label} baseline: {reason}")
+        elapsed = (datetime.now() - start_ts).total_seconds()
+        log_model_metrics(model_label, "baseline", started_iso, elapsed, "skip", out_file)
+        record_checkpoint(model_label, "baseline", out_file, "skip")
         return True
+
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] [run] {model_label} baseline")
 
     prompt = build_baseline_prompt(out_file)
     timeout_sec = TIMEOUTS.get(model_label, DEFAULT_TIMEOUT)
@@ -669,8 +995,6 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
     print(
         f"[{datetime.now().strftime('%H:%M:%S')}] Starting baseline {model_label} review -> {out_file.name} (timeout {timeout_sec}s)"
     )
-
-    start_ts = datetime.now()
 
     for attempt in range(1, 4):
         if attempt > 1:
@@ -697,6 +1021,9 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
                 f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review done: {word_count} words"
             )
             log_metrics(model_label, "baseline", out_file, duration, 0, chunk=None, chunked=False)
+            elapsed = (datetime.now() - start_ts).total_seconds()
+            log_model_metrics(model_label, "baseline", started_iso, elapsed, "ok", out_file)
+            record_checkpoint(model_label, "baseline", out_file, "ok")
             return True
 
         if exit_code == 124:
@@ -712,6 +1039,9 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
 
     duration = int((datetime.now() - start_ts).total_seconds())
     log_metrics(model_label, "baseline", out_file, duration, exit_code, chunk=None, chunked=False)
+    elapsed = (datetime.now() - start_ts).total_seconds()
+    log_model_metrics(model_label, "baseline", started_iso, elapsed, "fail", out_file)
+    record_checkpoint(model_label, "baseline", out_file, "fail")
     print(
         f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label} review FAILED after 3 attempts",
         file=sys.stderr,
@@ -740,41 +1070,74 @@ def validate_review_format(file: Path, model: str) -> bool:
     return True
 
 
-def dispatch_reviews(force: bool, chunked_models: set[str]) -> tuple[int, int]:
-    """Dispatch all reviews concurrently. Returns (successes, failures)."""
-    print("Dispatching parallel reviews (data-driven model configuration)...")
+def dispatch_reviews(
+    force: bool, chunked_models: set[str], models_filter: set[str] | None, parallel: bool
+) -> tuple[int, int]:
+    """Dispatch all reviews. Returns (successes, failures).
+
+    Args:
+        force: Regenerate all reviews
+        chunked_models: Models to run in chunked mode
+        models_filter: Optional subset of models to run (None = all)
+        parallel: Run models in parallel (max 2 workers)
+    """
+    # Determine which models to run
+    models_to_run = models_filter if models_filter is not None else set(MODELS.keys())
+
+    print("Dispatching reviews (data-driven model configuration)...")
     print(f"  Force mode: {int(force)} ({'regenerate all' if force else 'skip existing'})")
-    print(f"  Models: {', '.join(MODELS.keys())}")
-    print(f"  Chunked models: {', '.join(chunked_models) if chunked_models else 'none'}")
+    print(f"  Models: {', '.join(sorted(models_to_run))}")
+    print(f"  Chunked models: {', '.join(sorted(chunked_models)) if chunked_models else 'none'}")
+    print(f"  Parallel: {parallel} ({'max 2 workers' if parallel else 'sequential'})")
     print()
 
     successes = 0
     failures = 0
 
-    with ThreadPoolExecutor(max_workers=len(MODELS) * 2) as executor:
-        futures = []
+    # Build list of (model, mode, runner) tuples
+    reviews_to_run = []
+    for model_label in models_to_run:
+        skill_file = MODELS[model_label]
 
-        # Dispatch with-skill reviews
-        for model_label, skill_file in MODELS.items():
-            out_file = REPORT_DIR / f"review-{model_label}.md"
+        # With-skill review
+        out_file = REPORT_DIR / f"review-{model_label}.md"
+        if model_label in chunked_models:
+            reviews_to_run.append(
+                (model_label, "with-skill", run_review_chunked, skill_file, out_file)
+            )
+        else:
+            reviews_to_run.append((model_label, "with-skill", run_review, skill_file, out_file))
 
-            if model_label in chunked_models:
-                futures.append(
-                    executor.submit(run_review_chunked, model_label, skill_file, out_file, force)
-                )
+        # Baseline review
+        baseline_out = BASELINE_DIR / f"review-baseline-{model_label}.md"
+        reviews_to_run.append((model_label, "baseline", run_baseline_review, None, baseline_out))
+
+    if parallel:
+        # Parallel execution (max 2 workers)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = []
+            for model_label, _mode, runner, skill_file, out_file in reviews_to_run:
+                if skill_file is not None:
+                    futures.append(
+                        executor.submit(runner, model_label, skill_file, out_file, force)
+                    )
+                else:
+                    futures.append(executor.submit(runner, model_label, out_file, force))
+
+            for future in as_completed(futures):
+                if future.result():
+                    successes += 1
+                else:
+                    failures += 1
+    else:
+        # Sequential execution (default, safer)
+        for model_label, _mode, runner, skill_file, out_file in reviews_to_run:
+            if skill_file is not None:
+                result = runner(model_label, skill_file, out_file, force)
             else:
-                futures.append(
-                    executor.submit(run_review, model_label, skill_file, out_file, force)
-                )
+                result = runner(model_label, out_file, force)
 
-        # Dispatch baseline reviews
-        for model_label in MODELS:
-            out_file = BASELINE_DIR / f"review-baseline-{model_label}.md"
-            futures.append(executor.submit(run_baseline_review, model_label, out_file, force))
-
-        # Wait for all reviews
-        for future in as_completed(futures):
-            if future.result():
+            if result:
                 successes += 1
             else:
                 failures += 1
@@ -851,8 +1214,25 @@ def main():
     chunked_models_str = os.environ.get("CHUNKED_MODELS", "")
     chunked_models = set(m.strip() for m in chunked_models_str.split(",") if m.strip())
 
-    # Dispatch all reviews concurrently
-    successes, failures = dispatch_reviews(args.force, chunked_models)
+    # Parse --models filter
+    models_filter = None
+    if args.models:
+        models_filter = set(m.strip() for m in args.models.split(",") if m.strip())
+        # Validate model names
+        invalid = models_filter - set(MODELS.keys())
+        if invalid:
+            valid_list = ", ".join(sorted(MODELS.keys()))
+            print(
+                f"ERROR: Invalid model(s): {', '.join(sorted(invalid))}",
+                file=sys.stderr,
+            )
+            print(f"Valid models: {valid_list}", file=sys.stderr)
+            sys.exit(2)
+
+    # Dispatch all reviews
+    successes, failures = dispatch_reviews(
+        args.force, chunked_models, models_filter, args.parallel_models
+    )
 
     # Print summary
     print_summary(successes, failures)

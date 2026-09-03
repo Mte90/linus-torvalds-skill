@@ -53,7 +53,7 @@ Return ONLY valid JSON, no markdown fences, in this exact format:
 {"moves": [{"trigger": "...", "principle": "...", "response": "...", "severity": "...", "category": "..."}]}"""
 
 
-def _call_llm(passage_text: str, passage_id: str, retries: int = None) -> dict:
+def _call_llm(passage_text: str, passage_id: str, retries: int | None = None) -> dict:
     """Call the LLM API for one passage. Returns parsed JSON dict."""
     retries = retries if retries is not None else config.MAX_RETRIES
 
@@ -76,7 +76,7 @@ def _call_llm(passage_text: str, passage_id: str, retries: int = None) -> dict:
         method="POST",
     )
 
-    last_err = None
+    last_err: Exception | None = None
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=config.REQUEST_TIMEOUT) as resp:
@@ -117,7 +117,7 @@ def _parse_json_response(content: str) -> dict:
             lines = lines[:-1]
         text = "\n".join(lines)
     text = text.strip()
-    return json.loads(text)
+    return json.loads(text)  # type: ignore[no-any-return]
 
 
 def extract_moves_from_passage(passage: dict) -> dict:

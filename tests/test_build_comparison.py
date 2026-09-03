@@ -9,7 +9,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "report"))
 from build_comparison import (
     Finding,
     _title_similarity,
+    classify_finding_core_vs_trivia,
     compare_skill_vs_baseline,
+    compute_benchmark_metrics,
+    load_benchmark,
+    match_finding_to_benchmark,
 )
 
 
@@ -166,3 +170,307 @@ def test_dedup_preserves_different_bugs_in_same_file():
 
     deduped = _dedup_findings(findings)
     assert len(deduped) == 3, f"Expected 3 (no false dedup), got {len(deduped)}"
+
+
+# ---- Benchmark matching tests ----
+
+
+def test_load_benchmark_missing_file():
+    """Test graceful handling of missing benchmark file."""
+    result = load_benchmark(Path("/nonexistent/path.jsonl"))
+    assert result is None
+
+
+def test_match_finding_to_benchmark_exact_match():
+    """Test exact file+line match to benchmark record."""
+    benchmark_records = [
+        {"id": "SC-001", "file": "smallchat-server.c", "line": 45, "severity": "reject"},
+        {"id": "SC-002", "file": "smallchat-server.c", "line": 30, "severity": "reject"},
+    ]
+
+    finding = Finding("CRITICAL", "Test finding", "smallchat-server.c:45")
+    matched = match_finding_to_benchmark(finding, benchmark_records)
+
+    assert matched is not None
+    assert matched["id"] == "SC-001"
+
+
+def test_match_finding_to_benchmark_line_tolerance():
+    """Test matching within ±10 line tolerance."""
+    benchmark_records = [
+        {"id": "SC-001", "file": "smallchat-server.c", "line": 45, "severity": "reject"},
+    ]
+
+    # Finding at line 52 (within ±10 of 45)
+    finding = Finding("CRITICAL", "Test finding", "smallchat-server.c:52")
+    matched = match_finding_to_benchmark(finding, benchmark_records)
+
+    assert matched is not None
+    assert matched["id"] == "SC-001"
+
+    # Finding at line 60 (outside ±10 of 45)
+    finding_outside = Finding("CRITICAL", "Test finding", "smallchat-server.c:60")
+    matched_outside = match_finding_to_benchmark(finding_outside, benchmark_records)
+
+    assert matched_outside is None
+
+
+def test_match_finding_to_benchmark_no_file():
+    """Test that findings without file don't match."""
+    benchmark_records = [
+        {"id": "SC-001", "file": "smallchat-server.c", "line": 45, "severity": "reject"},
+    ]
+
+    finding = Finding("CRITICAL", "Test finding", "45")  # No file specified
+    matched = match_finding_to_benchmark(finding, benchmark_records)
+
+    assert matched is None
+
+
+def test_compute_benchmark_metrics_all_hits():
+    """Test metrics when all benchmark records are found."""
+    benchmark_records = [
+        {"id": "SC-001", "file": "smallchat-server.c", "line": 45, "severity": "reject"},
+        {"id": "SC-002", "file": "smallchat-server.c", "line": 30, "severity": "reject"},
+    ]
+
+    findings = [
+        Finding("CRITICAL", "Test 1", "smallchat-server.c:45"),
+        Finding("CRITICAL", "Test 2", "smallchat-server.c:30"),
+    ]
+
+    metrics = compute_benchmark_metrics(findings, benchmark_records)
+
+    assert metrics["precision"] == 1.0
+    assert metrics["recall"] == 1.0
+    assert metrics["f1"] == 1.0
+    assert len(metrics["hits"]) == 2
+    assert len(metrics["misses"]) == 0
+
+
+def test_compute_benchmark_metrics_no_hits():
+    """Test metrics when no benchmark records are found."""
+    benchmark_records = [
+        {"id": "SC-001", "file": "smallchat-server.c", "line": 45, "severity": "reject"},
+    ]
+
+    findings = [
+        Finding("CRITICAL", "Test", "client.c:100"),  # Different file
+    ]
+
+    metrics = compute_benchmark_metrics(findings, benchmark_records)
+
+    assert metrics["precision"] == 0.0
+    assert metrics["recall"] == 0.0
+    assert metrics["f1"] == 0.0
+    assert len(metrics["hits"]) == 0
+    assert len(metrics["misses"]) == 1
+    assert metrics["misses"][0] == "SC-001"
+
+
+def test_compute_benchmark_metrics_partial_hits():
+    """Test metrics with partial benchmark coverage."""
+    benchmark_records = [
+        {"id": "SC-001", "file": "smallchat-server.c", "line": 45, "severity": "reject"},
+        {"id": "SC-002", "file": "smallchat-server.c", "line": 30, "severity": "reject"},
+        {"id": "SC-003", "file": "smallchat-server.c", "line": 71, "severity": "request-changes"},
+    ]
+
+    findings = [
+        Finding("CRITICAL", "Test 1", "smallchat-server.c:45"),  # Hits SC-001
+        Finding("HIGH", "Test 2", "other.c:100"),  # No match
+    ]
+
+    metrics = compute_benchmark_metrics(findings, benchmark_records)
+
+    # Precision: 1 hit / 2 findings = 0.5
+    assert metrics["precision"] == 0.5
+    # Recall: 1 hit / 3 benchmark = 0.333...
+    assert abs(metrics["recall"] - 1 / 3) < 0.01
+    # F1: 2 * 0.5 * 0.333 / (0.5 + 0.333) ≈ 0.4
+    assert abs(metrics["f1"] - 0.4) < 0.01
+    assert len(metrics["hits"]) == 1
+    assert len(metrics["misses"]) == 2
+
+
+def test_compute_benchmark_metrics_empty_findings():
+    """Test metrics with no findings."""
+    benchmark_records = [
+        {"id": "SC-001", "file": "smallchat-server.c", "line": 45, "severity": "reject"},
+    ]
+
+    metrics = compute_benchmark_metrics([], benchmark_records)
+
+    assert metrics["precision"] == 0.0
+    assert metrics["recall"] == 0.0
+    assert metrics["f1"] == 0.0
+    assert len(metrics["hits"]) == 0
+    assert len(metrics["misses"]) == 1
+
+
+def test_compute_benchmark_metrics_empty_benchmark():
+    """Test metrics with empty benchmark."""
+    findings = [
+        Finding("CRITICAL", "Test", "smallchat-server.c:45"),
+    ]
+
+    metrics = compute_benchmark_metrics(findings, [])
+
+    assert metrics["precision"] == 0.0
+    assert metrics["recall"] == 0.0
+    assert metrics["f1"] == 0.0
+    assert len(metrics["hits"]) == 0
+    assert len(metrics["misses"]) == 0
+
+
+# ---- Core-vs-trivia classifier tests ----
+
+
+def test_classify_core_by_severity_critical():
+    """CRITICAL severity is always CORE."""
+    f = Finding("CRITICAL", "Buffer overflow", "server.c:100")
+    assert classify_finding_core_vs_trivia(f) == "CORE"
+
+
+def test_classify_core_by_severity_high():
+    """HIGH severity is always CORE."""
+    f = Finding("HIGH", "Potential overflow", "server.c:100")
+    assert classify_finding_core_vs_trivia(f) == "CORE"
+
+
+def test_classify_core_by_trigger_sigpipe():
+    """Trigger containing 'sigpipe' is CORE."""
+    f = Finding("MEDIUM", "SIGPIPE not handled", "server.c:290", trigger="sigpipe")
+    assert classify_finding_core_vs_trivia(f) == "CORE"
+
+
+def test_classify_core_by_trigger_bounds():
+    """Trigger containing 'bounds' is CORE."""
+    f = Finding("MEDIUM", "No bounds check", "server.c:145", trigger="bounds-check")
+    assert classify_finding_core_vs_trivia(f) == "CORE"
+
+
+def test_classify_core_by_trigger_null():
+    """Trigger containing 'null' is CORE."""
+    f = Finding("HIGH", "Null check missing", "server.c:64", trigger="null-check")
+    assert classify_finding_core_vs_trivia(f) == "CORE"
+
+
+def test_classify_trivia_by_severity_low_and_trigger_style():
+    """LOW severity with style trigger is TRIVIA."""
+    f = Finding("LOW", "Code style issue", "server.c:10", trigger="style")
+    assert classify_finding_core_vs_trivia(f) == "TRIVIA"
+
+
+def test_classify_trivia_by_trigger_docs():
+    """Trigger containing 'docs' is TRIVIA."""
+    f = Finding("LOW", "Missing documentation", "server.c:5", trigger="docs")
+    assert classify_finding_core_vs_trivia(f) == "TRIVIA"
+
+
+def test_classify_core_default_for_medium_without_trivia():
+    """MEDIUM severity without trivia markers defaults to CORE."""
+    f = Finding("MEDIUM", "Potential issue", "server.c:100")
+    assert classify_finding_core_vs_trivia(f) == "CORE"
+
+
+def test_classify_core_by_trigger_buffer():
+    """Trigger containing 'buffer' is CORE."""
+    f = Finding("LOW", "Buffer risk", "server.c:50", trigger="buffer")
+    assert classify_finding_core_vs_trivia(f) == "CORE"
+
+
+# ---- Focus gate tests ----
+
+
+def test_focus_drift_warning_when_core_pct_below_50():
+    """FOCUS DRIFT warning when with-skill CORE% < 50%."""
+    # Create findings: 2 CORE, 3 TRIVIA = 40% CORE
+    skill_findings = [
+        Finding("CRITICAL", "Buffer overflow", "server.c:100"),  # CORE
+        Finding("HIGH", "Null check", "server.c:101"),  # CORE
+        Finding("LOW", "Style issue", "server.c:102", trigger="style"),  # TRIVIA
+        Finding("LOW", "Docs missing", "server.c:103", trigger="docs"),  # TRIVIA
+        Finding("LOW", "Convention", "server.c:104", trigger="convention"),  # TRIVIA
+    ]
+    baseline_findings = [
+        Finding("CRITICAL", "Buffer overflow", "server.c:100"),  # Matched
+    ]
+
+    result = compare_skill_vs_baseline(skill_findings, baseline_findings, "test-model")
+
+    assert result["focus_drift_warning"] is True
+    assert result["skill_core_pct"] == 40.0
+
+
+def test_critical_focus_failure_when_baseline_has_critical_and_skill_is_trivia():
+    """CRITICAL FOCUS FAILURE when baseline-only has CRITICAL and skill-only is majority trivia."""
+    # Skill findings: all trivia (different file to avoid matching)
+    skill_findings = [
+        Finding("LOW", "Style issue", "server.c:102", trigger="style"),  # TRIVIA
+        Finding("LOW", "Docs missing", "client.c:103", trigger="docs"),  # TRIVIA
+    ]
+    # Baseline findings: one CRITICAL that skill missed (different file)
+    baseline_findings = [
+        Finding("CRITICAL", "Buffer overflow", "other.c:100"),  # baseline-only, CRITICAL
+    ]
+
+    result = compare_skill_vs_baseline(skill_findings, baseline_findings, "test-model")
+
+    assert result["critical_focus_failure"] is True
+    assert result["baseline_only_critical"] == 1
+
+
+def test_no_focus_drift_when_core_pct_above_50():
+    """No FOCUS DRIFT when with-skill CORE% >= 50%."""
+    # Create findings: 3 CORE, 2 TRIVIA = 60% CORE
+    skill_findings = [
+        Finding("CRITICAL", "Buffer overflow", "server.c:100"),  # CORE
+        Finding("HIGH", "Null check", "server.c:101"),  # CORE
+        Finding("MEDIUM", "Potential issue", "server.c:102"),  # CORE (default)
+        Finding("LOW", "Style issue", "server.c:103", trigger="style"),  # TRIVIA
+        Finding("LOW", "Docs missing", "server.c:104", trigger="docs"),  # TRIVIA
+    ]
+    baseline_findings = [
+        Finding("CRITICAL", "Buffer overflow", "server.c:100"),  # Matched
+    ]
+
+    result = compare_skill_vs_baseline(skill_findings, baseline_findings, "test-model")
+
+    assert result["focus_drift_warning"] is False
+    assert result["skill_core_pct"] == 60.0
+
+
+def test_no_critical_focus_failure_when_skill_has_core_findings():
+    """No CRITICAL FOCUS FAILURE when skill-only has CORE findings."""
+    # Skill findings: mix of CORE and TRIVIA
+    skill_findings = [
+        Finding("CRITICAL", "New bug found", "server.c:200"),  # CORE
+        Finding("LOW", "Style issue", "server.c:102", trigger="style"),  # TRIVIA
+    ]
+    # Baseline findings: one CRITICAL that skill missed
+    baseline_findings = [
+        Finding("CRITICAL", "Buffer overflow", "server.c:100"),  # baseline-only, CRITICAL
+    ]
+
+    result = compare_skill_vs_baseline(skill_findings, baseline_findings, "test-model")
+
+    # Skill-only has 1 CORE, 1 TRIVIA -> not majority trivia
+    assert result["critical_focus_failure"] is False
+
+
+def test_unmatched_label_in_baseline_only_coverage():
+    """Verify that unmatched findings get 'unmatched' label (not 'out of scope')."""
+    skill_findings = [
+        Finding("CRITICAL", "Buffer overflow", "server.c:100", trigger="bounds-check"),
+    ]
+    baseline_findings = [
+        Finding("HIGH", "Style issue", "server.c:200"),  # No matching trigger
+    ]
+
+    result = compare_skill_vs_baseline(skill_findings, baseline_findings, "test-model")
+
+    # Check that baseline_only_with_coverage has unmatched trigger
+    assert len(result["baseline_only_with_coverage"]) == 1
+    coverage = result["baseline_only_with_coverage"][0]
+    assert coverage["matched_trigger"] is None  # No trigger matched

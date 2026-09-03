@@ -237,7 +237,9 @@ def stage_cluster():
     cluster_moves(MOVES, PATTERNS)
 
 
-def stage_distill(top_n: int, model: str = None, out: str = None, single_call: bool = False):
+def stage_distill(
+    top_n: int, model: str | None = None, out: str | None = None, single_call: bool = False
+):
     """Distill patterns.json → SKILL.md (or custom output path)."""
     if not PATTERNS.exists():
         print(f"error: {PATTERNS} not found. Run cluster first.")
@@ -271,7 +273,7 @@ def stage_interviews_pipeline(model: str, resume: bool):
     # Step 2: Extract moves from interviews
     print("Step 2/4: Extracting interview moves...")
     extracted_count = extract_interviews(
-        "data/interviews_classified.jsonl", "data/interview_moves.jsonl", model=model, resume=resume
+        "data/interviews_classified.jsonl", "data/interview_moves.jsonl", model=model
     )
     print(f"  Extracted {extracted_count} moves")
 

@@ -34,3 +34,4 @@ The six review files:
 - The trigger-coverage column in `comparison.md` distinguishes skill gaps (trigger exists, model didn't fire it) from out-of-scope bugs (no trigger covers that type)
 
 Replicate with `python3 report/run_review.py && python3 report/build_comparison.py`.
+

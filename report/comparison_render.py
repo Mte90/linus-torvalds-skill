@@ -80,6 +80,8 @@ def generate_markdown(
     missing_files: list[str],
     model_names: list[str] | None = None,
     trigger_effectiveness: dict | None = None,
+    benchmark_records: list[dict] | None = None,
+    benchmark_metrics: dict | None = None,
 ) -> str:
     """Generate the complete comparison.md content.
 
@@ -87,6 +89,8 @@ def generate_markdown(
         model_names: List of model names. If None, defaults to hardcoded list.
         trigger_effectiveness: Dict mapping model_name -> trigger effectiveness metrics
             (from analyze_trigger_effectiveness). If None, skips this section.
+        benchmark_records: List of benchmark records from data/benchmark.jsonl. If None, skips benchmark section.
+        benchmark_metrics: Dict mapping finding_key -> benchmark metrics (from compute_benchmark_metrics).
     """
     # Generate stakeholder scorecard
     scorecard = generate_scorecard(skill_vs_baseline)
@@ -390,8 +394,8 @@ def generate_markdown(
         lines.append("**Baseline-only (skill missed):**")
         lines.append("")
         if baseline_only:
-            lines.append("| Issue | File | Severity | Skill trigger covers? |")
-            lines.append("|-------|------|----------|-----------------------|")
+            lines.append("| Issue | File | Severity | Trigger coverage |")
+            lines.append("|-------|------|----------|------------------|")
             # Use new coverage data if available
             coverage_data = {
                 item["finding"].title: item
@@ -409,7 +413,7 @@ def generate_markdown(
                         else cov["matched_trigger"]
                     )
                 else:
-                    trigger_display = "out of scope"
+                    trigger_display = "unmatched"
                 lines.append(f"| {issue} | {file} | {f.severity} | {trigger_display} |")
         else:
             lines.append("*None.*")
@@ -433,6 +437,54 @@ def generate_markdown(
         else:
             lines.append("*None.*")
         lines.append("")
+
+    # Focus metrics section (new)
+    lines.append("---")
+    lines.append("")
+    lines.append("## Focus Metrics")
+    lines.append("")
+    lines.append(
+        "Core-vs-trivia breakdown: % of findings that are CORE (correctness/memory-safety/error-handling) vs TRIVIA (style/build/docs)."
+    )
+    lines.append("")
+    lines.append("| Model | With-Skill CORE% | Baseline-Only CORE% | Focus Status |")
+    lines.append("|-------|:----------------:|:-------------------:|:-------------|")
+
+    for comparison in skill_vs_baseline:
+        model = comparison["model"]
+        skill_core_pct = comparison.get("skill_core_pct", "N/A")
+        baseline_core_pct = comparison.get("baseline_core_pct", "N/A")
+        focus_drift = comparison.get("focus_drift_warning", False)
+        critical_failure = comparison.get("critical_focus_failure", False)
+
+        if skill_core_pct == "N/A":
+            status = "baseline pending"
+        elif critical_failure:
+            status = "⚠️ CRITICAL FOCUS FAILURE"
+        elif focus_drift:
+            status = "⚠️ FOCUS DRIFT"
+        elif skill_core_pct >= 70:
+            status = "✅ focused"
+        else:
+            status = "acceptable"
+
+        skill_core_display = (
+            f"{skill_core_pct:.1f}%" if isinstance(skill_core_pct, (int, float)) else skill_core_pct
+        )
+        baseline_core_display = (
+            f"{baseline_core_pct:.1f}%"
+            if isinstance(baseline_core_pct, (int, float))
+            else baseline_core_pct
+        )
+
+        lines.append(f"| {model} | {skill_core_display} | {baseline_core_display} | {status} |")
+
+    lines.append("")
+    lines.append(
+        "**Gate rules:** `FOCUS DRIFT` when with-skill CORE% < 50%; `CRITICAL FOCUS FAILURE` when baseline-only contains any CRITICAL while skill-only is majority trivia. "
+        "**Note:** `unmatched` means no trigger-text overlap, not 'outside the skill's domain'."
+    )
+    lines.append("")
 
     lines.append("---")
     lines.append("")
@@ -795,9 +847,86 @@ def generate_markdown(
             lines.append(f"Tied with {runner_up}.")
         else:
             lines.append(f"{runner_up} follows at {runner_score}.")
+    lines.append(
+        " The skill helps differently per model — see the per-model read above for the tradeoff details."
+    )
+    lines.append("")
+
+    # Ground-Truth Benchmark Section
+    if benchmark_records is not None and benchmark_metrics:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Ground-Truth Benchmark")
+        lines.append("")
         lines.append(
-            " The skill helps differently per model — see the per-model read above for the tradeoff details."
+            f"Comparison against the ground-truth benchmark dataset ({len(benchmark_records)} records in `data/benchmark.jsonl`)."
         )
+        lines.append("")
+        lines.append(
+            "Metrics computed by matching model findings to benchmark records by file and line number (±10 lines tolerance)."
+        )
+        lines.append("")
+
+        # Per-model benchmark metrics table
+        lines.append("### Per-Model Benchmark Metrics")
+        lines.append("")
+        lines.append("| Model | Precision | Recall | F1 | Hits | Misses | Severity Match Rate |")
+        lines.append("|-------|-----------|--------|------|------|--------|---------------------|")
+
+        for model_name in model_names:
+            # Get metrics for this model's skill findings
+            skill_key = f"{model_name}_skill"
+            metrics = benchmark_metrics.get(skill_key, {})
+
+            precision = metrics.get("precision", 0.0)
+            recall = metrics.get("recall", 0.0)
+            f1 = metrics.get("f1", 0.0)
+            hits = len(metrics.get("hits", []))
+            misses = len(metrics.get("misses", []))
+            severity_match = metrics.get("severity_match_rate", 0.0)
+
+            lines.append(
+                f"| {model_name} | {precision:.1%} | {recall:.1%} | {f1:.1%} | {hits} | {misses} | {severity_match:.1%} |"
+            )
+
+        lines.append("")
+
+        # Missed benchmark findings
+        # Collect all misses across models
+        all_misses = set()
+        for _key, metrics in benchmark_metrics.items():
+            all_misses.update(metrics.get("misses", []))
+
+        if all_misses:
+            lines.append("### Missed Benchmark Findings")
+            lines.append("")
+            lines.append(
+                "Benchmark records not found by any model (skill or baseline). These represent gaps in review coverage:"
+            )
+            lines.append("")
+
+            # Group misses by file for better readability
+            misses_by_file: dict[str, list[str]] = {}
+            for bid in sorted(all_misses):
+                # Find the benchmark record to get file info
+                record = next((r for r in benchmark_records if r.get("id") == bid), None)
+                if record:
+                    file = record.get("file", "unknown")
+                    if file not in misses_by_file:
+                        misses_by_file[file] = []
+                    misses_by_file[file].append(bid)
+
+            for file in sorted(misses_by_file.keys()):
+                lines.append(f"**{file}:**")
+                lines.append("")
+                for bid in sorted(misses_by_file[file]):
+                    record = next((r for r in benchmark_records if r.get("id") == bid), None)
+                    if record:
+                        severity = record.get("severity", "unknown")
+                        trigger = record.get("trigger", "").strip()[:60]
+                        lines.append(f"- {bid} (severity: {severity}, trigger: {trigger}...)")
+                lines.append("")
+
     lines.append("")
 
     return "\n".join(lines)

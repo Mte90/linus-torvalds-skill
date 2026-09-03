@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from . import config
 from .distill_llm import _call_llm
 from .distill_sanitize import sanitize_skill
 
@@ -476,7 +477,7 @@ def _load_interview_data(project_root: Path) -> str:
         return ""
 
     max_chars = 50000
-    parts = []
+    parts: list[str] = []
     total_len = 0
 
     for md_file in sorted(interviews_dir.glob("*.md")):
@@ -589,6 +590,8 @@ def generate_soul(
     print(f"calling LLM with {len(user_prompt)} chars of move data...")
     print(f"  ({len(patterns)} sampled moves)")
 
+    if model is None:
+        model = config.MODEL
     response = _call_llm(user_prompt, system_prompt=SOUL_SYSTEM_PROMPT, model=model)
     response = _strip_code_fences(response)
     response = sanitize_skill(response)

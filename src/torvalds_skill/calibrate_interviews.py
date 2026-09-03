@@ -323,7 +323,7 @@ def load_interview_moves(interview_moves_path: Path) -> list[dict]:
 
 
 def compute_severity_by_category(moves: list[dict]) -> dict:
-    cat_sev = defaultdict(Counter)
+    cat_sev: dict[str, Counter] = defaultdict(Counter)
     for m in moves:
         cat_sev[m["category"]][m["severity"]] += 1
 
@@ -335,7 +335,7 @@ def compute_severity_by_category(moves: list[dict]) -> dict:
             continue
         dist = {sev: counts.get(sev, 0) for sev in CANONICAL_SEVERITIES}
         percentages = {sev: round(100 * cnt / total, 1) for sev, cnt in dist.items()}
-        dominant = max(dist, key=dist.get)
+        dominant = max(dist, key=lambda s: dist[s])  # type: ignore[arg-type]
         result[cat] = {
             "total": total,
             "distribution": dist,
@@ -349,9 +349,9 @@ def compute_severity_by_category(moves: list[dict]) -> dict:
 
 
 def compute_temporal_trends(moves: list[dict]) -> dict:
-    year_cat = defaultdict(Counter)
-    year_sev = defaultdict(Counter)
-    year_total = Counter()
+    year_cat: dict[int, Counter] = defaultdict(Counter)
+    year_sev: dict[int, Counter] = defaultdict(Counter)
+    year_total: dict[int, int] = defaultdict(int)
 
     for m in moves:
         if m["year"] is None:
@@ -370,10 +370,11 @@ def compute_temporal_trends(moves: list[dict]) -> dict:
 
     for y in years:
         top_cat = year_cat[y].most_common(1)[0][0]
-        result["top_category_per_year"][str(y)] = top_cat
-        total = year_total[y]
-        rejects = year_sev[y].get("reject", 0)
-        result["reject_rate_per_year"][str(y)] = round(100 * rejects / total, 1)
+        result["top_category_per_year"][str(y)] = top_cat  # type: ignore[index]
+        total = year_total.get(y, 0)
+        rejects = year_sev[y].get("reject", 0)  # type: ignore[index, assignment]
+        if total > 0:
+            result["reject_rate_per_year"][str(y)] = round(100 * rejects / total, 1)  # type: ignore[index]
 
     return result
 

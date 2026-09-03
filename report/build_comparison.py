@@ -8,10 +8,12 @@ Parses review files in different formats, extracts findings, and generates:
 - Severity disagreement table
 - Trigger coverage table
 - With-skill vs baseline comparison
+- Ground-truth benchmark metrics (precision/recall/F1)
 
 Run from repository root: python3 report/build_comparison.py
 """
 
+import json
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -35,6 +37,34 @@ MODELS = [
 ]
 
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
+
+# Core-vs-trivia classifier: maps finding attributes to CORE/TRIVIA.
+# CORE = correctness, memory-safety, or error-handling issues.
+# TRIVIA = style, build, or documentation issues.
+_CORE_CATEGORIES = {
+    "correctness",
+    "memory-safety",
+    "error-handling",
+    "bounds-check",
+    "null-check",
+    "return-value",
+    "resource-leak",
+    "race-condition",
+    "overflow",
+    "underflow",
+    "use-after-free",
+    "double-free",
+    "uninitialized",
+    "sigpipe",
+    "fd-leak",
+    "socket",
+    "buffer",
+}
+_CORE_SEVERITIES = {"CRITICAL", "HIGH"}
+_TRIVIA_CATEGORIES = {"style", "build", "docs", "performance", "convention"}
+_TRIVIA_SEVERITIES = {
+    "LOW"
+}  # LOW severity findings are typically trivia unless they hit core categories
 
 
 def normalize_filename(name: str) -> str:
@@ -217,6 +247,57 @@ def parse_baseline_review(content: str) -> list[Finding]:
 def _finding_richness(f: Finding) -> int:
     """Score how many fields a finding has populated (for dedup tie-breaking)."""
     return sum(1 for v in (f.location, f.trigger, f.finding_type, f.file, f.line) if v)
+
+
+def classify_finding_core_vs_trivia(f: Finding) -> str:
+    """Classify a finding as CORE or TRIVIA.
+
+    CORE findings:
+    - Severity is CRITICAL or HIGH, OR
+    - Trigger/category maps to correctness/memory-safety/error-handling
+
+    TRIVIA findings:
+    - Severity is LOW and category is style/build/docs/performance/convention
+
+    Args:
+        f: Finding object with severity, trigger, and finding_type fields
+
+    Returns:
+        "CORE" or "TRIVIA"
+    """
+    # High/critical severity always CORE
+    if f.severity in _CORE_SEVERITIES:
+        return "CORE"
+
+    # Check trigger text for core category keywords
+    if f.trigger:
+        trigger_lower = f.trigger.lower()
+        for cat in _CORE_CATEGORIES:
+            if cat in trigger_lower:
+                return "CORE"
+
+    # Check finding_type for core categories
+    if f.finding_type:
+        type_lower = f.finding_type.lower()
+        for cat in _CORE_CATEGORIES:
+            if cat in type_lower:
+                return "CORE"
+
+    # LOW severity with trivia category -> TRIVIA
+    if f.severity in _TRIVIA_SEVERITIES:
+        if f.trigger:
+            trigger_lower = f.trigger.lower()
+            for cat in _TRIVIA_CATEGORIES:
+                if cat in trigger_lower:
+                    return "TRIVIA"
+        if f.finding_type:
+            type_lower = f.finding_type.lower()
+            for cat in _TRIVIA_CATEGORIES:
+                if cat in type_lower:
+                    return "TRIVIA"
+
+    # Default: MEDIUM/LOW without explicit trivia markers -> CORE (conservative)
+    return "CORE"
 
 
 def _dedup_findings(findings: list[Finding]) -> list[Finding]:
@@ -902,6 +983,11 @@ def compare_skill_vs_baseline(
             "matched_pairs": [],
             "baseline_only_all": [],
             "skill_only_all": [],
+            # Focus metrics (new)
+            "skill_core_pct": "N/A",
+            "baseline_core_pct": "N/A",
+            "focus_drift_warning": False,
+            "critical_focus_failure": False,
         }
 
     baseline_critical = [f for f in baseline_findings if f.severity == "CRITICAL"]
@@ -975,6 +1061,35 @@ def compare_skill_vs_baseline(
             }
         )
 
+    # Compute focus metrics: % CORE among with-skill findings, % CORE among baseline-only misses
+    skill_core_count = sum(
+        1 for f in skill_findings if classify_finding_core_vs_trivia(f) == "CORE"
+    )
+    skill_core_pct = (skill_core_count / len(skill_findings) * 100) if skill_findings else 0.0
+
+    baseline_only_core_count = sum(
+        1 for f in baseline_only_all if classify_finding_core_vs_trivia(f) == "CORE"
+    )
+    baseline_core_pct = (
+        (baseline_only_core_count / len(baseline_only_all) * 100) if baseline_only_all else 0.0
+    )
+
+    # Focus drift gate: with-skill CORE% < 50% → FOCUS DRIFT warning
+    focus_drift_warning = skill_core_pct < 50.0
+
+    # Critical focus failure gate: baseline-only contains any CRITICAL while skill-only is majority trivia
+    skill_only_core_count = sum(
+        1 for f in skill_only_all if classify_finding_core_vs_trivia(f) == "CORE"
+    )
+    skill_only_trivia_count = len(skill_only_all) - skill_only_core_count
+    baseline_only_critical_count = sum(1 for f in baseline_only_all if f.severity == "CRITICAL")
+
+    critical_focus_failure = (
+        baseline_only_critical_count > 0
+        and skill_only_all
+        and skill_only_trivia_count > skill_only_core_count
+    )
+
     return {
         "model": model_name,
         "skill_total": len(skill_findings),
@@ -989,6 +1104,151 @@ def compare_skill_vs_baseline(
         "skill_only_all": skill_only_all,
         "baseline_only_with_coverage": baseline_only_with_coverage,
         "skill_only_with_coverage": skill_only_with_coverage,
+        # Focus metrics (new)
+        "skill_core_pct": skill_core_pct,
+        "baseline_core_pct": baseline_core_pct,
+        "focus_drift_warning": focus_drift_warning,
+        "critical_focus_failure": critical_focus_failure,
+    }
+
+
+# Benchmark functions (defined after Finding class)
+
+BENCHMARK_SEVERITY_MAP = {
+    "reject": "CRITICAL",
+    "request-changes": "HIGH",
+    "nitpick": "MEDIUM",
+}
+
+
+def load_benchmark(benchmark_path: Path) -> list[dict] | None:
+    """Load benchmark JSONL file.
+
+    Returns None if file doesn't exist (graceful skip).
+    """
+    if not benchmark_path.exists():
+        return None
+
+    records = []
+    with open(benchmark_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                # Skip malformed lines
+                continue
+    return records
+
+
+def match_finding_to_benchmark(
+    finding: Finding, benchmark_records: list[dict], line_tolerance: int = 10
+) -> dict | None:
+    """Match a finding to a benchmark record.
+
+    Matching rules:
+    - Same file AND line within ±line_tolerance → match
+    - Same file AND category match AND title/trigger keyword overlap → match
+
+    Returns matched benchmark record or None.
+    """
+    if not finding.file or not finding.line:
+        return None
+
+    normalized_file = normalize_filename(finding.file)
+
+    for record in benchmark_records:
+        rec_file = normalize_filename(record.get("file", ""))
+        rec_line = record.get("line")
+
+        if not rec_file or not rec_line:
+            continue
+
+        # Same file AND line within tolerance
+        if normalized_file == rec_file and abs(finding.line - rec_line) <= line_tolerance:
+            return record
+
+        # Same file AND category match AND keyword overlap (fallback)
+        finding_category = finding.trigger or finding.title
+        rec_trigger = record.get("trigger", "")
+        if (
+            normalized_file == rec_file
+            and _keyword_overlap(finding_category, rec_trigger)
+            and abs(finding.line - rec_line) <= line_tolerance * 2
+        ):
+            return record
+
+    return None
+
+
+def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[dict]) -> dict:
+    """Compute precision, recall, F1 against benchmark ground truth.
+
+    Returns dict with:
+    - precision: benchmark hits / total findings
+    - recall: benchmark hits / total benchmark records
+    - f1: harmonic mean of precision and recall
+    - hits: list of matched benchmark IDs
+    - misses: list of unmatched benchmark IDs
+    - severity_match_rate: % of hits where severity matches
+    """
+    if not benchmark_records:
+        return {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "hits": [],
+            "misses": [r["id"] for r in benchmark_records],
+            "severity_match_rate": 0.0,
+            "total_findings": len(findings),
+            "total_benchmark": len(benchmark_records),
+        }
+
+    matched_benchmark_ids = set()
+    matched_severities = []
+
+    for finding in findings:
+        matched_record = match_finding_to_benchmark(finding, benchmark_records)
+        if matched_record:
+            bid = matched_record.get("id")
+            if bid and bid not in matched_benchmark_ids:
+                matched_benchmark_ids.add(bid)
+                # Check severity match
+                finding_sev = finding.severity.lower()
+                rec_sev = matched_record.get("severity", "").lower()
+                # Map benchmark severity to our scale for comparison
+                mapped_rec_sev = BENCHMARK_SEVERITY_MAP.get(rec_sev, rec_sev).lower()
+                if finding_sev == rec_sev or finding_sev == mapped_rec_sev:
+                    matched_severities.append(bid)
+
+    hits = sorted(matched_benchmark_ids)
+    misses = sorted(
+        [r["id"] for r in benchmark_records if r.get("id") not in matched_benchmark_ids]
+    )
+
+    # Precision: how many of our findings hit benchmark
+    precision = len(hits) / len(findings) if findings else 0.0
+
+    # Recall: how many benchmark records we found
+    recall = len(hits) / len(benchmark_records) if benchmark_records else 0.0
+
+    # F1
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+    # Severity match rate
+    severity_match_rate = len(matched_severities) / len(hits) if hits else 0.0
+
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "hits": hits,
+        "misses": misses,
+        "severity_match_rate": severity_match_rate,
+        "total_findings": len(findings),
+        "total_benchmark": len(benchmark_records),
     }
 
 
@@ -998,6 +1258,13 @@ def main():
     script_dir = Path(__file__).parent
     report_dir = script_dir
     repo_root = script_dir.parent
+
+    # Load benchmark (graceful skip if missing)
+    benchmark_path = repo_root / "data" / "benchmark.jsonl"
+    benchmark_records = load_benchmark(benchmark_path)
+    benchmark_missing = benchmark_records is None
+    if benchmark_missing:
+        print("Warning: benchmark.jsonl not found, skipping ground-truth metrics")
 
     # Extract skill triggers once
     skill_path = repo_root / "linus-torvalds-skill" / "SKILL.md"
@@ -1093,6 +1360,13 @@ def main():
     model_names = [m[0] for m in MODELS]
     severity_disagreements = find_severity_disagreements(matched_groups, model_names)
 
+    # Compute benchmark metrics for each model's findings
+    benchmark_metrics = {}
+    if benchmark_records is not None:
+        for key, findings in all_findings.items():
+            model_name = key.replace("_skill", "").replace("_baseline", "")
+            benchmark_metrics[key] = compute_benchmark_metrics(findings, benchmark_records)
+
     # Generate markdown
     model_names = [m[0] for m in MODELS]
     markdown = generate_markdown(
@@ -1105,6 +1379,8 @@ def main():
         missing_files=missing_files,
         model_names=model_names,
         trigger_effectiveness=trigger_effectiveness,
+        benchmark_records=benchmark_records,
+        benchmark_metrics=benchmark_metrics,
     )
 
     # Write output
@@ -1116,6 +1392,8 @@ def main():
         print(f"Warning: {len(missing_files)} review files were missing:")
         for f in missing_files:
             print(f"  - {f}")
+    if benchmark_missing:
+        print("Note: Ground-truth benchmark section skipped (data/benchmark.jsonl not found)")
 
 
 if __name__ == "__main__":

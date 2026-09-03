@@ -16,6 +16,8 @@ from scripts.verify_skill import (
     check_forbidden_terms,
     check_interview_quotes,
     check_no_tables,
+    check_non_fire_violations,
+    check_style_proportion,
     normalize,
     score_skill_quality,
 )
@@ -537,3 +539,136 @@ class TestScoreSectionCoverage:
         assert score == 5  # 25 - (4 * 5) = 5
         assert details["present"] == 5
         assert details["missing"] == 4
+
+
+class TestCheckNonFireViolations:
+    """Tests for non-fire trivia violation detection."""
+
+    def test_no_violations_clean_file(self, tmp_path):
+        """Clean file without non-fire violations should return empty list."""
+        skill_file = tmp_path / "clean.md"
+        skill_file.write_text("""# Review Mindset
+
+- **Trigger**: Unchecked allocation return
+  - **Severity**: reject
+  - **Principle**: Always check allocation returns
+""")
+        violations = check_non_fire_violations(skill_file)
+        assert violations == []
+
+    def test_phony_declaration_as_reject_is_violation(self, tmp_path):
+        """Missing .PHONY as reject should be flagged."""
+        skill_file = tmp_path / "violation.md"
+        skill_file.write_text("""# Build Rules
+
+- **Trigger**: Missing .PHONY declaration in Makefile
+  - **Severity**: reject
+  - **Principle**: Makefiles must declare .PHONY targets
+""")
+        violations = check_non_fire_violations(skill_file)
+        assert len(violations) >= 1
+        # Check that phony pattern was matched
+        assert any("phony" in v[1].lower() for v in violations)
+
+    def test_cflags_as_request_changes_is_violation(self, tmp_path):
+        """CFLAGS style as request-changes should be flagged."""
+        skill_file = tmp_path / "violation.md"
+        skill_file.write_text("""# Build Rules
+
+- **Trigger**: Inconsistent CFLAGS assignment style
+  - **Severity**: request-changes
+  - **Principle**: Use ?= for variable assignments
+""")
+        violations = check_non_fire_violations(skill_file)
+        assert len(violations) >= 1
+        assert any("cflags" in v[1].lower() for v in violations)
+
+    def test_missing_docs_as_reject_is_violation(self, tmp_path):
+        """Missing documentation as reject should be flagged."""
+        skill_file = tmp_path / "violation.md"
+        skill_file.write_text("""# Documentation
+
+- **Trigger**: Missing documentation for public function
+  - **Severity**: reject
+  - **Principle**: All public APIs must be documented
+""")
+        violations = check_non_fire_violations(skill_file)
+        assert len(violations) >= 1
+        assert any("docs" in v[1].lower() or "documentation" in v[1].lower() for v in violations)
+
+    def test_comment_style_as_nitpick_is_ok(self, tmp_path):
+        """Comment style as nitpick should NOT be flagged."""
+        skill_file = tmp_path / "ok.md"
+        skill_file.write_text("""# Style
+
+- **Trigger**: Inconsistent comment style
+  - **Severity**: nitpick
+  - **Principle**: Use consistent comment formatting
+""")
+        violations = check_non_fire_violations(skill_file)
+        # Should not be a violation since it's only a nitpick
+        assert violations == []
+
+
+class TestCheckStyleProportion:
+    """Tests for style proportion checking."""
+
+    def test_low_style_proportion_passes(self, tmp_path):
+        """File with low style proportion should pass."""
+        skill_file = tmp_path / "clean.md"
+        skill_file.write_text("""# Review Triggers
+
+- **Trigger**: Unchecked allocation return
+  - **Severity**: reject
+
+- **Trigger**: API break without deprecation
+  - **Severity**: reject
+
+- **Trigger**: Missing error handling
+  - **Severity**: request-changes
+
+- **Trigger**: Race condition in concurrent access
+  - **Severity**: reject
+
+- **Trigger**: Memory leak in error path
+  - **Severity**: reject
+""")
+        passes, proportion = check_style_proportion(skill_file)
+        assert passes is True
+        assert proportion < 0.20
+
+    def test_high_style_proportion_fails(self, tmp_path):
+        """File with high style proportion should fail."""
+        skill_file = tmp_path / "style_heavy.md"
+        skill_file.write_text("""# Review Triggers
+
+- **Trigger**: Inconsistent naming style
+  - **Severity**: nitpick
+
+- **Trigger**: Wrong indentation style
+  - **Severity**: nitpick
+
+- **Trigger**: Whitespace before newline
+  - **Severity**: nitpick
+
+- **Trigger**: Cosmetic formatting issue
+  - **Severity**: nitpick
+
+- **Trigger**: Readability improvement suggested
+  - **Severity**: nitpick
+
+- **Trigger**: Unchecked allocation return
+  - **Severity**: reject
+""")
+        passes, proportion = check_style_proportion(skill_file)
+        # 5/6 = 83% style triggers, should fail
+        assert passes is False
+        assert proportion > 0.5  # More than 50% style
+
+    def test_empty_file_passes(self, tmp_path):
+        """Empty file should pass with 0% style proportion."""
+        skill_file = tmp_path / "empty.md"
+        skill_file.write_text("")
+        passes, proportion = check_style_proportion(skill_file)
+        assert passes is True
+        assert proportion == 0.0

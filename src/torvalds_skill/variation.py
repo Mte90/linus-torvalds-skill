@@ -86,7 +86,7 @@ def detect_urgency(headers: dict, subject: str) -> str:
     return "routine"
 
 
-def _call_llm(email: EmailRecord, retries: int = None) -> dict:
+def _call_llm(email: EmailRecord, retries: int | None = None) -> dict:
     """
     Call the LLM API for one email to extract stakes and risk.
     Returns parsed JSON dict with stakes and risk fields.
@@ -137,7 +137,16 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
         method="POST",
     )
 
-    last_err = None
+    last_err: (
+        urllib.error.HTTPError
+        | urllib.error.URLError
+        | TimeoutError
+        | ConnectionError
+        | json.JSONDecodeError
+        | KeyError
+        | IndexError
+        | None
+    ) = None
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=config.REQUEST_TIMEOUT) as resp:
@@ -157,10 +166,10 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
                 )
             else:
                 raise
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:  # type: ignore[misc, assignment]
             last_err = e
             time.sleep(config.RETRY_DELAY * (attempt + 1) + random.uniform(0, config.RETRY_DELAY))
-        except (json.JSONDecodeError, KeyError, IndexError) as e:
+        except (json.JSONDecodeError, KeyError, IndexError) as e:  # type: ignore[misc, assignment]
             last_err = e
             time.sleep(config.RETRY_DELAY)
 
@@ -178,7 +187,7 @@ def _parse_json_response(content: str) -> dict:
             lines = lines[:-1]
         text = "\n".join(lines)
     text = text.strip()
-    return json.loads(text)
+    return json.loads(text)  # type: ignore[no-any-return]
 
 
 def extract_stakes_risk(email: EmailRecord) -> dict:
@@ -270,9 +279,9 @@ def run_variation(mbox_path: str, resume: bool = False) -> dict:
     from email import message_from_file
     from email.header import decode_header
 
-    mbox_path = Path(mbox_path)
-    if not mbox_path.exists():
-        raise FileNotFoundError(f"Mbox file not found: {mbox_path}")
+    mbox_path_obj = Path(mbox_path)
+    if not mbox_path_obj.exists():
+        raise FileNotFoundError(f"Mbox file not found: {mbox_path_obj}")
 
     # Load checkpoint if resuming
     processed_ids = load_checkpoint() if resume else set()
@@ -289,7 +298,7 @@ def run_variation(mbox_path: str, resume: bool = False) -> dict:
 
     # Read all emails from mbox
     with open(mbox_path, encoding="utf-8", errors="replace") as f:
-        emails = list(message_from_file(f, headersonly=False))
+        emails: list = list(message_from_file(f))
 
     total = len(emails)
     print(f"Found {total} emails in {mbox_path}")

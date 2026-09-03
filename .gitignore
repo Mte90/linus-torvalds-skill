@@ -43,6 +43,7 @@ htmlcov/
 data/checkpoint.jsonl
 data/fetch_progress.json
 report/metrics.jsonl
+report/.review_state.json
 
 # === Baseline reviews ===
 report/baseline/

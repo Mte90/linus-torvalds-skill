@@ -40,6 +40,17 @@ from .distill_sanitize import (
 # Module-level data file cache: {path: (mtime, data)}
 _data_cache: dict[tuple, tuple[float, object]] = {}
 
+# Default severity weights for sampling (fallback when calibration.json missing)
+# reject ≈3x, request-changes ≈2x, nitpick ≈1x
+DEFAULT_SEVERITY_WEIGHTS = {
+    "reject": 3.0,
+    "request-changes": 2.0,
+    "nitpick": 1.0,
+}
+
+# Maximum proportion of samples that can come from nitpick sources
+MAX_NITPICK_PROPORTION = 0.15  # ~15% cap
+
 
 # Model-specific severity bias calibration
 # These biases are observed from empirical testing across multiple distillation runs.
@@ -52,7 +63,7 @@ MODEL_SEVERITY_BIAS = {
 }
 
 
-def _load_json_cached(path: Path) -> dict:
+def _load_json_cached(path: Path) -> dict | list:
     """Load a JSON file with mtime-based caching.
 
     Returns cached data if the file hasn't changed since last load.
@@ -62,10 +73,125 @@ def _load_json_cached(path: Path) -> dict:
     if cache_key in _data_cache:
         cached_mtime, cached_data = _data_cache[cache_key]
         if cached_mtime == mtime:
-            return cached_data
+            return cached_data  # type: ignore[return-value, no-any-return]
     data = json.loads(path.read_text(encoding="utf-8"))
     _data_cache[cache_key] = (mtime, data)
-    return data
+    return data  # type: ignore[return-value, no-any-return]
+
+
+def _load_severity_weights(calibration_path: Path | None) -> dict[str, float]:
+    """Load severity weights from calibration.json or use defaults.
+
+    Args:
+        calibration_path: Path to calibration.json (optional)
+
+    Returns:
+        Dict mapping severity names to weights (reject ≈3x, request-changes ≈2x, nitpick ≈1x)
+    """
+    if calibration_path and calibration_path.exists():
+        try:
+            calibration = _load_json_cached(calibration_path)
+            if isinstance(calibration, dict) and "severity_weights" in calibration:
+                weights = calibration["severity_weights"]
+                if isinstance(weights, dict):
+                    # Validate and merge with defaults for missing keys
+                    result = DEFAULT_SEVERITY_WEIGHTS.copy()
+                    for sev, weight in weights.items():
+                        if isinstance(weight, (int, float)) and sev in result:
+                            result[sev] = float(weight)
+                    return result
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+    # Fall back to defaults with a clear comment
+    # These weights ensure reject ≈3x, request-changes ≈2x, nitpick ≈1x
+    return DEFAULT_SEVERITY_WEIGHTS.copy()
+
+
+def _weighted_sample_patterns(
+    patterns: list, top_n: int, calibration_path: Path | None = None
+) -> list:
+    """Sample patterns with severity weighting.
+
+    Weighted sampling ensures that higher-severity patterns (reject, request-changes)
+    are more likely to be selected than nitpicks. This addresses the problem where
+    style noise (nitpicks) weighs the same as corruption signals (rejects).
+
+    Args:
+        patterns: List of pattern dicts with 'severity' field
+        top_n: Target number of samples
+        calibration_path: Optional path to calibration.json for custom weights
+
+    Returns:
+        List of top_n patterns, weighted toward higher severities
+    """
+    if not patterns:
+        return []
+
+    weights = _load_severity_weights(calibration_path)
+
+    # Separate patterns by severity
+    by_severity: dict[str, list] = {}
+    for p in patterns:
+        sev = p.get("severity", "nitpick")
+        by_severity.setdefault(sev, []).append(p)
+
+    # Calculate weighted quotas
+    total_weight = sum(weights.get(sev, 1.0) * len(pats) for sev, pats in by_severity.items())
+    if total_weight == 0:
+        # Fallback: equal weighting
+        return patterns[:top_n]
+
+    # Calculate target counts per severity
+    target_counts: dict[str, int] = {}
+    for sev, pats in by_severity.items():
+        weight = weights.get(sev, 1.0)
+        proportion = (weight * len(pats)) / total_weight
+        target_counts[sev] = max(1, int(proportion * top_n))  # At least 1 if available
+
+    # Ensure we don't exceed top_n
+    total_target = sum(target_counts.values())
+    if total_target > top_n:
+        # Scale down proportionally, prioritizing higher severities
+        scale = top_n / total_target
+        for sev in sorted(target_counts.keys(), key=lambda s: weights.get(s, 1.0), reverse=True):
+            target_counts[sev] = max(1, int(target_counts[sev] * scale))
+        # Adjust to hit exactly top_n
+        total_target = sum(target_counts.values())
+        if total_target > top_n:
+            # Trim from lowest weight severities
+            for sev in sorted(target_counts.keys(), key=lambda s: weights.get(s, 1.0)):
+                while total_target > top_n and target_counts[sev] > 1:
+                    target_counts[sev] -= 1
+                    total_target -= 1
+
+    # Enforce nitpick cap (~15%)
+    max_nitpick = max(1, int(top_n * MAX_NITPICK_PROPORTION))
+    if "nitpick" in target_counts:
+        target_counts["nitpick"] = min(target_counts["nitpick"], max_nitpick)
+
+    # Sample from each severity bucket
+    sampled: list = []
+    for sev, count in target_counts.items():
+        pats = by_severity.get(sev, [])
+        if pats:
+            # Deterministic selection: take first N (patterns already sorted)
+            sampled.extend(pats[: min(count, len(pats))])
+
+    # If we still need more samples, fill from any remaining
+    if len(sampled) < top_n:
+        all_sevs = set(by_severity.keys())
+        used_sevs = set(target_counts.keys())
+        for sev in all_sevs - used_sevs:
+            pats = by_severity[sev]
+            # Calculate how many we already took
+            taken = len([p for p in sampled if p.get("severity") == sev])
+            remaining = pats[taken:]
+            needed = top_n - len(sampled)
+            sampled.extend(remaining[:needed])
+            if len(sampled) >= top_n:
+                break
+
+    return sampled[:top_n]
 
 
 def _format_model_calibration_note(model: str) -> str:
@@ -102,7 +228,7 @@ def _format_model_calibration_note(model: str) -> str:
 
 
 def _format_calibration_for_prompt(
-    calibration: dict, category: str = None, model: str = None
+    calibration: dict, category: str | None = None, model: str | None = None
 ) -> str:
     """Format calibration.json into a prompt section grounding severity in real stats.
 
@@ -156,9 +282,9 @@ def _format_moves_for_prompt(patterns: list) -> str:
     lines = []
 
     total = len(patterns)
-    categories = {}
-    severities = {}
-    sources = {}
+    categories: dict[str, int] = {}
+    severities: dict[str, int] = {}
+    sources: dict[str, int] = {}
     for p in patterns:
         cat = p.get("category", "unknown")
         sev = p.get("severity", "unknown")
@@ -174,7 +300,7 @@ def _format_moves_for_prompt(patterns: list) -> str:
     lines.append(f"  Severity distribution: {json.dumps(severities)}")
     lines.append("")
 
-    by_category = {}
+    by_category: dict[str, list] = {}
     for p in patterns:
         cat = p.get("category", "unknown")
         by_category.setdefault(cat, []).append(p)
@@ -319,7 +445,7 @@ def _load_interlocutor_variation_data(project_root: Path) -> str:
     return "## INTERLOCUTOR AND VARIATION DATA\n\n" + "\n".join(lines)
 
 
-def _distill_category(category: str, patterns: list, model: str = None) -> str:
+def _distill_category(category: str, patterns: list, model: str | None = None) -> str:
     """Generate a skill fragment for a single category.
 
     Stage 1 of two-stage distillation: focuses the LLM's attention on
@@ -376,7 +502,11 @@ def _distill_category(category: str, patterns: list, model: str = None) -> str:
 
 
 def _run_categories_parallel(
-    categories: list, patterns_by_category: dict, call_fn, model: str = None, max_workers: int = 3
+    categories: list,
+    patterns_by_category: dict,
+    call_fn,
+    model: str | None = None,
+    max_workers: int = 3,
 ) -> tuple[dict, list]:
     """Run category distillation in parallel using ThreadPoolExecutor.
 
@@ -431,7 +561,7 @@ def _run_categories_parallel(
 
 
 def _synthesize_skill(
-    fragments: dict, calibration: dict, interview_data: str, iv_data: str, model: str = None
+    fragments: dict, calibration: dict, interview_data: str, iv_data: str, model: str | None = None
 ) -> str:
     """Synthesize category fragments into final SKILL.md.
 
@@ -514,7 +644,7 @@ def _synthesize_skill(
 
 
 def _distill_single_call(
-    patterns: list, calibration: dict, interview_data: str, iv_data: str, model: str = None
+    patterns: list, calibration: dict, interview_data: str, iv_data: str, model: str | None = None
 ) -> str:
     """Generate skill in a single LLM call (pre-T4 behavior).
 
@@ -578,7 +708,7 @@ REQUIRED_SECTIONS = [
 ]
 
 
-def _repair_missing_sections(skill_md: str, model: str = None) -> str:
+def _repair_missing_sections(skill_md: str, model: str | None = None) -> str:
     """Detect missing required sections and generate each with a targeted LLM call.
 
     Reasoning models (GLM5.2) sometimes truncate before writing all sections.
@@ -669,7 +799,7 @@ def _validate_severity_consistency(skill_text: str, calibration: dict) -> list[s
     The calibration dict has structure:
     {"severity_by_category": {"correctness": {"reject": 45, "nitpick": 12, ...}, ...}, ...}
     """
-    warnings = []
+    warnings: list[str] = []
 
     if not calibration:
         return warnings
@@ -742,8 +872,8 @@ def distill_skill(
     patterns_path: Path,
     output_path: Path,
     top_n: int = 40,
-    model: str = None,
-    calibration_path: Path = None,
+    model: str | None = None,
+    calibration_path: Path | None = None,
     single_call: bool = False,
 ):
     """Read patterns.json, call LLM, sanitize, write skill markdown.
@@ -760,6 +890,12 @@ def distill_skill(
 
     If calibration_path is provided and exists, the calibration data is used
     to ground severity assignments in real corpus stats.
+
+    Severity-weighted sampling:
+    Patterns are sampled with weights favoring higher severities (reject ≈3x,
+    request-changes ≈2x, nitpick ≈1x). Nitpick-sourced triggers are capped at
+    ~15% of the final trigger list to prevent style noise from overwhelming
+    critical signals.
     """
     # Load interview data via the shared helper (eliminates duplication)
     interview_data = _load_interview_data(patterns_path.parent.parent)
@@ -768,19 +904,48 @@ def distill_skill(
     iv_data = _load_interlocutor_variation_data(patterns_path.parent.parent)
 
     # Load calibration data if available
-    calibration = None
+    calibration: dict | None = None
     if calibration_path and calibration_path.exists():
-        calibration = _load_json_cached(calibration_path)
+        calib_raw = _load_json_cached(calibration_path)
+        assert isinstance(calib_raw, dict), "calibration.json must be an object"
+        calibration = calib_raw
         print(f"loaded calibration from {calibration_path}")
     else:
         print("warning: no calibration data — skill will lack severity grounding")
 
     # Load patterns
-    data = _load_json_cached(patterns_path)
+    data_raw = _load_json_cached(patterns_path)
+    assert isinstance(data_raw, list), "patterns.json must be an array"
+    data: list = data_raw
     print(f"loaded {len(data)} patterns from {patterns_path}")
 
-    # Group patterns by category
-    by_category = {}
+    # Apply severity-weighted sampling per category
+    # This ensures reject/request-changes patterns are favored over nitpicks
+    by_category: dict[str, list] = {}
+    for p in data:
+        cat = p.get("category", "unknown")
+        by_category.setdefault(cat, []).append(p)
+
+    # Sample each category with severity weighting
+    print(f"\nApplying severity-weighted sampling (top_n={top_n})...")
+    sampled_by_category: dict[str, list] = {}
+    for cat, patterns in by_category.items():
+        sampled = _weighted_sample_patterns(patterns, top_n, calibration_path)
+        sampled_by_category[cat] = sampled
+        # Report severity distribution in sampled set
+        sev_counts: dict[str, int] = {}
+        for p in sampled:
+            sev = p.get("severity", "unknown")
+            sev_counts[sev] = sev_counts.get(sev, 0) + 1
+        print(f"  {cat}: {len(sampled)} samples, severities: {sev_counts}")
+
+    # Use sampled patterns instead of raw patterns
+    data = []
+    for _cat, sampled in sampled_by_category.items():
+        data.extend(sampled)
+
+    # Group patterns by category (now using sampled data)
+    by_category = {}  # type: ignore[assignment]
     for p in data:
         cat = p.get("category", "unknown")
         by_category.setdefault(cat, []).append(p)
@@ -791,7 +956,9 @@ def distill_skill(
     if single_call:
         # Single-call mode: format all patterns into one prompt, one LLM call
         print("\nsingle-call mode: generating skill in one LLM call...", flush=True)
-        skill_md = _distill_single_call(data, calibration, interview_data, iv_data, model=model)
+        skill_md = _distill_single_call(
+            data, calibration if calibration else {}, interview_data, iv_data, model=model
+        )
     else:
         # Two-stage mode: per-category distillation + synthesis
         # Stage 1: Distill each category
@@ -854,12 +1021,14 @@ def distill_skill(
 
         # Stage 2: Synthesize final skill
         print("\nStage 2: synthesizing final skill...", flush=True)
-        skill_md = _synthesize_skill(fragments, calibration, interview_data, iv_data, model=model)
+        skill_md = _synthesize_skill(
+            fragments, calibration if calibration else {}, interview_data, iv_data, model=model
+        )
 
     # Post-process
     print("\npost-processing...")
     skill_md = sanitize_skill(skill_md)
-    skill_md = rebalance_severities(skill_md, calibration or {})
+    skill_md, _ = rebalance_severities(skill_md, calibration or {})  # type: ignore[assignment]
     skill_md = _strip_markdown_tables(skill_md)
     skill_md = _repair_missing_sections(skill_md, model=model)
 

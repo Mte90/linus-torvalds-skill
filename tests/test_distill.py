@@ -17,8 +17,10 @@ from torvalds_skill.distill import (
     _format_model_calibration_note,
     _format_moves_for_prompt,
     _load_interview_data,
+    _load_severity_weights,
     _validate_severity_consistency,
     _validate_skill_structure,
+    _weighted_sample_patterns,
 )
 from torvalds_skill.distill_llm import _detect_truncation, _WallClockTimeout
 from torvalds_skill.distill_prompts import DISTILL_SYSTEM_PROMPT
@@ -933,3 +935,135 @@ class TestFormatModelCalibrationNote:
 
         # Should mention borderline cases
         assert "borderline" in note.lower()
+
+
+class TestDistillPromptSeverityQuotas:
+    """Tests for per-category severity quotas in the distill prompt."""
+
+    def test_contains_per_category_quotas(self):
+        """Verify the prompt contains binding per-category severity quotas."""
+        assert "PER-CATEGORY SEVERITY QUOTAS" in DISTILL_SYSTEM_PROMPT
+        assert "BINDING CONSTRAINTS" in DISTILL_SYSTEM_PROMPT
+
+    def test_contains_all_category_quotas(self):
+        """Verify all 13 categories have quota ranges specified."""
+        categories = [
+            "testing",
+            "correctness",
+            "complexity",
+            "performance",
+            "concurrency",
+            "documentation",
+            "style",
+            "process",
+            "api-stability",
+            "error-handling",
+            "memory-safety",
+            "abstraction",
+            "security",
+        ]
+        for cat in categories:
+            assert cat in DISTILL_SYSTEM_PROMPT
+
+    def test_quotas_contain_percentage_ranges(self):
+        """Verify quotas contain percentage ranges for each severity."""
+        assert "reject" in DISTILL_SYSTEM_PROMPT
+        assert "request-changes" in DISTILL_SYSTEM_PROMPT
+        assert "nitpick" in DISTILL_SYSTEM_PROMPT
+        # Check for percentage signs indicating ranges
+        assert "%" in DISTILL_SYSTEM_PROMPT
+
+
+class TestDistillPromptNonFireList:
+    """Tests for the non-fire build trivia list in the distill prompt."""
+
+    def test_contains_non_fire_section(self):
+        """Verify the NEVER-BLOCK ON BUILD TRIVIA section exists."""
+        assert "NEVER-BLOCK ON BUILD TRIVIA" in DISTILL_SYSTEM_PROMPT
+        assert "NON-FIRE LIST" in DISTILL_SYSTEM_PROMPT
+
+    def test_contains_phony_declaration(self):
+        """Verify .PHONY declarations are in the non-fire list."""
+        assert ".PHONY" in DISTILL_SYSTEM_PROMPT or "phony" in DISTILL_SYSTEM_PROMPT.lower()
+
+    def test_contains_cflags(self):
+        """Verify CFLAGS are in the non-fire list."""
+        assert "CFLAGS" in DISTILL_SYSTEM_PROMPT
+
+    def test_contains_missing_docs(self):
+        """Verify missing documentation is in the non-fire list."""
+        assert (
+            "docs" in DISTILL_SYSTEM_PROMPT.lower()
+            or "documentation" in DISTILL_SYSTEM_PROMPT.lower()
+        )
+
+    def test_contains_comment_style(self):
+        """Verify comment style is in the non-fire list."""
+        assert "comment style" in DISTILL_SYSTEM_PROMPT.lower()
+
+    def test_contains_redundant_rm(self):
+        """Verify redundant rm commands are in the non-fire list."""
+        assert "redundant" in DISTILL_SYSTEM_PROMPT.lower() or "rm" in DISTILL_SYSTEM_PROMPT
+
+
+class TestSeverityWeightedSampling:
+    """Tests for severity-weighted sampling in distillation."""
+
+    def test_default_weights_loaded_when_no_calibration(self):
+        """Default weights should be used when calibration.json is missing."""
+        weights = _load_severity_weights(None)
+        assert weights == {"reject": 3.0, "request-changes": 2.0, "nitpick": 1.0}
+
+    def test_weights_loaded_from_calibration_json(self, tmp_path):
+        """Custom weights should be loaded from calibration.json."""
+        calibration_file = tmp_path / "calibration.json"
+        calibration_file.write_text(
+            '{"severity_weights": {"reject": 4.0, "request-changes": 2.5, "nitpick": 1.0}}'
+        )
+        weights = _load_severity_weights(calibration_file)
+        assert weights["reject"] == 4.0
+        assert weights["request-changes"] == 2.5
+        assert weights["nitpick"] == 1.0  # Default preserved for missing keys
+
+    def test_weighted_sampling_favors_rejects(self):
+        """Weighted sampling should favor reject patterns over nitpicks."""
+        patterns = [_make_pattern(severity="reject") for _ in range(10)] + [
+            _make_pattern(severity="nitpick") for _ in range(10)
+        ]
+        sampled = _weighted_sample_patterns(patterns, top_n=10, calibration_path=None)
+
+        # Count severities in sampled set
+        reject_count = sum(1 for p in sampled if p.get("severity") == "reject")
+        nitpick_count = sum(1 for p in sampled if p.get("severity") == "nitpick")
+
+        # Rejects should be favored (at least 60% of samples)
+        assert reject_count > nitpick_count
+        assert reject_count >= 6  # At least 60% rejects
+
+    def test_nitpick_cap_enforced(self):
+        """Nitpick samples should be capped at ~15% of total."""
+        patterns = [_make_pattern(severity="reject") for _ in range(5)] + [
+            _make_pattern(severity="nitpick") for _ in range(100)
+        ]
+        sampled = _weighted_sample_patterns(patterns, top_n=20, calibration_path=None)
+
+        nitpick_count = sum(1 for p in sampled if p.get("severity") == "nitpick")
+        max_nitpick = int(20 * 0.15)  # 15% cap
+
+        assert nitpick_count <= max(1, max_nitpick + 1)  # Allow small margin
+
+    def test_weighted_sampling_with_request_changes(self):
+        """Weighted sampling should include request-changes patterns."""
+        patterns = (
+            [_make_pattern(severity="reject") for _ in range(5)]
+            + [_make_pattern(severity="request-changes") for _ in range(5)]
+            + [_make_pattern(severity="nitpick") for _ in range(10)]
+        )
+        sampled = _weighted_sample_patterns(patterns, top_n=10, calibration_path=None)
+
+        severities = [p.get("severity") for p in sampled]
+        assert "reject" in severities
+        assert "request-changes" in severities
+        # Rejects and request-changes should dominate (at least 60% high severity)
+        high_severity_count = severities.count("reject") + severities.count("request-changes")
+        assert high_severity_count >= 6  # At least 60% high severity

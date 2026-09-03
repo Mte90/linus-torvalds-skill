@@ -2,6 +2,14 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-09-03
+
+- **Feature (triage):** Enforced two-pass review triage in `report/run_review.py` — Pass 1 reports correctness/memory-safety only, Pass 2 may report style/build only for files with zero Pass-1 findings (cap 2/file). Findings carry `Pass: 1|2` labels and the chunked-merge step drops Pass-2 findings wherever Pass-1 exists, so precedence is structural instead of decorative. 10 new tests. Full suite 897 passed.
+- **Feature (distill):** Severity-weighted distill sampling in `src/torvalds_skill/distill.py` + `distill_prompts.py` (reject 3x, request-changes 2x, nitpick 1x; nitpick-sourced triggers capped ~15%), binding per-category severity quotas in the prompt, and a "Never block on" non-fire section (build trivia). `verify_skill.py --strict` now fails trivia-blessing triggers and over-style (>20%) skills.
+- **Feature (report):** Focus gate in `report/build_comparison.py` + `comparison_render.py` — core-vs-trivia classifier, per-model CORE% rows with FOCUS DRIFT (<50% core) and CRITICAL FOCUS FAILURE gates; renamed misleading "out of scope" to "unmatched".
+- **Feature (calibration):** `rebalance_severities()` now returns a delta report (before/after, share movement, relabeled ids), emits SEVERITY REBALANCE ALERT past 10pts movement, and supports `strict=True` to raise instead of silently rewriting.
+- **Review (rereview):** Regenerated all 3 skills (weighted sampling, quotas, non-fire list) and re-ran SmallChat with two-pass triage + focus gate. All models focused (83-100% CORE, trivia gone). Verdicts: gpt-oss neutral (1 found/1 lost), mistral +12 (13 CRITICAL vs baseline 1 — likely quota-driven inflation, benchmark recall best at 18.6%), glm5.2 -4 (0 CRITICAL vs baseline 4 — severity downgrade, not focus drift). Benchmark: gpt P83.3/R11.6, mistral P36.4/R18.6, glm P9.1/R2.3. Baseline variance (glm 9→27 findings across runs) still dominates comparisons.
+
 ## 2026-09-01
 
 - **Security:** Removed the last hardcoded Regolo API key (`sk-1ZXgFKoLcq8oZfKozQIpew`) from `src/torvalds_skill/config.py`, `report/llm_review.py`, and `docs/ARCHITECTURE.md`. All credentials now come exclusively from environment variables. Added `.env.example` as the configuration template and a `No Committed Secrets` rule to `AGENTS.md` documenting the env-var contract (`OPENAI_API_KEY` / `REGOLO_API_KEY` / `LLM_API_KEY` for the key; `OPENAI_BASE_URL` / `LLM_HOST` for the endpoint) and the `git filter-repo` purge procedure if a key is ever committed.

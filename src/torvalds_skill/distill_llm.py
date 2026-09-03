@@ -336,15 +336,15 @@ def _get_connection(host: str) -> http.client.HTTPSConnection:
             conn = http.client.HTTPConnection(host_key, timeout=timeout)
         pool[host_key] = conn
 
-    return conn
+    return conn  # type: ignore[return-value]
 
 
 def _call_llm(
     prompt: str,
-    retries: int = None,
-    model: str = None,
-    system_prompt: str = None,
-    wall_clock_override: int = None,
+    retries: int | None = None,
+    model: str | None = None,
+    system_prompt: str | None = None,
+    wall_clock_override: int | None = None,
 ) -> str:
     """Call the LLM for the distillation step. Returns raw text.
 
@@ -366,8 +366,8 @@ def _call_llm(
     # Module-level cache: {hash: response}
     # Using OrderedDict for LRU eviction
     if not hasattr(_call_llm, "_cache"):
-        _call_llm._cache = OrderedDict()
-        _call_llm._max_size = 200
+        _call_llm._cache = OrderedDict()  # type: ignore[attr-defined]
+        _call_llm._max_size = 200  # type: ignore[attr-defined]
 
     retries = retries if retries is not None else config.MAX_RETRIES
     sys_prompt = system_prompt if system_prompt is not None else DISTILL_SYSTEM_PROMPT
@@ -380,10 +380,11 @@ def _call_llm(
 
         # Thread-safe in-memory cache check
         with _cache_lock:
-            if cache_key in _call_llm._cache:
-                _call_llm._cache.move_to_end(cache_key)  # LRU touch
+            cache = getattr(_call_llm, "_cache", None)  # type: ignore[attr-defined]
+            if cache and cache_key in cache:
+                cache.move_to_end(cache_key)  # LRU touch  # type: ignore[attr-defined]
                 print(f"cache hit (memory) for prompt hash {cache_key[:8]}...", file=sys.stderr)
-                return _call_llm._cache[cache_key]
+                return str(cache[cache_key])  # type: ignore[attr-defined, no-any-return]
 
         # Check disk cache (thread-safe)
         disk_result = _disk_cache.get(cache_key)
@@ -391,10 +392,10 @@ def _call_llm(
             disk_model, disk_response = disk_result
             # Load into memory cache
             with _cache_lock:
-                if len(_call_llm._cache) >= _call_llm._max_size:
-                    _call_llm._cache.popitem(last=False)
-                _call_llm._cache[cache_key] = disk_response
-                _call_llm._cache.move_to_end(cache_key)
+                if len(_call_llm._cache) >= _call_llm._max_size:  # type: ignore[attr-defined]
+                    _call_llm._cache.popitem(last=False)  # type: ignore[attr-defined]
+                _call_llm._cache[cache_key] = disk_response  # type: ignore[attr-defined]
+                _call_llm._cache.move_to_end(cache_key)  # type: ignore[attr-defined]
             print(f"cache hit (disk) for prompt hash {cache_key[:8]}...", file=sys.stderr)
             return disk_response
 
@@ -518,9 +519,9 @@ def _call_llm(
                     # IMPORTANT: truncated responses are NOT cached to disk (they're model-specific failures)
                     if cache_key:
                         with _cache_lock:
-                            if len(_call_llm._cache) >= _call_llm._max_size:
-                                _call_llm._cache.popitem(last=False)  # evict least-recently-used
-                            _call_llm._cache[cache_key] = result
+                            if len(_call_llm._cache) >= _call_llm._max_size:  # type: ignore[attr-defined]
+                                _call_llm._cache.popitem(last=False)  # type: ignore[attr-defined]  # evict least-recently-used
+                            _call_llm._cache[cache_key] = result  # type: ignore[attr-defined]
                     return result
 
                 # Success - no truncation
@@ -528,26 +529,24 @@ def _call_llm(
                     print(f"info: fallback model {call_model} succeeded", file=sys.stderr)
                     # Try to patch if we have a primary result
                     if primary_result is not None:
-                        patched = _patch_truncated_section(primary_result, result)
+                        patched: str = _patch_truncated_section(primary_result, result)
                         # Cache the patched result (thread-safe)
                         if cache_key:
                             with _cache_lock:
-                                if len(_call_llm._cache) >= _call_llm._max_size:
-                                    _call_llm._cache.popitem(
-                                        last=False
-                                    )  # evict least-recently-used
-                                _call_llm._cache[cache_key] = patched
-                                _call_llm._cache.move_to_end(cache_key)
+                                if len(_call_llm._cache) >= _call_llm._max_size:  # type: ignore[attr-defined]
+                                    _call_llm._cache.popitem(last=False)  # type: ignore[attr-defined]  # evict least-recently-used
+                                _call_llm._cache[cache_key] = patched  # type: ignore[attr-defined]
+                                _call_llm._cache.move_to_end(cache_key)  # type: ignore[attr-defined]
                             # Write to disk cache (only non-truncated responses)
                             _disk_cache.set(cache_key, call_model, patched)
                         return patched
                 # Cache the result (thread-safe)
                 if cache_key:
                     with _cache_lock:
-                        if len(_call_llm._cache) >= _call_llm._max_size:
-                            _call_llm._cache.popitem(last=False)  # evict least-recently-used
-                        _call_llm._cache[cache_key] = result
-                        _call_llm._cache.move_to_end(cache_key)
+                        if len(_call_llm._cache) >= _call_llm._max_size:  # type: ignore[attr-defined]
+                            _call_llm._cache.popitem(last=False)  # type: ignore[attr-defined]  # evict least-recently-used
+                        _call_llm._cache[cache_key] = result  # type: ignore[attr-defined]
+                        _call_llm._cache.move_to_end(cache_key)  # type: ignore[attr-defined]
                     # Write to disk cache (only non-truncated responses)
                     _disk_cache.set(cache_key, call_model, result)
                 return result
@@ -560,7 +559,7 @@ def _call_llm(
                 ConnectionResetError,
                 BrokenPipeError,
             ) as e:
-                last_err = e
+                last_err = e  # type: ignore[assignment]
 
                 # Handle connection errors by discarding stale connection
                 if isinstance(

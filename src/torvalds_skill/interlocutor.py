@@ -57,7 +57,7 @@ Rules:
 - Return ONLY valid JSON, no markdown, no explanation"""
 
 
-def _call_llm(email: EmailRecord, retries: int = None) -> dict:
+def _call_llm(email: EmailRecord, retries: int | None = None) -> dict:
     """Call the LLM API for one email. Returns parsed JSON dict."""
     retries = retries if retries is not None else config.MAX_RETRIES
 
@@ -104,7 +104,7 @@ def _call_llm(email: EmailRecord, retries: int = None) -> dict:
         method="POST",
     )
 
-    last_err = None
+    last_err: Exception | None = None
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(req, timeout=config.REQUEST_TIMEOUT) as resp:
@@ -145,7 +145,7 @@ def _parse_json_response(content: str) -> dict:
             lines = lines[:-1]
         text = "\n".join(lines)
     text = text.strip()
-    return json.loads(text)
+    return json.loads(text)  # type: ignore[no-any-return]
 
 
 def _load_skip_list() -> set[str]:
@@ -228,8 +228,8 @@ def run_interlocutor(
     """
     import mailbox
 
-    mbox_path = Path(mbox_path)
-    if not mbox_path.exists():
+    mbox_path_obj = Path(mbox_path)
+    if not mbox_path_obj.exists():
         print(f"error: {mbox_path} not found")
         return
 
@@ -246,8 +246,8 @@ def run_interlocutor(
         print(f"  skip list: {len(skip_ids)} known emails to skip")
 
     # Open mbox and iterate
-    print(f"reading {mbox_path}...")
-    mbox = mailbox.mbox(str(mbox_path))
+    print(f"reading {mbox_path_obj}...")
+    mbox = mailbox.mbox(str(mbox_path_obj))
 
     total = len(mbox)
     processed = 0
@@ -300,13 +300,17 @@ def run_interlocutor(
                     content_type = part.get_content_type()
                     if content_type == "text/plain":
                         try:
-                            body = part.get_payload(decode=True).decode("utf-8", errors="ignore")
+                            payload = part.get_payload(decode=True)
+                            if isinstance(payload, bytes):
+                                body = payload.decode("utf-8", errors="ignore")
                             break
                         except Exception:
                             pass
             else:
                 try:
-                    body = message.get_payload(decode=True).decode("utf-8", errors="ignore")
+                    payload = message.get_payload(decode=True)
+                    if isinstance(payload, bytes):
+                        body = payload.decode("utf-8", errors="ignore")
                 except Exception:
                     body = str(message.get_payload() or "")
 
