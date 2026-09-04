@@ -157,6 +157,6 @@ Same triggers, different severity assignments:
 
 ## Methodology Note
 
-This analysis compares the three skill files generated from the **same corpus** (38,293 moves, 325 sampled patterns, 53 interview passages) using the **same pipeline** (`distill.py`) but **three different LLMs**. The divergence is not a bug — it's evidence of how much the generation model shapes the distillation output.
+This analysis compares the three skill files generated from the **same corpus** (38,293 moves, 350 sampled patterns from `data/patterns.json`) using the **same pipeline** (`distill.py`) but **three different LLMs**. The divergence is not a bug — it's evidence of how much the generation model shapes the distillation output.
 
 To regenerate and verify, see [docs/CONTRIBUTING.md](CONTRIBUTING.md) for the canonical regeneration commands.

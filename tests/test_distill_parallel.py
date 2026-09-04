@@ -267,11 +267,11 @@ Tone guidelines."""
             with patch("torvalds_skill.distill._call_llm") as mock_call_llm:
                 mock_call_llm.return_value = complete_skill
 
-                with patch("torvalds_skill.distill._load_interview_data") as mock_interview:
+                with patch("torvalds_skill.distill_data.load_interview_data") as mock_interview:
                     mock_interview.return_value = ""
 
                     with patch(
-                        "torvalds_skill.distill._load_interlocutor_variation_data"
+                        "torvalds_skill.distill_data.load_interlocutor_variation_data"
                     ) as mock_iv:
                         mock_iv.return_value = ""
 

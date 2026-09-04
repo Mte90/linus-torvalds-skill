@@ -72,5 +72,5 @@ Use these commands to verify the state of the project:
 | Skill language-agnostic | `python3 scripts/verify_skill.py` |
 | Comparison regenerates | `python3 report/build_comparison.py` |
 | Review pipeline syntax | `python3 -m py_compile report/run_review.py` |
-| Full review run | `CHUNKED_MODELS="glm5.2" python3 report/run_review.py --force` |
+| Full review run | `python3 report/run_review.py --force` | Auto-chunking enabled for all models |
 | Pipeline data valid | `python -m torvalds_skill validate` |

@@ -361,7 +361,14 @@ def main():
     p_distill.add_argument(
         "--single-call",
         action="store_true",
-        help="bypass per-category distillation (1 LLM call instead of 15, for GLM5.2)",
+        help="[deprecated] alias for --distill-mode single (kept for backward compatibility)",
+    )
+    p_distill.add_argument(
+        "--distill-mode",
+        type=str,
+        choices=["single", "two-stage"],
+        default=None,
+        help="distillation mode: 'single' (1 LLM call) or 'two-stage' (15 calls, default). Model profile may override.",
     )
 
     p_run = sub.add_parser("run", help="run full pipeline")
@@ -425,7 +432,17 @@ def main():
     elif args.stage == "cluster":
         stage_cluster()
     elif args.stage == "distill":
-        stage_distill(args.top_n, model=args.model, out=args.out, single_call=args.single_call)
+        # --single-call is now an alias for --distill-mode single
+        distill_mode = args.distill_mode
+        if args.single_call and distill_mode is None:
+            distill_mode = "single"
+        stage_distill(
+            args.top_n,
+            model=args.model,
+            out=args.out,
+            single_call=args.single_call,
+            distill_mode=distill_mode,
+        )
     elif args.stage == "run":
         stage_run(args.sample, args.workers)
     elif args.stage == "soul":

@@ -45,38 +45,36 @@ MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "3"))
 RETRY_DELAY = float(os.environ.get("LLM_RETRY_DELAY", "2.0"))
 REQUEST_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "60"))  # existing, keep for non-streaming calls
 
-# Per-model wall-clock timeouts
-_MODEL_TIMEOUTS = {
-    "gpt-oss-120b": 120,
-    "glm5.2": 600,
-    "glm-5.2": 600,
-    "mistral": 120,
-    "default": 120,
-}
+# Per-model timeouts now come from profiles.get_profile(model).timeout
+# This replaces the old _MODEL_TIMEOUTS dict
 
 
 def get_model_timeout(model: str | None = None) -> int:
     """Get per-model timeout in seconds. Env override: LLM_TIMEOUT_{MODEL}."""
-    model = (model or MODEL).lower()
-    env_key = f"LLM_TIMEOUT_{model.upper().replace('-', '_')}"
+    from .profiles import get_profile
+
+    model_name = model or MODEL
+    profile = get_profile(model_name)
+
+    # Check for explicit env override first (legacy support)
+    env_key = f"LLM_TIMEOUT_{model_name.upper().replace('-', '_')}"
     if env_val := os.environ.get(env_key):
         return int(env_val)
-    return _MODEL_TIMEOUTS.get(model, _MODEL_TIMEOUTS["default"])
+
+    return profile.timeout
 
 
-# Streaming-specific timeouts
+# Wall-clock timeouts now come from profiles.get_profile(model).review_timeout
+# These are kept for backward compatibility but should use profiles going forward
 READ_TIMEOUT = int(os.environ.get("LLM_READ_TIMEOUT", "120"))  # per-read socket timeout
-WALL_CLOCK_GLM = int(os.environ.get("LLM_WALL_CLOCK_GLM", "1800"))  # GLM reasoning: 30 min
-WALL_CLOCK_LONG = int(
-    os.environ.get("LLM_WALL_CLOCK_LONG", "900")
-)  # other models, long prompts: 15 min
-WALL_CLOCK_DEFAULT = int(os.environ.get("LLM_WALL_CLOCK_DEFAULT", "300"))  # other models: 5 min
-WALL_CLOCK_CATEGORY = int(
-    os.environ.get("LLM_WALL_CLOCK_CATEGORY", "300")
-)  # per-category distill: 5 min
+WALL_CLOCK_GLM = 1800  # legacy alias: reasoning-profile review timeout, 30 min
+WALL_CLOCK_LONG = 900  # other models, long prompts: 15 min
+WALL_CLOCK_DEFAULT = 300  # other models: 5 min
+WALL_CLOCK_CATEGORY = 300  # per-category distill: 5 min
 
-# GLM5.2 reasoning models need a larger token budget so reasoning AND content fit
-GLM_MAX_TOKENS = int(os.environ.get("GLM_MAX_TOKENS", "16000"))
+# Max tokens now comes from profiles.get_profile(model).max_tokens
+# This is kept for backward compatibility
+GLM_MAX_TOKENS = 16000  # legacy alias: reasoning-profile max tokens
 
 
 def headers() -> dict:

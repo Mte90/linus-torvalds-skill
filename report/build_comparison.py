@@ -746,9 +746,11 @@ def _match_findings_fuzzy(
 def extract_skill_triggers(skill_path: Path) -> list[str]:
     """Extract all trigger texts from the skill markdown file.
 
-    Extracts from two formats:
-    - **Trigger:** *<trigger text>* (Level 1 and Level 3 triggers)
-    - **Triggers (3‑6 each)**: 1. *<trigger text>* – ... <br>2. *<trigger text>* – ... (Level 2)
+    Delegates to trigger_patterns module for style-aware extraction.
+    Supports three formats:
+    - gpt-oss (SKILL.md): **What to look for:** blocks
+    - glm (SKILL-GLM.md): **Trigger**: text without italics
+    - mistral (SKILL-Mistral.md): - **Title** bullets
 
     Returns deduplicated list of trigger description strings.
     """
@@ -756,32 +758,18 @@ def extract_skill_triggers(skill_path: Path) -> list[str]:
         return []
 
     content = skill_path.read_text(encoding="utf-8", errors="replace")
-    triggers = set()
 
-    # Format 1: **Trigger:** *<trigger text>*
-    for match in re.finditer(r"\*\*Trigger:\*\*\s*\*([^*]+)\*", content):
-        trigger_text = match.group(1).strip()
-        if trigger_text:
-            triggers.add(trigger_text)
+    # Import here to avoid circular dependency
+    import sys
 
-    # Format 2: **Triggers (3‑6 each)**: 1. *<trigger text>* – ... <br>2. *<trigger text>* – ...
-    for match in re.finditer(
-        r"\*\*Triggers \(3‑6 each\)\*\*:\s*(.+?)(?=\n\s*\n|\n\s*-\s*\*\*Theme|\n\s*####|\Z)",
-        content,
-        re.DOTALL,
-    ):
-        triggers_block = match.group(1)
-        # Split on <br>
-        for part in triggers_block.split("<br>"):
-            # Match numbered triggers: N. *<trigger text>*
-            for trig_match in re.finditer(r"\d+\.\s*\*([^*]+)\*", part):
-                trigger_text = trig_match.group(1).strip()
-                # Strip the " – <example>" suffix if present
-                trigger_text = re.sub(r"\s*–.*$", "", trigger_text)
-                if trigger_text:
-                    triggers.add(trigger_text)
+    sys.path.insert(0, str(Path(__file__).parent))
+    from trigger_patterns import extract_triggers
 
-    return list(triggers)
+    # Auto-detect style and extract
+    triggers = extract_triggers(content, style="auto")
+
+    # Return just the trigger descriptions (second element of tuples)
+    return [desc for (_title, desc) in triggers if desc]
 
 
 def match_finding_to_trigger(finding: Finding, triggers: list[str]) -> tuple[str | None, float]:
@@ -843,7 +831,7 @@ def match_finding_to_trigger(finding: Finding, triggers: list[str]) -> tuple[str
                 best_trigger = trigger
 
     # Threshold for "covered": at least some keyword overlap
-    if best_score >= 0.05:  # Very lenient - just needs some overlap
+    if best_score >= 0.05:  # Raised threshold to reduce false positives
         return best_trigger, best_score
     return None, best_score
 

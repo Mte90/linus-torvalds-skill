@@ -23,9 +23,21 @@ import re
 import sys
 from pathlib import Path
 
+# Add report directory to path for importing trigger_patterns
+sys.path.insert(0, str(Path(__file__).parent.parent / "report"))
+
 DEFAULT_SKILL_PATH = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
 PATTERNS_PATH = Path(__file__).parent.parent / "data" / "patterns.json"
 CALIBRATION_PATH = Path(__file__).parent.parent / "data" / "calibration.json"
+# Required frontmatter fields for traceability
+REQUIRED_FRONTMATTER_FIELDS = [
+    "prompt_hash",
+    "input_hash",
+    "mode",
+    "model",
+    "date",
+    "pipeline_version",
+]
 
 REQUIRED_SECTIONS = [
     "Reviewer Mindset",
@@ -615,9 +627,61 @@ def _print_score_report(score_result: dict, skill_path: Path) -> None:
     print()
 
 
+def verify_trigger_format(skill_path: Path) -> tuple[bool, list[str]]:
+    """Verify that skill file uses consistent trigger format.
+
+    Returns (is_valid, list of errors).
+    """
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent / "report"))
+    from trigger_patterns import extract_triggers
+
+    if not skill_path.exists():
+        return False, [f"Skill file not found: {skill_path}"]
+
+    content = skill_path.read_text(encoding="utf-8", errors="replace")
+
+    # Auto-detect style
+    if "**What to look for:**" in content:
+        style = "gpt-oss"
+    elif re.search(r"\*\*Trigger\*\*:\s*[^\*]", content):
+        style = "glm"
+    elif re.search(r"^\s*-\s*\*\*[A-Z]", content, re.MULTILINE):
+        style = "mistral"
+    else:
+        return False, ["Unknown trigger format - cannot auto-detect style"]
+
+    triggers = extract_triggers(content, style=style)
+
+    errors = []
+    if len(triggers) < 30:
+        errors.append(f"Only {len(triggers)} triggers extracted (expected >= 30)")
+
+    # Check for consistent format
+    if style == "gpt-oss":
+        # Should have "What to look for:" in each trigger
+        pass  # Already validated by extraction
+    elif style == "glm":
+        # Should have "**Trigger**:" format
+        if not re.search(r"\*\*Trigger\*\*:", content):
+            errors.append("Missing '**Trigger**:' markers")
+    elif style == "mistral":
+        # Should have "- **Title**" format
+        if not re.search(r"^\s*-\s*\*\*", content, re.MULTILINE):
+            errors.append("Missing '- **Title**' bullet format")
+
+    return len(errors) == 0, errors
+
+
 def main() -> int:
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Verify skill file quality")
+    parser.add_argument(
+        "--check-frontmatter",
+        action="store_true",
+        help="Validate YAML frontmatter traceability fields",
+    )
     parser.add_argument(
         "skill_path",
         type=Path,
@@ -636,8 +700,8 @@ def main() -> int:
     args = parser.parse_args()
 
     skill_path = args.skill_path
+    check_frontmatter = args.check_frontmatter
     strict_mode = args.strict
-
     # Handle --score flag
     if args.score:
         if not skill_path.exists():
@@ -652,6 +716,20 @@ def main() -> int:
     if not skill_path.exists():
         print(f"FAIL: {skill_path} does not exist")
         return 1
+    # 0. Frontmatter validation (if requested)
+    if check_frontmatter:
+        print("=== Frontmatter Validation ===")
+        raw_text = skill_path.read_text(encoding="utf-8")
+        missing_fields = []
+        for field in REQUIRED_FRONTMATTER_FIELDS:
+            if f"{field}:" not in raw_text:
+                missing_fields.append(field)
+        all_pass &= check(
+            "Frontmatter traceability fields",
+            len(missing_fields) == 0,
+            f"missing: {missing_fields}" if missing_fields else "all present",
+        )
+        print()
 
     raw_text = skill_path.read_text(encoding="utf-8")
     text = normalize(raw_text)
@@ -769,6 +847,15 @@ def main() -> int:
         f"violations: {table_violations}" if table_violations else "clean",
     )
 
+    # 9b. Trigger format compliance
+    print()
+    format_pass, format_violations = verify_trigger_format(skill_path)
+    all_pass &= check(
+        "Trigger format compliance",
+        format_pass,
+        f"violations: {format_violations}" if format_violations else "clean",
+    )
+
     # 10. Strict mode checks
     if strict_mode:
         print()
@@ -798,3 +885,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# Trigger format validation - import from report module

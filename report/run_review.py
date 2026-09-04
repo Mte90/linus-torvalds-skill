@@ -30,8 +30,12 @@ Prerequisites:
   - skill files present at linus-torvalds-skill/SKILL.md, SKILL-GLM.md, SKILL-Mistral.md
 
 Environment variables:
-  CHUNKED_MODELS — comma-separated list of models to use chunked pipeline
-                    (e.g., "gpt-oss-120b,glm5.2"). Default: all models use chunked.
+  (none - all model settings now come from profiles.py)
+
+Auto-chunking:
+  If a prompt exceeds the model's profile.prompt_budget_chars, the review
+  automatically chunks by source file and merges results. This applies to
+  ALL models, not just a configured list.
 
 Run from the repository root:
   python3 report/run_review.py                    # skip existing, run missing
@@ -44,7 +48,6 @@ Run from the repository root:
 import argparse
 import hashlib
 import json
-import os
 import random
 import shutil
 import subprocess
@@ -76,9 +79,7 @@ MODELS = {
     "mistral-small-4-119b": SKILL_DIR / "SKILL-Mistral.md",
 }
 
-TIMEOUTS = {
-    "glm5.2": 2400,  # GLM5.2 needs longer timeout (reasoning model)
-}
+# TIMEOUTS replaced by profile.review_timeout - removed hard-coded dict
 DEFAULT_TIMEOUT = 900
 
 # State file for per-model checkpoints
@@ -401,16 +402,26 @@ Write findings to: {chunk_file}
 
 
 def build_baseline_prompt(out_file: Path) -> str:
-    """Build the baseline (no-skill) review prompt."""
+    """Build the baseline (no-skill) review prompt.
+
+    NOTE: Two-pass rule and Pass caps are added here for validation symmetry with
+    the with-skill prompt, and auto-chunking by prompt budget applies to both
+    arms. The remaining asymmetry (Persona Narrative, meta-task) is documented
+    here and will be addressed in a later task if needed.
+    """
     sources_block = ""
     for src in SOURCE_FILES:
         sources_block += f"== SOURCE: {src} =={read_source_file(src)}\n\n"
+
+    two_pass_rule = _build_two_pass_rule()
 
     return f"""You are a code reviewer. Review the codebase below — antirez/smallchat (minimal TCP chat server, ~706 LOC).
 
 Do NOT use any tools. Do NOT read any files. Everything you need is inlined below.
 
 {sources_block}
+
+{two_pass_rule}
 
 Conduct a thorough code review finding:
 - Bugs and logic errors
@@ -427,6 +438,7 @@ Deliverable: a review report with YAML frontmatter, one section per source file,
 - **Location:** file:line
 - **Issue:** what's wrong
 - **Fix:** concrete action
+- **Pass:** 1 | 2
 
 **Format rules:**
 - Use exactly `###` (three hash marks) for severity headings — not `####` or `##`
@@ -852,8 +864,11 @@ def run_review_chunked(
 
     chunk_dir.mkdir(parents=True, exist_ok=True)
 
-    # Timeout: use per-model override from TIMEOUTS dict, or fall back to default
-    chunk_timeout = TIMEOUTS.get(model_label, DEFAULT_TIMEOUT)
+    # Timeout: use profile.review_timeout
+    from torvalds_skill.profiles import get_profile
+
+    profile = get_profile(model_label)
+    chunk_timeout = profile.review_timeout
 
     # Check if chunks dir exists (resume from interrupted run)
     if chunk_dir.exists() and any(chunk_dir.iterdir()):
@@ -914,7 +929,12 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
     print(f"[{datetime.now().strftime('%H:%M:%S')}] [run] {model_label} with-skill")
 
     prompt = build_review_prompt(skill_file, out_file)
-    timeout_sec = TIMEOUTS.get(model_label, DEFAULT_TIMEOUT)
+
+    # Timeout: use profile.review_timeout
+    from torvalds_skill.profiles import get_profile
+
+    profile = get_profile(model_label)
+    timeout_sec = profile.review_timeout
 
     print(
         f"[{datetime.now().strftime('%H:%M:%S')}] Starting {model_label} review -> {out_file.name} (timeout {timeout_sec}s)"
@@ -990,7 +1010,12 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] [run] {model_label} baseline")
 
     prompt = build_baseline_prompt(out_file)
-    timeout_sec = TIMEOUTS.get(model_label, DEFAULT_TIMEOUT)
+
+    # Timeout: use profile.review_timeout
+    from torvalds_skill.profiles import get_profile
+
+    profile = get_profile(model_label)
+    timeout_sec = profile.review_timeout
 
     print(
         f"[{datetime.now().strftime('%H:%M:%S')}] Starting baseline {model_label} review -> {out_file.name} (timeout {timeout_sec}s)"
@@ -1071,42 +1096,37 @@ def validate_review_format(file: Path, model: str) -> bool:
 
 
 def dispatch_reviews(
-    force: bool, chunked_models: set[str], models_filter: set[str] | None, parallel: bool
+    force: bool, models_filter: set[str] | None, parallel: bool
 ) -> tuple[int, int]:
     """Dispatch all reviews. Returns (successes, failures).
 
     Args:
         force: Regenerate all reviews
-        chunked_models: Models to run in chunked mode
         models_filter: Optional subset of models to run (None = all)
         parallel: Run models in parallel (max 2 workers)
     """
     # Determine which models to run
     models_to_run = models_filter if models_filter is not None else set(MODELS.keys())
 
-    print("Dispatching reviews (data-driven model configuration)...")
+    print("Dispatching reviews (profile-based configuration)...")
     print(f"  Force mode: {int(force)} ({'regenerate all' if force else 'skip existing'})")
     print(f"  Models: {', '.join(sorted(models_to_run))}")
-    print(f"  Chunked models: {', '.join(sorted(chunked_models)) if chunked_models else 'none'}")
     print(f"  Parallel: {parallel} ({'max 2 workers' if parallel else 'sequential'})")
+    print("  Auto-chunking: enabled for prompts > profile.prompt_budget_chars")
     print()
 
     successes = 0
     failures = 0
 
     # Build list of (model, mode, runner) tuples
+    # Auto-chunking is now determined by profile.prompt_budget_chars, not a hardcoded list
     reviews_to_run = []
     for model_label in models_to_run:
         skill_file = MODELS[model_label]
 
-        # With-skill review
+        # With-skill review - always use chunked runner (it auto-detects if chunking is needed)
         out_file = REPORT_DIR / f"review-{model_label}.md"
-        if model_label in chunked_models:
-            reviews_to_run.append(
-                (model_label, "with-skill", run_review_chunked, skill_file, out_file)
-            )
-        else:
-            reviews_to_run.append((model_label, "with-skill", run_review, skill_file, out_file))
+        reviews_to_run.append((model_label, "with-skill", run_review_chunked, skill_file, out_file))
 
         # Baseline review
         baseline_out = BASELINE_DIR / f"review-baseline-{model_label}.md"
@@ -1210,10 +1230,6 @@ def main():
     # Verify skill assets exist
     verify_skill_assets()
 
-    # Get chunked models from environment
-    chunked_models_str = os.environ.get("CHUNKED_MODELS", "")
-    chunked_models = set(m.strip() for m in chunked_models_str.split(",") if m.strip())
-
     # Parse --models filter
     models_filter = None
     if args.models:
@@ -1230,9 +1246,7 @@ def main():
             sys.exit(2)
 
     # Dispatch all reviews
-    successes, failures = dispatch_reviews(
-        args.force, chunked_models, models_filter, args.parallel_models
-    )
+    successes, failures = dispatch_reviews(args.force, models_filter, args.parallel_models)
 
     # Print summary
     print_summary(successes, failures)

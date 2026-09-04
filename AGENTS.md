@@ -7,6 +7,25 @@
 - **Language Agnosticism**: Skills and souls must be language-agnostic. They capture Torvalds' METHOD, not his C knowledge.
 - **File Size Limit**: Source files must not exceed 900 lines. Split large modules into focused submodules with clear single responsibilities.
 - **No Committed Secrets**: API keys, tokens, and credentials must never be hardcoded in source. All credentials come from environment variables (`OPENAI_API_KEY` / `REGOLO_API_KEY` / `LLM_API_KEY` for the key; `OPENAI_BASE_URL` / `LLM_HOST` for the endpoint). The `.env` file is gitignored; `.env.example` is the template. If a key is ever committed, purge it from git history with `git filter-repo` before pushing.
+- **Model Matching**: No model-specific branching outside `src/torvalds_skill/profiles.py` — `get_profile()` is the single source of truth.
+- **Prompt Centralization**: Prompt blocks live once in `src/torvalds_skill/distill_prompts.py`; never duplicate across skills.
+- **Trigger Contract**: Pattern extraction regexes live in `report/trigger_patterns.py`; consumed by `build_comparison.py` and `verify_skill.py`. Change all three together.
+- **Validation Symmetry**: Both comparison arms must validate identically — either both run full checks or neither skips.
+- **Stats Generated**: Pattern/word counts and timeouts come from `data/patterns.json`; docs link to source, never type values.
+
+## Local Checks
+
+Run these before committing (CI removed — project is local-only):
+
+```bash
+python -m pytest tests/ -q
+ruff check src/ scripts/ tests/
+ruff format --check .
+mypy src/
+gitleaks detect --source .  # install gitleaks first if needed
+```
+
+Install pre-commit hooks once: `pre-commit install`. The `.pre-commit-config.yaml` includes gitleaks scanning.
 
 ## Documentation Pointers
 

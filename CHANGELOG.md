@@ -2,6 +2,15 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-09-04
+
+- **Chore (ci):** Deleted `.github/workflows/ci.yml` (workflow never ran on main; project is local-only). Dev checks stay in `pyproject.toml [dev]`; secret scan via pre-commit gitleaks.
+- **Feature (metrics):** `report/trigger_patterns.py` extracts 57/44/65 triggers across variants; title+description matching; baseline prompt symmetric (two-pass); trigger-format contract shared with `verify_skill.py`; benchmark-coverage test (43/43); comparison regenerated with real coverage.
+- **Refactor (prompts):** Prompt blocks componentized once in `distill_prompts.py` (651 lines); `MODEL_SEVERITY_BIAS` removed from prompt path; frontmatter traceability (6 fields, verified); repair grounded in `calibration.json`; doc counts unified at 350 patterns.
+- **Refactor (profiles):** New `src/torvalds_skill/profiles.py` — `get_profile()` is the only model-name matcher; auto-chunking by prompt budget for both arms (CHUNKED_MODELS deleted); unified `max_tokens`; `distill.py` 1074→844 lines via `distill_data.py`.
+- **Cleanup:** `_detect_truncation` takes explicit `doc_type`; fallback chain + workers + tokens from profile.
+- **Docs (agents):** `AGENTS.md` gains Local Checks section + 5 rule bullets (model matching, prompt centralization, trigger contract, validation symmetry, generated stats).
+
 ## 2026-09-03
 
 - **Feature (triage):** Enforced two-pass review triage in `report/run_review.py` — Pass 1 reports correctness/memory-safety only, Pass 2 may report style/build only for files with zero Pass-1 findings (cap 2/file). Findings carry `Pass: 1|2` labels and the chunked-merge step drops Pass-2 findings wherever Pass-1 exists, so precedence is structural instead of decorative. 10 new tests. Full suite 897 passed.

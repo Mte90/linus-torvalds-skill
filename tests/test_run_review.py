@@ -2,7 +2,6 @@
 
 import importlib.util
 import json
-import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -109,69 +108,55 @@ class TestModelConfig:
 
 
 class TestTimeoutConfig:
-    """Tests for timeout configuration."""
+    """Tests for timeout configuration (profile-based)."""
 
     def test_glm52_has_longer_timeout(self):
-        """glm5.2 should have 2400s timeout (40 min)."""
-        assert run_review.TIMEOUTS["glm5.2"] == 2400
+        """glm5.2 should have 2400s review_timeout from profile (40 min)."""
+        from torvalds_skill.profiles import get_profile
+
+        profile = get_profile("glm5.2")
+        assert profile.review_timeout == 2400
 
     def test_default_timeout_exists(self):
         """DEFAULT_TIMEOUT should be 900s (15 min)."""
         assert run_review.DEFAULT_TIMEOUT == 900
 
     def test_timeout_get_for_glm52(self):
-        """TIMEOUTS.get('glm5.2') should return 2400."""
-        assert run_review.TIMEOUTS.get("glm5.2") == 2400
+        """Profile for glm5.2 should have review_timeout=2400."""
+        from torvalds_skill.profiles import get_profile
+
+        profile = get_profile("glm5.2")
+        assert profile.review_timeout == 2400
 
     def test_timeout_get_for_unknown_model_returns_default(self):
-        """TIMEOUTS.get('unknown') should return None (fallback to default)."""
-        assert run_review.TIMEOUTS.get("unknown-model") is None
+        """Profile for unknown model returns default profile."""
+        from torvalds_skill.profiles import get_profile
+
+        profile = get_profile("unknown-model")
+        assert profile.timeout == 120  # default timeout from DEFAULT_PROFILE
 
 
-class TestChunkedModelsParsing:
-    """Tests for CHUNKED_MODELS environment variable parsing."""
+class TestProfileIntegration:
+    """Tests for profile integration in run_review."""
 
-    def test_empty_chunked_models(self):
-        """Empty CHUNKED_MODELS should parse to empty set."""
-        with patch.dict(os.environ, {"CHUNKED_MODELS": ""}):
-            chunked_str = os.environ.get("CHUNKED_MODELS", "")
-            chunked_models = set(m.strip() for m in chunked_str.split(",") if m.strip())
-            assert chunked_models == set()
+    def test_profile_timeout_used(self):
+        """Profile timeout should be used instead of TIMEOUTS dict."""
+        from torvalds_skill.profiles import get_profile
 
-    def test_single_model_chunked(self):
-        """Single model in CHUNKED_MODELS should parse correctly."""
-        with patch.dict(os.environ, {"CHUNKED_MODELS": "gpt-oss-120b"}):
-            chunked_str = os.environ.get("CHUNKED_MODELS", "")
-            chunked_models = set(m.strip() for m in chunked_str.split(",") if m.strip())
-            assert chunked_models == {"gpt-oss-120b"}
+        # GLM5.2 should have longer timeout from profile
+        profile = get_profile("glm5.2")
+        assert profile.review_timeout > 900  # longer than default
 
-    def test_multiple_models_chunked(self):
-        """Multiple comma-separated models should parse correctly."""
-        with patch.dict(os.environ, {"CHUNKED_MODELS": "gpt-oss-120b,glm5.2"}):
-            chunked_str = os.environ.get("CHUNKED_MODELS", "")
-            chunked_models = set(m.strip() for m in chunked_str.split(",") if m.strip())
-            assert chunked_models == {"gpt-oss-120b", "glm5.2"}
+    def test_auto_chunking_replaces_chunked_models_env(self):
+        """CHUNKED_MODELS env var should be removed, auto-chunking used instead."""
+        # Verify CHUNKED_MODELS is not used in main function
+        import inspect
 
-    def test_chunked_models_with_spaces(self):
-        """CHUNKED_MODELS with spaces around commas should be trimmed."""
-        with patch.dict(
-            os.environ, {"CHUNKED_MODELS": "gpt-oss-120b , glm5.2 , mistral-small-4-119b"}
-        ):
-            chunked_str = os.environ.get("CHUNKED_MODELS", "")
-            chunked_models = set(m.strip() for m in chunked_str.split(",") if m.strip())
-            assert chunked_models == {"gpt-oss-120b", "glm5.2", "mistral-small-4-119b"}
-
-    def test_chunked_models_empty_entries_ignored(self):
-        """Empty entries in CHUNKED_MODELS should be ignored."""
-        with patch.dict(os.environ, {"CHUNKED_MODELS": "gpt-oss-120b,,glm5.2,"}):
-            chunked_str = os.environ.get("CHUNKED_MODELS", "")
-            chunked_models = set(m.strip() for m in chunked_str.split(",") if m.strip())
-            assert chunked_models == {"gpt-oss-120b", "glm5.2"}
+        source = inspect.getsource(run_review.main)
+        assert "CHUNKED_MODELS" not in source
 
 
 class TestSourceFileList:
-    """Tests for source file list."""
-
     def test_source_files_has_five_files(self):
         """SOURCE_FILES should have exactly 5 files."""
         assert len(run_review.SOURCE_FILES) == 5

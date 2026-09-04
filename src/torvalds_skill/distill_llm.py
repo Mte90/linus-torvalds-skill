@@ -145,13 +145,17 @@ class _WallClockTimeout:
         return False
 
 
-def _detect_truncation(text: str, model: str) -> bool:
+def _detect_truncation(text: str, doc_type: str = "skill") -> bool:
     """Detect if LLM output is truncated mid-sentence or mid-section.
+
+    Args:
+        text: The LLM output text to check
+        doc_type: Type of document being generated ("skill" or "soul")
 
     Returns True if the output appears incomplete:
     - Ends without proper closing (no terminal punctuation, no code fence close)
     - Token count is suspiciously low (< 500 for skill, < 800 for soul)
-    - For GLM5.2: also checks for mid-word endings
+    - For strict-truncation profiles: also checks for mid-word endings
     - Incomplete YAML frontmatter (starts with --- but no closing ---)
     - Incomplete markdown sections (last ## heading has no content after it)
     - Missing required skill sections (Reviewer Mindset, Review Triggers, Severity Decision Tree)
@@ -165,8 +169,8 @@ def _detect_truncation(text: str, model: str) -> bool:
     # Check token count threshold
     # Rough estimate: 1 token ≈ 4 characters
     token_count = len(stripped) / 4
-    is_skill = "skill" in model.lower() or "distill" in model.lower()
-    is_soul = "soul" in model.lower()
+    is_skill = doc_type == "skill"
+    is_soul = doc_type == "soul"
 
     min_tokens = 500 if is_skill else (800 if is_soul else 500)
     if token_count < min_tokens:
@@ -210,8 +214,12 @@ def _detect_truncation(text: str, model: str) -> bool:
         if last_chars and last_chars[-1].islower() and not any(c in last_chars[-5:] for c in ".!?"):
             return True
 
-    # For GLM5.2, be stricter — must end with punctuation or code fence or section marker
-    if "glm" in model.lower():
+    # For reasoning models, be stricter — must end with punctuation or code fence or section marker
+    # Use doc_type to get profile for stricter truncation check
+    from .profiles import get_profile
+
+    profile = get_profile("glm5.2" if doc_type == "soul" else "gpt-oss-120b")
+    if profile.reasoning:
         if (
             stripped.endswith(".")
             or stripped.endswith("!")
@@ -222,7 +230,7 @@ def _detect_truncation(text: str, model: str) -> bool:
             or stripped.endswith("#")
         ):
             return False  # Proper ending
-        # Doesn't end properly for GLM
+        # Doesn't end properly for reasoning model
         return True
 
     # General check for other models
@@ -348,12 +356,12 @@ def _call_llm(
 ) -> str:
     """Call the LLM for the distillation step. Returns raw text.
 
-    Uses SSE streaming so reasoning models (e.g. GLM5.2) that spend minutes
+    Uses SSE streaming so slow reasoning models that spend minutes
     on internal reasoning don't hit read timeouts — each token delta keeps
     the connection alive.
 
-    Implements fallback chain for GLM5.2 truncation:
-    mistral-small-4-119b → gpt-oss-120b → glm5.2
+    Implements the profile fallback chain for reasoning-model truncation
+    (see profile.fallback_models for the default order).
 
     Caches successful responses by prompt+model+system_prompt hash (max 200 entries).
     Cache is bypassed when retries=1 (explicit fresh attempt).
@@ -401,10 +409,12 @@ def _call_llm(
 
         print(f"cache miss for prompt hash {cache_key[:8]}...", file=sys.stderr)
 
-    # Fallback model chain for truncation recovery (exclude primary model to prevent self-fallback loops)
-    all_fallback_models = ["mistral-small-4-119b", "gpt-oss-120b", "glm5.2"]
+    # Fallback model chain from profile (exclude primary model to prevent self-fallback loops)
     primary_model = model or config.MODEL
-    fallback_models = [m for m in all_fallback_models if m != primary_model]
+    from .profiles import get_profile
+
+    primary_profile = get_profile(primary_model)
+    fallback_models = [m for m in primary_profile.fallback_models if m != primary_model]
 
     # Try primary model first, then fallbacks if truncation detected
     models_to_try = [primary_model]
@@ -415,7 +425,9 @@ def _call_llm(
     primary_result = None
 
     for call_model in models_to_try:
-        is_glm = "glm" in call_model.lower()
+        # Get profile for this model to check if it's a reasoning model
+        call_profile = get_profile(call_model)
+        is_reasoning = call_profile.reasoning
 
         payload = {
             "model": call_model,
@@ -424,25 +436,27 @@ def _call_llm(
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.3,
-            "max_tokens": 16000,
+            "max_tokens": call_profile.max_tokens,  # Default from profile (16000 for all known models)
             "stream": True,
         }
         # Reasoning models must keep their thinking phase (user requirement):
-        # never disable it. Instead, give GLM a larger token budget so
+        # never disable it. Instead, give them a larger token budget so
         # reasoning AND content both fit without truncation.
-        if is_glm:
-            payload["max_tokens"] = config.GLM_MAX_TOKENS
+        # Supported max_tokens per model (from profiles.py):
+        #   gpt-oss-120b: 16000, glm5.2: 16000, mistral-small-4-119b: 16000
+        if is_reasoning:
+            payload["max_tokens"] = call_profile.max_tokens
 
         # Per-read timeout: catches dead connections (no bytes for 120s).
         # Wall-clock timeout: catches keepalive-stalled SSE streams where
-        # bytes arrive but no content is produced (GLM5.2 reasoning stalls).
+        # bytes arrive but no content is produced (reasoning model stalls).
         # Use wall_clock_override if provided (for per-category distill), otherwise compute from model/prompt
         wall_clock = (
             wall_clock_override
             if wall_clock_override is not None
             else (
-                config.WALL_CLOCK_GLM
-                if is_glm
+                call_profile.review_timeout // 2
+                if is_reasoning  # Approximate from profile
                 else (config.WALL_CLOCK_LONG if len(prompt) > 50_000 else config.WALL_CLOCK_DEFAULT)
             )
         )
@@ -508,8 +522,8 @@ def _call_llm(
                     last_err = RuntimeError("empty_response")
                     break
 
-                # Check for truncation
-                if _detect_truncation(result, call_model):
+                # Check for truncation (doc_type="skill" for distill output)
+                if _detect_truncation(result, doc_type="skill"):
                     print(
                         f"warning: truncation detected with {call_model}, returning partial result",
                         file=sys.stderr,

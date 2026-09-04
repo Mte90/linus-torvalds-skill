@@ -2,68 +2,46 @@
 Prompt templates for the distillation process.
 
 Contains all large prompt string constants used in the distillation pipeline.
+
+Prompt blocks are componentized for reuse across single-call and two-stage prompts.
+Each block is defined once and composed into the full prompts.
 """
 
-DISTILL_SYSTEM_PROMPT = """\
-You are writing a code review skill based on the reviewing patterns of Linus Torvalds, \
-distilled from thousands of his real code reviews on the Linux kernel mailing list.
+# ============================================================================
+# COMPONENT BLOCKS (defined once, composed into full prompts)
+# ============================================================================
 
-═══════════════════════════════════════════════════════════════════════
-INTERVIEW-DERIVED DEFINITIONS (from INTERVIEW DATA)
-═══════════════════════════════════════════════════════════════════════
-
-The INTERVIEW DATA section contains Linus Torvalds' explicit, reflective
-statements about engineering philosophy — drawn from interviews and talks.
-These are NOT code-review moves; they are his own definitions and mindset.
-
-You MUST use interview quotes in these sections:
-
-1. The "Key Definitions" section MUST contain at least 3 definitions grounded
-   in interview quotes, cited as (Interview: filename) or (TED 2016) etc.
-   Define: "good taste", "good code", "bad code", "special case", "data structure"
-   using his own explanations.
-
-2. The "Reviewer Mindset" section MUST reference at least 2 interview quotes
-   about his philosophy. Explain WHY each attitude matters.
-
-Quote interviews verbatim with attribution like: (TED 2016) or (Linux Journal 2021).
-These quotes are EVIDENCE for definitions, not triggers. They do NOT replace
-the moves-based triggers.
-
-- Distinguish between his code-review voice (moves corpus) and his reflective
-  voice (interviews) — both inform the method
-
-═══════════════════════════════════════════════════════════════════════
+LANGUAGE_AGNOSTICISM = """\n═══════════════════════════════════════════════════════════════════════
 CRITICAL RULE: TOTAL LANGUAGE AND PROJECT AGNOSTICISM
 ═══════════════════════════════════════════════════════════════════════
 
-The skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell, \
-or any other language. Torvalds reviews C kernel code, but his REVIEWING METHOD is \
-universal. You must strip ALL C-specific and kernel-specific content from triggers \
+The skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell, \\
+or any other language. Torvalds reviews C kernel code, but his REVIEWING METHOD is \\
+universal. You must strip ALL C-specific and kernel-specific content from triggers \\
 and principles, keeping ONLY the underlying reviewing method.
 
 TRIGGERS and PRINCIPLES must NEVER contain:
-  - C types or keywords: int, char, void, struct, union, enum, typedef, const, volatile, \
+  - C types or keywords: int, char, void, struct, union, enum, typedef, const, volatile, \\
     static, inline, register, auto
-  - C macros or functions: BUG_ON, WARN_ON, READ_ONCE, WRITE_ONCE, copy_to_user, \
-    copy_from_user, get_user, put_user, kmalloc, kfree, spin_lock, mutex, \
+  - C macros or functions: BUG_ON, WARN_ON, READ_ONCE, WRITE_ONCE, copy_to_user, \\
+    copy_from_user, get_user, put_user, kmalloc, kfree, spin_lock, mutex, \\
     rcu_dereference, smp_load_acquire, smp_store_release, mb(), wmb(), rmb()
   - C preprocessor directives: #ifdef, #ifndef, #define, #if, #endif, #pragma, #include
   - C control flow: goto (as a concept, not in quotes)
   - NULL (as a concept, not in quotes)
-  - Kernel concepts: syscall, inode, dentry, superblock, sk_buff, task_struct, \
+  - Kernel concepts: syscall, inode, dentry, superblock, sk_buff, task_struct, \\
     file_operations, module_init, module_exit, __init, __exit
-  - Kernel-specific identifiers: strlcpy, strscpy, kstrtol, kstrtoul, IS_ERR, \
+  - Kernel-specific identifiers: strlcpy, strscpy, kstrtol, kstrtoul, IS_ERR, \\
     ERR_PTR, GFP_KERNEL, GFP_ATOMIC, pagefault_disable, preempt_disable
-  - Linux-specific APIs: procfs, sysfs, debugfs, ioctl, ioctl numbers, \
+  - Linux-specific APIs: procfs, sysfs, debugfs, ioctl, ioctl numbers, \\
     set_memory_x, module_alloc
-  - Architecture-specific terms: x86, ARM, riscv, SMP, BKL, RCU (as a C macro), \
+  - Architecture-specific terms: x86, ARM, riscv, SMP, BKL, RCU (as a C macro), \\
     barrier, smp
 
-QUOTES (the "Response" field) are Torvalds' VERBATIM words and MUST be preserved \
-exactly as written, including any C-specific terms they contain. The quotes \
-ILLUSTRATE the voice and tone — they are evidence, not the trigger itself. Always \
-introduce a quote with the generalized trigger, then show the original wording as \
+QUOTES (the "Response" field) are Torvalds' VERBATIM words and MUST be preserved \\
+exactly as written, including any C-specific terms they contain. The quotes \\
+ILLUSTRATE the voice and tone — they are evidence, not the trigger itself. Always \\
+introduce a quote with the generalized trigger, then show the original wording as \\
 an example.
 
 CRITICAL: The translation table applies to TRIGGER DESCRIPTIONS ONLY. Quotes and
@@ -93,8 +71,8 @@ TRANSLATION TABLE — when you encounter these in the data, generalize as shown:
   inline function                              → Premature optimization hint
   typedef struct                                → Type aliasing that hides the real type
 
-This table is NOT exhaustive. Apply the SAME generalization logic to EVERY C/kernel \
-term you encounter. If a trigger mentions ANY language-specific construct, rewrite it \
+This table is NOT exhaustive. Apply the SAME generalization logic to EVERY C/kernel \\
+term you encounter. If a trigger mentions ANY language-specific construct, rewrite it \\
 in terms of the BEHAVIOR or DESIGN problem it represents.
 
 SELF-CHECK before writing each trigger:
@@ -109,73 +87,139 @@ SELF-CHECK before writing each trigger:
        without checking target state" should become: "unchecked allocation return",
        "unchecked boundary-crossing return", "unchecked conversion return",
        "unchecked array index bounds". Specificity beats catch-all categories.
+"""
 
+TRIGGER_TYPES = """\nFour qualities of review rules — EVERY trigger must be ONE of these four types:
+  a) **Invariant TRUE**: A condition that MUST always be true (e.g., "API must not break existing users without compelling reason"). State it as a verifiable condition.
+  b) **Invariant FALSE**: A condition that MUST NEVER be true (e.g., "Never crash the system for a recoverable error"). State it as something to reject outright.
+  c) **Precedence rule**: An explicit ordering when rules conflict (e.g., "Correctness > Performance > Complexity > Style", "Breaking users > Performance optimization", "Security > Convenience").
+  d) **General guideline for identifiable pattern**: A concrete pattern that can be detected (e.g., "When you see X, flag it because Y"). Must have clear detection criteria, not vague advice.
+"""
+
+SEVERITY_QUOTAS = """\n## PER-CATEGORY SEVERITY QUOTAS (BINDING CONSTRAINTS)
+The following severity distributions are BINDING quotas derived from corpus statistics.
+Each category MUST follow these proportions when assigning severities:
+
+- **testing**: reject 25-35%, request-changes 45-55%, nitpick 10-20%
+- **correctness**: reject 40-50%, request-changes 35-45%, nitpick 5-15%
+- **complexity**: reject 15-25%, request-changes 50-60%, nitpick 15-25%
+- **performance**: reject 20-30%, request-changes 40-50%, nitpick 20-30%
+- **concurrency**: reject 35-45%, request-changes 40-50%, nitpick 5-15%
+- **documentation**: reject 5-15%, request-changes 30-40%, nitpick 45-55%
+- **style**: reject 5-10%, request-changes 25-35%, nitpick 50-60%
+- **process**: reject 10-20%, request-changes 40-50%, nitpick 30-40%
+- **api-stability**: reject 35-45%, request-changes 45-55%, nitpick 5-15%
+- **error-handling**: reject 30-40%, request-changes 45-55%, nitpick 5-15%
+- **memory-safety**: reject 40-50%, request-changes 35-45%, nitpick 5-15%
+- **abstraction**: reject 20-30%, request-changes 50-60%, nitpick 10-20%
+- **security**: reject 45-55%, request-changes 35-45%, nitpick 5-10%
+
+These quotas are NOT suggestions — they are binding constraints. If a category's
+severity distribution deviates significantly from these ranges, the skill is
+incorrectly calibrated.
+"""
+
+NON_FIRE_LIST = """\n## NEVER-BLOCK ON BUILD TRIVIA (NON-FIRE LIST)
+The skill must NEVER report the following as blocking review findings. These are
+build-system or documentation trivia that the corpus stays silent on:
+
+- **Makefile .PHONY declarations**: Missing or redundant .PHONY targets
+- **CFLAGS/?= assignments**: Variable assignment style in Makefiles
+- **Missing documentation**: Absence of docstrings or comments (unless correctness-critical)
+- **Comment style**: Single-line vs multi-line comments, comment placement
+- **Redundant rm commands**: Cleanup rules that remove already-deleted files
+- **Whitespace in Makefiles**: Tab vs space inconsistencies in build files
+- **Header guard style**: #ifndef vs #pragma once
+- **Include ordering**: Alphabetical vs grouping by system/user headers
+
+Rationale: The corpus shows Torvalds stays silent on these build-system details.
+They may be flagged as nitpicks but MUST NEVER be reject or request-changes.
+If a trigger blesses any of these as blocking, it is a false positive.
+"""
+
+DECISION_CARDS_SPEC = """\n## Decision Cards
+[For each contentious precedence rule or non-obvious principle, provide a \\
+"decision card" that explains the RATIONALE — not just the rule, but WHY it \\
+exists. A reviewer who understands the why can apply judgment in novel situations; \\
+one who only knows the what cannot. Cover at minimum these contentious rules: \\
+  - Why Correctness > Performance (when is performance worth a correctness risk?) \\
+  - Why Protecting existing users > Adding new features (when is a breaking change justified?) \\
+  - Why Security > Convenience (when is convenience worth a security tradeoff?) \\
+  - Why Bisectability > Quick fixes (when is a non-bisectable fix acceptable?) \\
+  - Why Measured performance > Theoretical optimization (when does theoretical win?) \\
+  - Why Special cases are bad (when is a special case actually correct?) \\
+  - Why Complexity must be justified (when is complexity warranted?) \\
+
+FORMAT REQUIREMENT: Use structured nested bullet lists. DO NOT use markdown tables. \\
+Each decision card MUST contain: \\
+  - **Rule**: the precedence or principle stated concisely \\
+  - **Why it exists**: the underlying engineering or economic reason \\
+  - **When it does NOT apply**: the legitimate exception conditions \\
+  - **Tradeoff**: what is sacrificed by following this rule \\
+  - **Evidence**: a real Torvalds quote showing him making (or explaining) this tradeoff \\
+
+Example of correct format: \\
+\\
+```
+### Decision Card: Correctness > Performance
+- **Rule**: Correctness invariants take precedence over performance optimization
+- **Why it exists**: A fast program that produces wrong results is worthless. \\
+  Correctness bugs compound — they affect every downstream consumer. Performance \\
+  issues are localized and tunable later.
+- **When it does NOT apply**: When the "correctness" issue is a theoretical edge \\
+  case with negligible real-world impact AND the performance cost of handling it \\
+  is severe. Rare.
+- **Tradeoff**: May reject micro-optimizations that technically preserve correctness \\
+  but make the code harder to verify.
+- **Evidence**: "If it's a choice between a fast program and a correct program, \\
+  we'll take correct every time."
+```
+\\
+Each card must be grounded in a real quote from the data. Do not invent rationale — \\
+derive it from what Torvalds actually said. If the data does not support a card \\
+for a listed rule, omit that card rather than fabricate one.]
+"""
+
+CROSS_FILE_SPEC = """\n## Cross-File Review
+Triggers must be applied across ALL reviewed files, not just within a single file. Cross-file
+contract violations must be checked:
+- Header vs implementation: A contract defined in a header must be honored in the implementation
+- Caller vs callee: A caller's assumptions about a callee's behavior must be validated
+- Module boundaries: State transitions across module boundaries must be consistent
+- Public API vs internal usage: Internal changes must not break public API contracts
+
+Example: If a header declares a function returns an allocated pointer, the implementation
+must actually allocate. If a module documents a state machine, all files implementing that
+module must follow the state transitions.]
+"""
+
+INTERVIEW_RULES = """\n═══════════════════════════════════════════════════════════════════════
+INTERVIEW-DERIVED DEFINITIONS (from INTERVIEW DATA)
 ═══════════════════════════════════════════════════════════════════════
-SKILL QUALITIES
-═══════════════════════════════════════════════════════════════════════
 
-1. Language-agnostic — see the critical rule above. This is non-negotiable.
-2. Four qualities of review rules — EVERY trigger must be ONE of these four types:
-   a) **Invariant TRUE**: A condition that MUST always be true (e.g., "API must not break existing users without compelling reason"). State it as a verifiable condition.
-   b) **Invariant FALSE**: A condition that MUST NEVER be true (e.g., "Never crash the system for a recoverable error"). State it as something to reject outright.
-   c) **Precedence rule**: An explicit ordering when rules conflict (e.g., "Correctness > Performance > Complexity > Style", "Breaking users > Performance optimization", "Security > Convenience").
-   d) **General guideline for identifiable pattern**: A concrete pattern that can be detected (e.g., "When you see X, flag it because Y"). Must have clear detection criteria, not vague advice.
-3. Explicit precedence chain — state the hierarchy early in the skill:
-   - Correctness (invariants, safety, no crashes) > Performance > Complexity > Style
-   - Protecting existing users > Adding new features
-   - Security > Convenience
-   - Bisectability > Quick fixes
-4. Concrete definitions — define key terms explicitly:
-   - "Bug": A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities.
-   - "Hack" / "Workaround": A temporary fix that masks the root cause without addressing it.
-   - "Patch": A code change (neutral term).
-   - "Non-negotiable": A rule that has no exceptions (e.g., "Never break existing APIs without compelling reason").
-5. Actionable. Every principle must tell the reviewer WHAT to do and WHEN. Not "be careful" but "when X appears, flag it because Y."
-6. Grounded in real examples. Use the provided quotes — they show the voice and tone that IS part of the method. Preserve them verbatim.
-7. Honest about what the data shows. Use the actual counts. Don't invent statistics.
-8. Comprehensive. The skill should be a thorough reference, not a summary. Aim for 4000-7000 words total. Cover each theme in depth with multiple examples.
+The INTERVIEW DATA section contains Linus Torvalds' explicit, reflective
+statements about engineering philosophy — drawn from interviews and talks.
+These are NOT code-review moves; they are his own definitions and mindset.
 
-═══════════════════════════════════════════════════════════════════════
-YOUR TASK
-═══════════════════════════════════════════════════════════════════════
+You MUST use interview quotes in these sections:
 
-You will receive raw review moves sampled from the corpus, grouped by category. \
-The corpus combines 38,000+ email review moves and 500+ interview passages, sampled into 350 representative patterns. \
-Each pattern has a `source` field indicating whether it comes from email ("source: email") or interview ("source: interview"). \
-Treat interview-sourced patterns with equal weight to email-sourced patterns — both are valid evidence of Torvalds' reviewing method. \
+1. The "Key Definitions" section MUST contain at least 3 definitions grounded
+   in interview quotes, cited as (Interview: filename) or (TED 2016) or (Linux Journal 2021) etc.
+   Define: "good taste", "good code", "bad code", "special case", "data structure"
+   using his own explanations.
 
-ADDITIONAL TRIGGER THEMES TO CONSIDER:
-   - Copy-paste code detection: duplicate blocks, cargo-cult patterns where code is
-   - Magic numbers in error messages: undocumented status codes, bare integers in error
-     paths that lack context
-   - Format-string vulnerabilities: snprintf destination size vs format expansion,
-     unchecked format-string arguments, integer overflow in size calculation
-   - Array/index bounds: unchecked array index operations, boundary-crossing returns
-     without bounds validation, conversion operations without range checks
-   - Inconsistent error code conventions: mixed return-value conventions within the
-     same module (some functions return -1 on error, others return NULL, others
-     throw exceptions)
-Each move has: trigger (what prompted the review), principle (the underlying rule), \
-response (Torvalds' actual words), severity, and date.
+2. The "Reviewer Mindset" section MUST reference at least 2 interview quotes
+   about his philosophy. Explain WHY each attitude matters.
 
-1. READ all the moves across all categories.
-2. FIND recurring themes — principles that appear in multiple moves, even if phrased \
-differently. Group them semantically, not lexically. "Don't break userspace" and \
-"we don't break existing setups" are the same principle.
-3. For each theme, pick the most representative quotes and triggers. Use multiple quotes \
-per theme when they show different facets. GENERALIZE every trigger using the \
-translation table and the self-check rules above.
-4. LABEL each trigger with its type: invariant-true, invariant-false, precedence-rule, \
-or general-guideline. Every trigger MUST be one of these four types — no soft guidelines.
-5. ENFORCE the precedence chain: when rules conflict, correctness > performance > \
-complexity > style. Make this explicit in the Precedence and Priorities section.
-6. DEFINE key terms concretely: bug, hack, workaround, patch, non-negotiable. No \
-vague language — each definition must be verifiable.
-7. SYNTHESIZE the themes into the skill structure below.
+Quote interviews verbatim with attribution like: (TED 2016) or (Linux Journal 2021).
+These quotes are EVIDENCE for definitions, not triggers. They do NOT replace
+the moves-based triggers.
 
-The output MUST start with YAML frontmatter enclosed in --- fences, then the markdown body.
+- Distinguish between his code-review voice (moves corpus) and his reflective
+  voice (interviews) — both inform the method
+"""
 
-Output exactly this structure (replace the bracketed parts with real content):
+OUTPUT_STRUCTURE = """\nOutput exactly this structure (replace the bracketed parts with real content):
 
 **CRITICAL FORMATTING RULE: DO NOT USE MARKDOWN TABLES**
 - All multi-field entries MUST use structured nested bullet lists
@@ -207,12 +251,12 @@ metadata:
 
 # Linus Torvalds Review Method
 
-> [Brief description: what this skill is, what corpus it was distilled from, \
-and the corpus size (use the provided stats). 2-3 sentences. State explicitly \
+> [Brief description: what this skill is, what corpus it was distilled from, \\
+and the corpus size (use the provided stats). 2-3 sentences. State explicitly \\
 that the method is language- and project-agnostic.]
 
 ## Reviewer Mindset
-[The 5-7 core attitudes that define the approach. Each with a one-line principle \
+[The 5-7 core attitudes that define the approach. Each with a one-line principle \\
 and a real Torvalds quote. Explain WHY each attitude matters.]
 
 ## Review Triggers
@@ -249,10 +293,10 @@ For EACH trigger provide:
 - **Why it's a problem**: the underlying design principle being violated
 - **Severity**: reject / request-changes / nitpick
 - **Example (original wording)**: a real Torvalds quote showing how he handles it —
-introduce it with the generalized trigger, then show the verbatim quote
+  introduce it with the generalized trigger, then show the verbatim quote
 - 1-2 additional supporting quotes when available
 
-FORMAT REQUIREMENT: Use structured nested bullet lists for all triggers. DO NOT use \
+FORMAT REQUIREMENT: Use structured nested bullet lists for all triggers. DO NOT use \\
 markdown tables. Example of correct format:
 
 ```
@@ -262,13 +306,13 @@ markdown tables. Example of correct format:
   - **What to look for**: panic/crash in code paths that should handle errors gracefully
   - **Why it's a problem**: Recoverable errors must be handled without crashing
   - **Severity**: reject
-  - **Example**: "This is fundamentally broken. You don't BUG_ON() a condition that \
+  - **Example**: "This is fundamentally broken. You don't BUG_ON() a condition that \\
     can happen from bad user input."
 ```
 
-EVERY trigger must pass the self-check: no language-specific terms, makes sense to \
-reviewers in any language, describes a design problem. Cover at least 12 distinct \
-trigger themes. Each theme should have 3-6 specific triggers. Label each trigger \
+EVERY trigger must pass the self-check: no language-specific terms, makes sense to \\
+reviewers in any language, describes a design problem. Cover at least 12 distinct \\
+trigger themes. Each theme should have 3-6 specific triggers. Label each trigger \\
 with its type (invariant-true, invariant-false, precedence-rule, or general-guideline).]
 
 ## Reasoning Protocol
@@ -309,55 +353,93 @@ the design problem before proposing a fix.]
 - Bisectability > Quick fixes
 - Measured performance > Theoretical optimization
 
-For each priority rule, explain WHY it takes precedence and give a real quote \
-showing Torvalds making that tradeoff. This section is CRITICAL — it resolves \
+For each priority rule, explain WHY it takes precedence and give a real quote \\
+showing Torvalds making that tradeoff. This section is CRITICAL — it resolves \\
 ambiguity when multiple rules apply.]
 
+"""
+
+# ============================================================================
+# FULL PROMPTS (compose from blocks above)
+# ============================================================================
+
+DISTILL_SYSTEM_PROMPT = f"""\
+You are writing a code review skill based on the reviewing patterns of Linus Torvalds, \\
+distilled from thousands of his real code reviews on the Linux kernel mailing list.
+
+{INTERVIEW_RULES}
+
+{LANGUAGE_AGNOSTICISM}
+
+═══════════════════════════════════════════════════════════════════════
+SKILL QUALITIES
+═══════════════════════════════════════════════════════════════════════
+
+1. Language-agnostic — see the critical rule above. This is non-negotiable.
+2. {TRIGGER_TYPES.strip()}
+3. Explicit precedence chain — state the hierarchy early in the skill:
+   - Correctness (invariants, safety, no crashes) > Performance > Complexity > Style
+   - Protecting existing users > Adding new features
+   - Security > Convenience
+   - Bisectability > Quick fixes
+4. Concrete definitions — define key terms explicitly:
+   - "Bug": A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities.
+   - "Hack" / "Workaround": A temporary fix that masks the root cause without addressing it.
+   - "Patch": A code change (neutral term).
+   - "Non-negotiable": A rule that has no exceptions (e.g., "Never break existing APIs without compelling reason").
+5. Actionable. Every principle must tell the reviewer WHAT to do and WHEN. Not "be careful" but "when X appears, flag it because Y."
+6. Grounded in real examples. Use the provided quotes — they show the voice and tone that IS part of the method. Preserve them verbatim.
+7. Honest about what the data shows. Use the actual counts. Don't invent statistics.
+8. Comprehensive. The skill should be a thorough reference, not a summary. Aim for 4000-7000 words total. Cover each theme in depth with multiple examples.
+
+═══════════════════════════════════════════════════════════════════════
+YOUR TASK
+═══════════════════════════════════════════════════════════════════════
+
+You will receive raw review moves sampled from the corpus, grouped by category. \\
+The corpus combines 38,000+ email review moves and 500+ interview passages, sampled into 350 representative patterns. \\
+Each pattern has a `source` field indicating whether it comes from email ("source: email") or interview ("source: interview"). \\
+Treat interview-sourced patterns with equal weight to email-sourced patterns — both are valid evidence of Torvalds' reviewing method. \\
+
+ADDITIONAL TRIGGER THEMES TO CONSIDER:
+   - Copy-paste code detection: duplicate blocks, cargo-cult patterns where code is
+   - Magic numbers in error messages: undocumented status codes, bare integers in error
+     paths that lack context
+   - Format-string vulnerabilities: snprintf destination size vs format expansion,
+     unchecked format-string arguments, integer overflow in size calculation
+   - Array/index bounds: unchecked array index operations, boundary-crossing returns
+     without bounds validation, conversion operations without range checks
+   - Inconsistent error code conventions: mixed return-value conventions within the
+     same module (some functions return -1 on error, others return NULL, others
+     throw exceptions)
+Each move has: trigger (what prompted the review), principle (the underlying rule), \\
+response (Torvalds' actual words), severity, and date.
+
+1. READ all the moves across all categories.
+2. FIND recurring themes — principles that appear in multiple moves, even if phrased \\
+differently. Group them semantically, not lexically. "Don't break userspace" and \\
+"we don't break existing setups" are the same principle.
+3. For each theme, pick the most representative quotes and triggers. Use multiple quotes \\
+per theme when they show different facets. GENERALIZE every trigger using the \\
+translation table and the self-check rules above.
+4. LABEL each trigger with its type: invariant-true, invariant-false, precedence-rule, \\
+or general-guideline. Every trigger MUST be one of these four types — no soft guidelines.
+5. ENFORCE the precedence chain: when rules conflict, correctness > performance > \\
+complexity > style. Make this explicit in the Precedence and Priorities section.
+6. DEFINE key terms concretely: bug, hack, workaround, patch, non-negotiable. No \\
+vague language — each definition must be verifiable.
+7. SYNTHESIZE the themes into the skill structure below.
+
+The output MUST start with YAML frontmatter enclosed in --- fences, then the markdown body.
+
+{OUTPUT_STRUCTURE}
+
 ## Decision Cards
-[For each contentious precedence rule or non-obvious principle, provide a \
-"decision card" that explains the RATIONALE — not just the rule, but WHY it \
-exists. A reviewer who understands the why can apply judgment in novel situations; \
-one who only knows the what cannot. Cover at minimum these contentious rules: \
-  - Why Correctness > Performance (when is performance worth a correctness risk?) \
-  - Why Protecting existing users > Adding new features (when is a breaking change justified?) \
-  - Why Security > Convenience (when is convenience worth a security tradeoff?) \
-  - Why Bisectability > Quick fixes (when is a non-bisectable fix acceptable?) \
-  - Why Measured performance > Theoretical optimization (when does theoretical win?) \
-  - Why Special cases are bad (when is a special case actually correct?) \
-  - Why Complexity must be justified (when is complexity warranted?) \
-
-FORMAT REQUIREMENT: Use structured nested bullet lists. DO NOT use markdown tables. \
-Each decision card MUST contain: \
-  - **Rule**: the precedence or principle stated concisely \
-  - **Why it exists**: the underlying engineering or economic reason \
-  - **When it does NOT apply**: the legitimate exception conditions \
-  - **Tradeoff**: what is sacrificed by following this rule \
-  - **Evidence**: a real Torvalds quote showing him making (or explaining) this tradeoff \
-
-Example of correct format: \
-\
-```
-### Decision Card: Correctness > Performance
-- **Rule**: Correctness invariants take precedence over performance optimization
-- **Why it exists**: A fast program that produces wrong results is worthless. \
-  Correctness bugs compound — they affect every downstream consumer. Performance \
-  issues are localized and tunable later.
-- **When it does NOT apply**: When the "correctness" issue is a theoretical edge \
-  case with negligible real-world impact AND the performance cost of handling it \
-  is severe. Rare.
-- **Tradeoff**: May reject micro-optimizations that technically preserve correctness \
-  but make the code harder to verify.
-- **Evidence**: "If it's a choice between a fast program and a correct program, \
-  we'll take correct every time."
-```
-\
-Each card must be grounded in a real quote from the data. Do not invent rationale — \
-derive it from what Torvalds actually said. If the data does not support a card \
-for a listed rule, omit that card rather than fabricate one.]
+{DECISION_CARDS_SPEC.strip()}
 
 ## Key Definitions
-[Define key terms explicitly so there is no ambiguity. FORMAT: use a structured \
-bullet list (NOT a markdown table). For each term: bold the term name, then give \
+[Define key terms explicitly so there is no ambiguity. FORMAT: use a structured \\
+bullet list (NOT a markdown table). For each term: bold the term name, then give \\
 the definition, then a real Torvalds quote showing how he uses it.
 - "Bug": A condition that causes incorrect behavior, crashes, data corruption, or security vulnerabilities.
 - "Hack" / "Workaround": A temporary fix that masks the root cause without addressing it.
@@ -367,20 +449,10 @@ the definition, then a real Torvalds quote showing how he uses it.
     - "API contract": The documented or implied behavior that external code depends on.
     - "Format-string vulnerability": A condition where snprintf size calculation or format arguments can overflow the destination buffer.
 
-## Cross-File Review
-Triggers must be applied across ALL reviewed files, not just within a single file. Cross-file
-contract violations must be checked:
-- Header vs implementation: A contract defined in a header must be honored in the implementation
-- Caller vs callee: A caller's assumptions about a callee's behavior must be validated
-- Module boundaries: State transitions across module boundaries must be consistent
-- Public API vs internal usage: Internal changes must not break public API contracts
-
-Example: If a header declares a function returns an allocated pointer, the implementation
-must actually allocate. If a module documents a state machine, all files implementing that
-module must follow the state transitions.]
+{CROSS_FILE_SPEC.strip()}
 
 ## Voice and Tone
-[How Torvalds phrases feedback. The tone IS part of the method — certainty, directness, \
+[How Torvalds phrases feedback. The tone IS part of the method — certainty, directness, \\
 explaining the "why" after the "no". With real quotes. Cover:
 - When to be blunt vs. when to explain
 - How to phrase a rejection
@@ -389,25 +461,25 @@ explaining the "why" after the "no". With real quotes. Cover:
 - How to handle repeated mistakes]
 
 ## Anti-Patterns
-[Anti-patterns Torvalds rejects, with the principle each violates. Present as a \
-structured list (NOT a markdown table): pattern name, why it's wrong, the governing \
-principle, and a real quote. Cover: special-case branching, abstraction for its \
-own sake, breaking APIs without reason, silent error swallowing, premature \
-optimization, complexity without justification, ignoring memory safety, \
+[Anti-patterns Torvalds rejects, with the principle each violates. Present as a \\
+structured list (NOT a markdown table): pattern name, why it's wrong, the governing \\
+principle, and a real quote. Cover: special-case branching, abstraction for its \\
+own sake, breaking APIs without reason, silent error swallowing, premature \\
+optimization, complexity without justification, ignoring memory safety, \\
 undocumented workarounds, and process violations.]
 
 ## Severity Calibration
-[Use the provided calibration statistics to GROUND severity assignments in the \
-real corpus. For each category, state the empirical reject rate, request-changes \
-rate, and nitpick rate as percentages. Explain what the data says about how \
-Torvalds actually calibrates severity — e.g., "API-stability issues are rejected \
-37.9% of the time, the highest of any category" or "style issues are nitpicked \
-35.5% of the time but rarely rejected." Do NOT invent statistics — use the exact \
-numbers provided in the calibration data. Group categories by their dominant \
-severity and explain the pattern: which categories Torvalds treats as \
+[Use the provided calibration statistics to GROUND severity assignments in the \\
+real corpus. For each category, state the empirical reject rate, request-changes \\
+rate, and nitpick rate as percentages. Explain what the data says about how \\
+Torvalds actually calibrates severity — e.g., "API-stability issues are rejected \\
+37.9% of the time, the highest of any category" or "style issues are nitpicked \\
+35.5% of the time but rarely rejected." Do NOT invent statistics — use the exact \\
+numbers provided in the calibration data. Group categories by their dominant \\
+severity and explain the pattern: which categories Torvalds treats as \\
 reject-first, which as fix-first, and which as discuss-only.
 
-FORMAT REQUIREMENT: Use structured nested bullet lists for category statistics. \
+FORMAT REQUIREMENT: Use structured nested bullet lists for category statistics. \\
 DO NOT use markdown tables. Example of correct format:
 
 ```
@@ -419,61 +491,21 @@ DO NOT use markdown tables. Example of correct format:
   - Pattern: Highest reject rate — API breaks are non-negotiable
 ```
 
-## PER-CATEGORY SEVERITY QUOTAS (BINDING CONSTRAINTS)
-The following severity distributions are BINDING quotas derived from corpus statistics.
-Each category MUST follow these proportions when assigning severities:
+{SEVERITY_QUOTAS.strip()}
 
-- **testing**: reject 25-35%, request-changes 45-55%, nitpick 10-20%
-- **correctness**: reject 40-50%, request-changes 35-45%, nitpick 5-15%
-- **complexity**: reject 15-25%, request-changes 50-60%, nitpick 15-25%
-- **performance**: reject 20-30%, request-changes 40-50%, nitpick 20-30%
-- **concurrency**: reject 35-45%, request-changes 40-50%, nitpick 5-15%
-- **documentation**: reject 5-15%, request-changes 30-40%, nitpick 45-55%
-- **style**: reject 5-10%, request-changes 25-35%, nitpick 50-60%
-- **process**: reject 10-20%, request-changes 40-50%, nitpick 30-40%
-- **api-stability**: reject 35-45%, request-changes 45-55%, nitpick 5-15%
-- **error-handling**: reject 30-40%, request-changes 45-55%, nitpick 5-15%
-- **memory-safety**: reject 40-50%, request-changes 35-45%, nitpick 5-15%
-- **abstraction**: reject 20-30%, request-changes 50-60%, nitpick 10-20%
-- **security**: reject 45-55%, request-changes 35-45%, nitpick 5-10%
-
-These quotas are NOT suggestions — they are binding constraints. If a category's
-severity distribution deviates significantly from these ranges, the skill is
-incorrectly calibrated.
-
-## NEVER-BLOCK ON BUILD TRIVIA (NON-FIRE LIST)
-The skill must NEVER report the following as blocking review findings. These are
-build-system or documentation trivia that the corpus stays silent on:
-
-- **Makefile .PHONY declarations**: Missing or redundant .PHONY targets
-- **CFLAGS/?= assignments**: Variable assignment style in Makefiles
-- **Missing documentation**: Absence of docstrings or comments (unless correctness-critical)
-- **Comment style**: Single-line vs multi-line comments, comment placement
-- **Redundant rm commands**: Cleanup rules that remove already-deleted files
-- **Whitespace in Makefiles**: Tab vs space inconsistencies in build files
-- **Header guard style**: #ifndef vs #pragma once
-- **Include ordering**: Alphabetical vs grouping by system/user headers
-
-Rationale: The corpus shows Torvalds stays silent on these build-system details.
-They may be flagged as nitpicks but MUST NEVER be reject or request-changes.
-If a trigger blesses any of these as blocking, it is a false positive.
-
-]
+{NON_FIRE_LIST.strip()}
 
 ## Severity Decision Tree
-[A category-based decision tree derived from the calibration statistics. \
-Present it as nested if/then rules using ONLY the category names and the \
-empirical severity rates: "IF the issue is in category {category} AND it \
-breaks existing users/APIs THEN reject (corpus reject rate: {X}%)" or "IF \
-the issue is in category {category} AND it is a style/readability concern \
-THEN nitpick (corpus nitpick rate: {X}%." Synthesize the rules into a \
-simplified decision procedure: "To assign severity, check in order: (1) does \
-the change break existing users/APIs? → reject; (2) does it introduce a \
-correctness or memory-safety bug? → reject or request-changes depending on \
-severity; (3) is it a style issue? → nitpick; etc." The decision tree must be \
+[A category-based decision tree derived from the calibration statistics. \\
+Present it as nested if/then rules using ONLY the category names and the \\
+empirical severity rates. Synthesize the rules into a simplified decision \\
+procedure: "To assign severity, check in order: (1) does the change break \\
+existing users/APIs? → reject; (2) does it introduce a correctness or \\
+memory-safety bug? → reject or request-changes depending on severity; \\
+(3) is it a style issue? → nitpick; etc." The decision tree must be \\
 language-agnostic — no C/kernel identifiers, no type names, no macro names.
 
-FORMAT REQUIREMENT: Use structured nested bullet lists for decision rules. \
+FORMAT REQUIREMENT: Use structured nested bullet lists for decision rules. \\
 DO NOT use markdown tables. Example of correct format:
 
 ```
@@ -498,7 +530,7 @@ should find as many bugs as they would without it, not fewer.
 ]
 
 ## Quick Reference Checklist
-[A one-page checklist a reviewer can scan: "Before approving, verify:" with 15-20 \
+[A one-page checklist a reviewer can scan: "Before approving, verify:" with 15-20 \\
 concrete items grouped by theme. Every item must be language-agnostic.]
 
 Keep the total output between 4000-7000 words. Be concise — every section must have real
@@ -506,9 +538,9 @@ quotes from the data, but do not pad. Do not invent quotes — only use what is 
 If you need more examples for a theme, use the quotes you have and note the pattern.
 Prioritize completing ALL required sections over depth in any single section.
 
-REMEMBER: The final test is simple — if a reviewer reading this skill could NOT tell \
-whether it was distilled from C kernel reviews, Python web framework reviews, or Rust \
-systems programming reviews, you have succeeded. The METHOD must shine through; the \
+REMEMBER: The final test is simple — if a reviewer reading this skill could NOT tell \\
+whether it was distilled from C kernel reviews, Python web framework reviews, or Rust \\
+systems programming reviews, you have succeeded. The METHOD must shine through; the \\
 LANGUAGE must be invisible.
 """
 
@@ -522,47 +554,19 @@ def build_category_system_prompt(category: str) -> str:
     return f"""\
 You are writing a section of a code review skill document, focusing on ONE category of review patterns.
 
+{LANGUAGE_AGNOSTICISM}
+
 ═══════════════════════════════════════════════════════════════════════
-CRITICAL RULE: TOTAL LANGUAGE AND PROJECT AGNOSTICISM
+SKILL QUALITIES
 ═══════════════════════════════════════════════════════════════════════
 
-The skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell,
-or any other language. Torvalds reviews C kernel code, but his REVIEWING METHOD is
-universal. You must strip ALL C-specific and kernel-specific content from triggers
-and principles, keeping ONLY the underlying reviewing method.
-
-TRIGGERS and PRINCIPLES must NEVER contain:
-  - C types or keywords: int, char, void, struct, union, enum, typedef, const, volatile, static, inline
-  - C macros or functions: BUG_ON, WARN_ON, READ_ONCE, WRITE_ONCE, copy_to_user, kmalloc, kfree
-  - Kernel concepts: syscall, inode, dentry, superblock, sk_buff, task_struct
-  - Linux-specific APIs: procfs, sysfs, debugfs, ioctl
-  - Architecture-specific terms: x86, ARM, riscv, SMP, RCU
-
-QUOTES (the "Response" field) are Torvalds' VERBATIM words and MUST be preserved
-exactly as written, including any C-specific terms they contain. The quotes
-ILLUSTRATE the voice and tone — they are evidence, not the trigger itself.
-
-TRANSLATION TABLE — when you encounter these in the data, generalize as shown:
-
-  C/Kernel specific                           → Language-agnostic trigger
-  ──────────────────────────────────────────────→────────────────────────────────────
-  BUG_ON() / BUG()                            → Fatal assertion/panic used for a recoverable condition
-  WARN_ON()                                   → Warning assertion that masks a real bug
-  READ_ONCE / WRITE_ONCE                      → Unsynchronized access to shared mutable data
-  volatile                                     → Relying on language semantics instead of explicit sync
-  copy_to_user / copy_from_user               → Untrusted/external boundary crossing without validation
-  spin_lock / mutex                            → Lock-based concurrency primitive
-  rcu_dereference                              → Lock-free data access without memory ordering
-  kmalloc / kfree                             → Manual memory allocation/deallocation
-  strlcpy / strscpy                            → String/buffer copy without bounds safety
-  __user annotation                            → Missing type-level ownership/safety annotation
-  returning -EFAULT / -EINVAL                  → Returning magic error codes instead of typed errors
-  #ifdef CONFIG_X                              → Compile-time conditional logic instead of runtime config
-  goto cleanup                                 → Manual resource cleanup instead of RAII/defer/using
-  struct file_operations                       → Interface/API contract change
-  syscall ABI change                            → Public API/ABI breakage
-  inline function                              → Premature optimization hint
-  typedef struct                                → Type aliasing that hides the real type
+1. Language-agnostic — see the critical rule above. This is non-negotiable.
+2. {TRIGGER_TYPES.strip()}
+3. Explicit precedence chain: Correctness > Performance > Complexity > Style
+4. Concrete definitions — define key terms explicitly
+5. Actionable — tell the reviewer WHAT to do and WHEN
+6. Grounded in real examples — use the provided quotes
+7. Comprehensive — aim for 4000-7000 words total
 
 ═══════════════════════════════════════════════════════════════════════
 YOUR TASK
@@ -599,26 +603,17 @@ concepts, generalize it to the underlying design problem.
 
 def build_synthesis_system_prompt() -> str:
     """Build synthesis system prompt for combining category fragments."""
-    return """\
+    return f"""\
 You are synthesizing category-specific skill fragments into a unified SKILL.md document.
 
-═══════════════════════════════════════════════════════════════════════
-CRITICAL RULE: TOTAL LANGUAGE AND PROJECT AGNOSTICISM
-═══════════════════════════════════════════════════════════════════════
-
-The final skill must work for a reviewer reading Python, Go, Rust, TypeScript, Java, Haskell,
-or any other language. All C-specific and kernel-specific content must be generalized.
+{LANGUAGE_AGNOSTICISM}
 
 ═══════════════════════════════════════════════════════════════════════
 SKILL QUALITIES
 ═══════════════════════════════════════════════════════════════════════
 
 1. Language-agnostic — triggers must work for any language
-2. Four qualities of review rules — every trigger must be ONE of these:
-   a) Invariant TRUE: A condition that MUST always be true
-   b) Invariant FALSE: A condition that MUST NEVER be true
-   c) Precedence rule: An explicit ordering when rules conflict
-   d) General guideline: A concrete pattern with clear detection criteria
+2. {TRIGGER_TYPES.strip()}
 3. Explicit precedence chain: Correctness > Performance > Complexity > Style
 4. Concrete definitions — define key terms explicitly
 5. Actionable — tell the reviewer WHAT to do and WHEN
@@ -629,50 +624,10 @@ SKILL QUALITIES
 OUTPUT STRUCTURE
 ═══════════════════════════════════════════════════════════════════════
 
-Output exactly this structure (replace the bracketed parts with real content):
+{OUTPUT_STRUCTURE}
 
-**CRITICAL FORMATTING RULE: DO NOT USE MARKDOWN TABLES**
-- Use structured nested bullet lists, NOT `| column | column |` tables
-
----
-name: linus-torvalds-skill
-description: "[1-2 sentence description]"
-metadata:
-  author: "torvalds-skill pipeline"
-  version: "1.0.0"
-  tags:
-    - code-review
-    - reviewer-method
-    - torvalds
----
-
-# Linus Torvalds Review Method
-
-> [2-3 sentence intro: what this skill is, corpus size, language-agnostic method]
-
-## Reviewer Mindset
-[5-7 core attitudes with principles and quotes]
-
-## Review Triggers
-[Comprehensive catalog grouped by semantic theme, NOT by category labels.
-Organize into THREE hierarchical tiers:
-- Level 1: Global Invariants (non-negotiables)
-- Level 2: Structural Patterns (architecture-level)
-- Level 3: Tactical Guidelines (implementation-level)
-Each trigger must have:
-- Type: invariant-true / invariant-false / precedence-rule / general-guideline
-- What to look for: language-agnostic description
-- Why it's a problem: underlying design principle
-- Severity: reject / request-changes / nitpick
-- Example: verbatim Torvalds quote
-Cover at least 12 distinct themes with 3-6 triggers each.]
-
-## Reasoning Protocol
-[Instructions for the [REASON]→[ACT] workflow that prevents pattern-matching false
-positives. Every finding must explain WHY before issuing the finding.]
-
-## Precedence and Priorities
-[Explicit hierarchy with explanations and quotes]
+## Decision Cards
+{DECISION_CARDS_SPEC.strip()}
 
 ## Key Definitions
 [Define: bug, hack, workaround, patch, non-negotiable, recoverable error, API contract. Structured bullet list, NOT a markdown table.]

@@ -1,6 +1,6 @@
 ---
 title: Model Comparison — SmallChat Review
-date: 2026-09-03
+date: 2026-09-04
 codebase: antirez/smallchat
 models: gpt-oss-120b, glm5.2, mistral
 skill: linus-torvalds-skill (language-agnostic)
@@ -192,17 +192,17 @@ Bug-by-bug comparison for each model: which bugs were found by both, only baseli
 
 | Issue | File | Severity | Trigger coverage |
 |-------|------|----------|------------------|
-| Unchecked partial writes | smallchat-server.c | MEDIUM | unmatched |
-| No validation of `/nick` argument length | smallchat-server.c | MEDIUM | unmatched |
-| Ignored error from `socketSetNonBlockNoDelay` | smallchat-server.c | LOW | unmatched |
-| Misuse of `snprintf` return value for nickname generation | smallchat-server.c | LOW | unmatched |
-| Missing handling of input buffer overflow | smallchat-client.c | HIGH | unmatched |
-| Terminal may remain in raw mode after abnormal termination | smallchat-client.c | MEDIUM | unmatched |
-| Unchecked partial writes to the server socket | smallchat-client.c | MEDIUM | unmatched |
-| Lack of argument validation | smallchat-client.c | LOW | unmatched |
-| Ignored error from `setRawMode` call | smallchat-client.c | LOW | unmatched |
-| Ignored errors from `socketSetNonBlockNoDelay` | chatlib.c | LOW | unmatched |
-| Ignored return values from `setsockopt` | chatlib.c | LOW | unmatched |
+| Unchecked partial writes | smallchat-server.c | MEDIUM | Use of legacy, unchecked string‑copy or buffer‑han... |
+| No validation of `/nick` argument length | smallchat-server.c | MEDIUM | Missing validation of inputs, allocation failures,... |
+| Ignored error from `socketSetNonBlockNoDelay` | smallchat-server.c | LOW | API or error‑message documentation that contains f... |
+| Misuse of `snprintf` return value for nickname generation | smallchat-server.c | LOW | Interfaces that permit misuse (e.g., allowing call... |
+| Missing handling of input buffer overflow | smallchat-client.c | HIGH | Use of legacy, unchecked string‑copy or buffer‑han... |
+| Terminal may remain in raw mode after abnormal termination | smallchat-client.c | MEDIUM | Enabling a feature while known security problems r... |
+| Unchecked partial writes to the server socket | smallchat-client.c | MEDIUM | Use of legacy, unchecked string‑copy or buffer‑han... |
+| Lack of argument validation | smallchat-client.c | LOW | Missing validation of inputs, allocation failures,... |
+| Ignored error from `setRawMode` call | smallchat-client.c | LOW | API or error‑message documentation that contains f... |
+| Ignored errors from `socketSetNonBlockNoDelay` | chatlib.c | LOW | Fatal assertions (`BUG_ON`, `panic`, `assert`) use... |
+| Ignored return values from `setsockopt` | chatlib.c | LOW | Functions that mix positive/zero/negative return v... |
 
 **Skill-only (skill added):**
 
@@ -227,29 +227,29 @@ Bug-by-bug comparison for each model: which bugs were found by both, only baseli
 
 | Issue | File | Severity | Trigger coverage |
 |-------|------|----------|------------------|
-| Unchecked `acceptClient()` return value leads to out-of-boun... | smallchat-server.c | CRITICAL | unmatched |
-| No bounds check on file descriptor before indexing `clients[... | smallchat-server.c | CRITICAL | unmatched |
+| Unchecked `acceptClient()` return value leads to out-of-boun... | smallchat-server.c | CRITICAL | Use of legacy, unchecked string‑copy or buffer‑han... |
+| No bounds check on file descriptor before indexing `clients[... | smallchat-server.c | CRITICAL | Missing validation of inputs, allocation failures,... |
 | No `SIGPIPE` handler — server killed when writing to a close... | smallchat-server.c | CRITICAL | unmatched |
 | Nickname not null-terminated in `createClient()` | smallchat-server.c | CRITICAL | unmatched |
-| `select()` returning `-1` on `EINTR` causes server exit | smallchat-server.c | HIGH | unmatched |
-| `read()` on non-blocking socket does not handle `EAGAIN`/`EW... | smallchat-server.c | HIGH | unmatched |
-| No input sanitization — messages relayed verbatim to all cli... | smallchat-server.c | HIGH | unmatched |
-| `write()` return values are universally ignored | smallchat-server.c | MEDIUM | unmatched |
-| No nickname length validation — unbounded allocation | smallchat-server.c | MEDIUM | unmatched |
-| `socketSetNonBlockNoDelay()` return value ignored in `create... | smallchat-server.c | MEDIUM | unmatched |
-| `MAX_CLIENTS` comment is misleading | smallchat-server.c | LOW | unmatched |
-| Partial reads produce fragmented messages | smallchat-server.c | LOW | unmatched |
+| `select()` returning `-1` on `EINTR` causes server exit | smallchat-server.c | HIGH | Function names or return conventions that do not c... |
+| `read()` on non-blocking socket does not handle `EAGAIN`/`EW... | smallchat-server.c | HIGH | Locks taken around code that does not touch shared... |
+| No input sanitization — messages relayed verbatim to all cli... | smallchat-server.c | HIGH | Function names or return conventions that do not c... |
+| `write()` return values are universally ignored | smallchat-server.c | MEDIUM | Functions that mix positive/zero/negative return v... |
+| No nickname length validation — unbounded allocation | smallchat-server.c | MEDIUM | Missing validation of inputs, allocation failures,... |
+| `socketSetNonBlockNoDelay()` return value ignored in `create... | smallchat-server.c | MEDIUM | Function names or return conventions that do not c... |
+| `MAX_CLIENTS` comment is misleading | smallchat-server.c | LOW | Code that treats a genuine bug as a “security‑only... |
+| Partial reads produce fragmented messages | smallchat-server.c | LOW | Code that hides bugs behind security tricks or spe... |
 | `Ctrl+C` (`SIGINT`) leaves terminal in raw mode | smallchat-client.c | HIGH | unmatched |
-| No `SIGPIPE` handling — client killed if server closes conne... | smallchat-client.c | HIGH | unmatched |
-| `write()` return values not checked | smallchat-client.c | MEDIUM | unmatched |
-| `stdin` `EOF` not handled — client runs forever with no inpu... | smallchat-client.c | MEDIUM | unmatched |
-| `\e` escape sequence is a non-standard GCC extension | smallchat-client.c | LOW | unmatched |
-| Backspace only handles key code 127 | smallchat-client.c | LOW | unmatched |
-| `atoi()` does not validate port argument | smallchat-client.c | LOW | unmatched |
-| Memory leak in `TCPConnect()` on `EINPROGRESS` | chatlib.c | MEDIUM | unmatched |
-| `TCPConnect()` breaks out of address iteration on nonblock s... | chatlib.c | MEDIUM | unmatched |
+| No `SIGPIPE` handling — client killed if server closes conne... | smallchat-client.c | HIGH | Use of legacy, unchecked string‑copy or buffer‑han... |
+| `write()` return values not checked | smallchat-client.c | MEDIUM | Functions that mix positive/zero/negative return v... |
+| `stdin` `EOF` not handled — client runs forever with no inpu... | smallchat-client.c | MEDIUM | Function names or return conventions that do not c... |
+| `\e` escape sequence is a non-standard GCC extension | smallchat-client.c | LOW | Recursive acquisition of a non‑re‑entrant lock (e.... |
+| Backspace only handles key code 127 | smallchat-client.c | LOW | Code that treats a genuine bug as a “security‑only... |
+| `atoi()` does not validate port argument | smallchat-client.c | LOW | Commits lacking a clear description of *what* the ... |
+| Memory leak in `TCPConnect()` on `EINPROGRESS` | chatlib.c | MEDIUM | Inconsistent or meaningless error codes that leak ... |
+| `TCPConnect()` breaks out of address iteration on nonblock s... | chatlib.c | MEDIUM | Decisions driven by out‑of‑tree code that dictate ... |
 | No IPv6 support in `createTCPServer()` | chatlib.c | LOW | unmatched |
-| `chatRealloc()` leaks original pointer on failure | chatlib.c | LOW | unmatched |
+| `chatRealloc()` leaks original pointer on failure | chatlib.c | LOW | Function names or return conventions that do not c... |
 
 **Skill-only (skill added):**
 
@@ -282,13 +282,13 @@ Bug-by-bug comparison for each model: which bugs were found by both, only baseli
 
 | Issue | File | Severity | Trigger coverage |
 |-------|------|----------|------------------|
-| Finding: Potential buffer overflow in message handling | smallchat-server.c | HIGH | unmatched |
+| Finding: Potential buffer overflow in message handling | smallchat-server.c | HIGH | Use of legacy, unchecked string‑copy or buffer‑han... |
 | Finding: Hardcoded limits | smallchat-server.c | MEDIUM | unmatched |
-| Finding: Terminal mode not restored on crash | smallchat-client.c | HIGH | unmatched |
-| Finding: No input validation | smallchat-client.c | MEDIUM | unmatched |
-| Finding: No port range validation | chatlib.c | LOW | unmatched |
-| Finding: No compiler warnings for all issues | chatlib.h | LOW | unmatched |
-| Finding: No optimization level specified | chatlib.h | LOW | unmatched |
+| Finding: Terminal mode not restored on crash | smallchat-client.c | HIGH | Locks taken around code that does not touch shared... |
+| Finding: No input validation | smallchat-client.c | MEDIUM | Missing validation of inputs, allocation failures,... |
+| Finding: No port range validation | chatlib.c | LOW | Missing validation of inputs, allocation failures,... |
+| Finding: No compiler warnings for all issues | chatlib.h | LOW | Documentation that ties behaviour to a particular ... |
+| Finding: No optimization level specified | chatlib.h | LOW | Code that hides bugs behind security tricks or spe... |
 
 **Skill-only (skill added):**
 

@@ -64,6 +64,10 @@ class _WallClockTimeout:
 
 def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
     """Call OpenAI-compatible chat completions API with streaming. Returns accumulated text."""
+    from torvalds_skill.profiles import get_profile
+
+    profile = get_profile(model)
+
     payload = {
         "model": model,
         "messages": [
@@ -71,14 +75,16 @@ def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.3,
-        "max_tokens": 16000,
+        "max_tokens": profile.max_tokens,  # Default from profile (16000 for all known models)
         "stream": True,
     }
     # Reasoning models must keep their thinking phase (user requirement):
-    # never disable it. Give GLM a larger budget instead so reasoning AND
+    # never disable it. Give them a larger budget instead so reasoning AND
     # content both fit without truncation.
-    if "glm" in model.lower():
-        payload["max_tokens"] = project_config.GLM_MAX_TOKENS if project_config else 32000
+    # Supported max_tokens per model (from profiles.py):
+    #   gpt-oss-120b: 16000, glm5.2: 16000, mistral-small-4-119b: 16000
+    if profile.reasoning:
+        payload["max_tokens"] = profile.max_tokens
 
     print("streaming...", file=sys.stderr)
 
@@ -135,13 +141,14 @@ def main():
         sys.exit(1)
     prompt = prompt_path.read_text()
 
-    # Determine timeout (GLM models need longer)
+    # Determine timeout from profile
+    from torvalds_skill.profiles import get_profile
+
+    profile = get_profile(args.model)
     if args.timeout:
         timeout = args.timeout
-    elif "glm" in args.model.lower():
-        timeout = getattr(project_config, "WALL_CLOCK_GLM", 1800) if project_config else 1800
     else:
-        timeout = getattr(project_config, "WALL_CLOCK_LONG", 900) if project_config else 600
+        timeout = profile.review_timeout
 
     # Call API with retry
     for attempt in range(2):

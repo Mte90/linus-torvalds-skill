@@ -41,10 +41,9 @@ python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
 - Soul: 10-15 minutes
 
 **Model-specific constraints**:
-- `max_tokens` ≤ 16000 for skill/soul generation (model supports 200K but generating that much times out)
-- `timeout` ≥ 600 seconds required
-- Use `--single-call` flag (bypasses per-category distillation, 1 LLM call instead of 15)
-- Review pipeline: use `CHUNKED_MODELS="glm5.2"` to chunk the review by source file
+- See `src/torvalds_skill/profiles.py` for per-model `max_tokens`, `timeout`, and `distill_mode` settings
+- GLM5.2 uses `distill_mode="single"` by default (1 LLM call instead of 15)
+- Auto-chunking in review pipeline applies to all models when prompt > `profile.prompt_budget_chars`
 
 ### mistral-small-4-119b (concise, fast)
 

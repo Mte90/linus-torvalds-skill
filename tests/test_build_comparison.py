@@ -1,7 +1,10 @@
 """Tests for build_comparison.py fuzzy matching fixes."""
 
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "report"))
@@ -474,3 +477,46 @@ def test_unmatched_label_in_baseline_only_coverage():
     assert len(result["baseline_only_with_coverage"]) == 1
     coverage = result["baseline_only_with_coverage"][0]
     assert coverage["matched_trigger"] is None  # No trigger matched
+
+
+def test_benchmark_records_match_triggers():
+    """Test that every benchmark record matches at least one skill trigger.
+
+    This ensures the skill covers all benchmark scenarios.
+    Failing output lists uncovered SC-xxx IDs.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent.parent / "report"))
+    from build_comparison import Finding, match_finding_to_trigger
+    from trigger_patterns import extract_triggers
+
+    # Load benchmark
+    benchmark_path = Path(__file__).parent.parent / "data" / "benchmark.jsonl"
+    assert benchmark_path.exists(), f"Benchmark not found: {benchmark_path}"
+
+    # Load triggers from SKILL.md
+    skill_path = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
+    content = skill_path.read_text()
+    triggers = extract_triggers(content, style="gpt-oss")
+    trigger_texts = [desc for (_title, desc) in triggers if desc]
+
+    # Check each benchmark record
+    uncovered = []
+    with open(benchmark_path) as f:
+        for line in f:
+            record = json.loads(line.strip())
+            finding = Finding(
+                severity=record.get("severity", "MEDIUM"),
+                title=record.get("trigger", record.get("description", "")),
+                location=f"{record.get('file', '')}:{record.get('line', 0)}",
+            )
+
+            matched_trigger, score = match_finding_to_trigger(finding, trigger_texts)
+            if matched_trigger is None:
+                uncovered.append(record.get("id", "UNKNOWN"))
+
+    # Report uncovered records
+    if uncovered:
+        pytest.fail(f"Uncovered benchmark records: {', '.join(uncovered)}")
