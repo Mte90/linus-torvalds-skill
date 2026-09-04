@@ -255,6 +255,10 @@ Decision card content.
 
 Definitions here.
 
+## Anti-Patterns
+
+Anti-pattern content.
+
 ## Voice and Tone
 
 Tone guidelines."""
@@ -280,10 +284,20 @@ Tone guidelines."""
 
                             with patch("torvalds_skill.distill.config.WALL_CLOCK_CATEGORY", 300):
                                 with patch("torvalds_skill.distill.log_decision"):
-                                    # Call with glm5.2 model
+                                    # glm5.2 resolves to single-call mode: exactly 1 call (B1 fix)
                                     distill_skill(patterns_path, output_path, model="glm5.2")
 
-                                    # Verify _call_llm was called multiple times (parallel + synthesis)
+                                    assert mock_call_llm.call_count == 1
+
+                                    # Explicit two-stage still parallelizes (categories + synthesis)
+                                    mock_call_llm.reset_mock()
+                                    distill_skill(
+                                        patterns_path,
+                                        output_path,
+                                        model="glm5.2",
+                                        distill_mode="two-stage",
+                                    )
+
                                     assert (
                                         mock_call_llm.call_count >= 3
                                     )  # 2 categories + 1 synthesis

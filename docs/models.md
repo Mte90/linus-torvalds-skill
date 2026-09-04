@@ -25,8 +25,8 @@ python -m torvalds_skill soul --model gpt-oss-120b --out soul/soul.md
 ### glm5.2 (most detailed, reasoning model)
 
 ```bash
-# Skill generation (requires --single-call and higher timeout)
-python -m torvalds_skill distill --model glm5.2 --out linus-torvalds-skill/SKILL-GLM.md --single-call
+# Skill generation (mode determined by model profile)
+python -m torvalds_skill distill --model glm5.2 --out linus-torvalds-skill/SKILL-GLM.md
 
 # Soul generation
 python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md

@@ -10,7 +10,7 @@ The distillation pipeline consists of five stages, run in order:
 2. **Extract** (`extract.py`) — LLM per email (gpt-oss-120b). Extracts structured review moves. One email at a time (batching causes 46% move loss).
 3. **Cluster** (`cluster.py`) — semantic similarity clustering, stratified sampling by category+severity+date. 25 samples/category = 350 total (canonical count).
 4. **Calibrate** (`scripts/calibrate_interviews.py`) — severity calibration from corpus stats.
-5. **Distill** (`distill.py`) — single LLM call, produces `SKILL.md`.
+5. **Distill** (`distill.py`) — two-stage (14 categories + synthesis) or single-call mode depending on model profile. Produces `SKILL.md`.
 
 ## Review Pipeline
 
@@ -33,15 +33,15 @@ The soul file (`soul/*.md`) is **NOT** part of the review pipeline. It was remov
 
 | Model | Max tokens | Reasoning |
 |-------|-----------|----------|
-| glm5.2 | 32000 | Yes |
+| glm5.2 | 16000 | Yes |
 | gpt-oss-120b | 16000 | No |
 | mistral-small-4-119b | 16000 | No |
 
-Note: These values come from `src/torvalds_skill/profiles.py`. The `max_tokens` field is the effective budget used during generation (may be lower than the model's actual context limit to avoid timeouts).
+Note: These values come from `src/torvalds_skill/profiles.py` (`ModelProfile.max_tokens`). The field is the effective budget used during generation (may be lower than the model's actual context limit to avoid timeouts); reasoning output and content share it.
 
 ### Reasoning Models
 
-GLM5.2 is a reasoning model. It must keep its thinking phase (never disable it). The profile gives it a larger `max_tokens` budget (32000 vs 16000) so reasoning AND content both fit without truncation.
+GLM5.2 is a reasoning model. It must keep its thinking phase (never disable it); its thinking and content share the profile `max_tokens` budget (see table above).
 
 ### API Configuration
 - **Host**: configurable via `LLM_HOST` or `OPENAI_BASE_URL` (default: `api.regolo.ai`)

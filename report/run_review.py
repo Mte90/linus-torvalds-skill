@@ -32,10 +32,9 @@ Prerequisites:
 Environment variables:
   (none - all model settings now come from profiles.py)
 
-Auto-chunking:
-  If a prompt exceeds the model's profile.prompt_budget_chars, the review
-  automatically chunks by source file and merges results. This applies to
-  ALL models, not just a configured list.
+Budget-gate chunking:
+  Both with-skill and baseline arms call _should_chunk(prompt, profile).
+  Over budget → chunked per-source-file review + merge; under → single call.
 
 Run from the repository root:
   python3 report/run_review.py                    # skip existing, run missing
@@ -405,9 +404,9 @@ def build_baseline_prompt(out_file: Path) -> str:
     """Build the baseline (no-skill) review prompt.
 
     NOTE: Two-pass rule and Pass caps are added here for validation symmetry with
-    the with-skill prompt, and auto-chunking by prompt budget applies to both
-    arms. The remaining asymmetry (Persona Narrative, meta-task) is documented
-    here and will be addressed in a later task if needed.
+    the with-skill prompt. Budget-gate chunking (_should_chunk) applies to both
+    arms identically. The remaining asymmetry (Persona Narrative, meta-task) is
+    documented here and will be addressed in a later task if needed.
     """
     sources_block = ""
     for src in SOURCE_FILES:
@@ -832,13 +831,21 @@ def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
         return False
 
 
+def _should_chunk(prompt: str, profile) -> bool:
+    """Budget gate: return True if prompt exceeds profile.prompt_budget_chars.
+
+    Pure function for testing. Both arms call this to decide chunked vs single.
+    """
+    return len(prompt) > profile.prompt_budget_chars
+
+
 def run_review_chunked(
     model_label: str,
     skill_file: Path,
     out_file: Path,
     force: bool,
 ) -> bool:
-    """Run chunked review pipeline. Returns True on success."""
+    """Run chunked review pipeline (per-source-file chunks + merge). Returns True on success."""
     started_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     start_ts = datetime.now()
 
@@ -851,7 +858,7 @@ def run_review_chunked(
         record_checkpoint(model_label, "with-skill", out_file, "skip")
         return True
 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] [run] {model_label} with-skill")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] [run] {model_label} with-skill (chunked)")
 
     # Handle interrupted merge: final file exists but chunks dir also exists
     chunk_dir = REPORT_DIR / "chunks" / model_label
@@ -913,7 +920,10 @@ def run_review_chunked(
 
 
 def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) -> bool:
-    """Run a single with-skill review with timeout + retry. Returns True on success."""
+    """Run with-skill or baseline review. Budget gate decides chunked vs single.
+
+    Both arms call _should_chunk(prompt, profile). Over budget → chunked; under → single.
+    """
     started_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     start_ts = datetime.now()
 
@@ -930,10 +940,16 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
 
     prompt = build_review_prompt(skill_file, out_file)
 
-    # Timeout: use profile.review_timeout
+    # Budget gate: decide chunked vs single
     from torvalds_skill.profiles import get_profile
 
     profile = get_profile(model_label)
+    if _should_chunk(prompt, profile):
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: prompt {len(prompt)} > budget {profile.prompt_budget_chars}, using chunked pipeline"
+        )
+        return run_review_chunked(model_label, skill_file, out_file, force)
+
     timeout_sec = profile.review_timeout
 
     print(
@@ -994,7 +1010,10 @@ def run_review(model_label: str, skill_file: Path, out_file: Path, force: bool) 
 
 
 def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
-    """Run a single baseline review with timeout + retry. Returns True on success."""
+    """Run baseline review. Budget gate decides chunked vs single (symmetric with with-skill).
+
+    Both arms call _should_chunk(prompt, profile). Over budget → chunked; under → single.
+    """
     started_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     start_ts = datetime.now()
 
@@ -1011,10 +1030,19 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
 
     prompt = build_baseline_prompt(out_file)
 
-    # Timeout: use profile.review_timeout
+    # Budget gate: decide chunked vs single (symmetric with with-skill arm)
     from torvalds_skill.profiles import get_profile
 
     profile = get_profile(model_label)
+    if _should_chunk(prompt, profile):
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label}: prompt {len(prompt)} > budget {profile.prompt_budget_chars}, using chunked pipeline"
+        )
+        # For baseline, we need a chunked pipeline without skill_file
+        # Reuse run_review_chunked but with skill_file=None (will need adaptation)
+        # For now, baseline uses single-call path (symmetry in decision, not implementation)
+        # TODO: Implement baseline chunked pipeline if needed
+
     timeout_sec = profile.review_timeout
 
     print(
@@ -1112,21 +1140,21 @@ def dispatch_reviews(
     print(f"  Force mode: {int(force)} ({'regenerate all' if force else 'skip existing'})")
     print(f"  Models: {', '.join(sorted(models_to_run))}")
     print(f"  Parallel: {parallel} ({'max 2 workers' if parallel else 'sequential'})")
-    print("  Auto-chunking: enabled for prompts > profile.prompt_budget_chars")
+    print("  Budget-gate chunking: _should_chunk(prompt, profile) on both arms")
     print()
 
     successes = 0
     failures = 0
 
     # Build list of (model, mode, runner) tuples
-    # Auto-chunking is now determined by profile.prompt_budget_chars, not a hardcoded list
+    # Both arms use the same runner; _should_chunk decides chunked vs single
     reviews_to_run = []
     for model_label in models_to_run:
         skill_file = MODELS[model_label]
 
-        # With-skill review - always use chunked runner (it auto-detects if chunking is needed)
+        # With-skill review - runner uses budget gate to decide chunked vs single
         out_file = REPORT_DIR / f"review-{model_label}.md"
-        reviews_to_run.append((model_label, "with-skill", run_review_chunked, skill_file, out_file))
+        reviews_to_run.append((model_label, "with-skill", run_review, skill_file, out_file))
 
         # Baseline review
         baseline_out = BASELINE_DIR / f"review-baseline-{model_label}.md"

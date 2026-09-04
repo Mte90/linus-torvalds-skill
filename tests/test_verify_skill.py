@@ -610,6 +610,244 @@ class TestCheckNonFireViolations:
         assert violations == []
 
 
+class TestTriggerFormatValidation:
+    """Tests for C2: trigger format contract validation."""
+
+    def test_valid_format_passes(self, tmp_path):
+        """Valid trigger format should pass verification."""
+        skill_file = tmp_path / "valid.md"
+        skill_file.write_text("""# Review Triggers
+
+- **Trigger**: Unchecked allocation return
+  - **Type**: invariant-true
+  - **What to look for**: allocation without null check
+  - **Why it's a problem**: null pointer dereference
+  - **Severity**: reject
+  - **Example**: "this is fundamentally broken"
+
+- **Trigger**: API break without deprecation
+  - **Type**: precedence-rule
+  - **What to look for**: breaking existing users
+  - **Why it's a problem**: breaks backward compatibility
+  - **Severity**: reject
+  - **Example**: "we don't break existing setups"
+
+- **Trigger**: Missing error handling
+  - **Type**: general-guideline
+  - **What to look for**: unchecked return values
+  - **Why it's a problem**: silent failures
+  - **Severity**: request-changes
+  - **Example**: "check your errors"
+
+- **Trigger**: Race condition
+  - **Type**: invariant-false
+  - **What to look for**: unsynchronized shared state
+  - **Why it's a problem**: data corruption
+  - **Severity**: reject
+  - **Example**: "this is racy"
+
+- **Trigger**: Memory leak
+  - **Type**: invariant-true
+  - **What to look for**: allocated memory not freed
+  - **Why it's a problem**: resource exhaustion
+  - **Severity**: reject
+  - **Example**: "you're leaking memory"
+
+- **Trigger**: Inconsistent naming
+  - **Type**: general-guideline
+  - **What to look for**: mixed naming conventions
+  - **Why it's a problem**: reduces readability
+  - **Severity**: nitpick
+  - **Example**: "be consistent"
+
+- **Trigger**: Missing comments
+  - **Type**: general-guideline
+  - **What to look for**: complex logic without explanation
+  - **Why it's a problem**: hard to maintain
+  - **Severity**: nitpick
+  - **Example**: "explain this"
+
+- **Trigger**: Dead code
+  - **Type**: general-guideline
+  - **What to look for**: unreachable code paths
+  - **Why it's a problem**: confusion
+  - **Severity**: nitpick
+  - **Example**: "remove this"
+
+- **Trigger**: Magic numbers
+  - **Type**: general-guideline
+  - **What to look for**: unexplained numeric literals
+  - **Why it's a problem**: unclear intent
+  - **Severity**: nitpick
+  - **Example**: "what is this number?"
+
+- **Trigger**: Long function
+  - **Type**: general-guideline
+  - **What to look for**: function over 50 lines
+  - **Why it's a problem**: hard to understand
+  - **Severity**: request-changes
+  - **Example**: "split this up"
+
+- **Trigger**: Deep nesting
+  - **Type**: general-guideline
+  - **What to look for**: nesting over 3 levels
+  - **Why it's a problem**: cognitive load
+  - **Severity**: request-changes
+  - **Example**: "flatten this"
+
+- **Trigger**: Duplicate code
+  - **Type**: general-guideline
+  - **What to look for**: copy-paste blocks
+  - **Why it's a problem**: maintenance burden
+  - **Severity**: request-changes
+  - **Example**: "DRY this out"
+
+- **Trigger**: Wide interface
+  - **Type**: general-guideline
+  - **What to look for**: too many methods
+  - **Why it's a problem**: hard to implement
+  - **Severity**: request-changes
+  - **Example**: "simplify this API"
+
+- **Trigger**: Tight coupling
+  - **Type**: general-guideline
+  - **What to look for**: direct dependencies
+  - **Why it's a problem**: hard to test
+  - **Severity**: request-changes
+  - **Example**: "decouple this"
+
+- **Trigger**: Missing tests
+  - **Type**: invariant-true
+  - **What to look for**: new code without tests
+  - **Why it's a problem**: unverified behavior
+  - **Severity**: reject
+  - **Example**: "add tests"
+
+- **Trigger**: Over-engineering
+  - **Type**: general-guideline
+  - **What to look for**: unnecessary abstraction
+  - **Why it's a problem**: complexity
+  - **Severity**: request-changes
+  - **Example**: "keep it simple"
+
+- **Trigger**: Premature optimization
+  - **Type**: general-guideline
+  - **What to look for**: optimization without measurement
+  - **Why it's a problem**: may not be needed
+  - **Severity**: nitpick
+  - **Example**: "measure first"
+
+- **Trigger**: Poor variable names
+  - **Type**: general-guideline
+  - **What to look for**: ambiguous identifiers
+  - **Why it's a problem**: unclear intent
+  - **Severity**: nitpick
+  - **Example**: "name this better"
+
+- **Trigger**: Side effects
+  - **Type**: invariant-false
+  - **What to look for**: hidden mutations
+  - **Why it's a problem**: unexpected behavior
+  - **Severity**: reject
+  - **Example**: "this has side effects"
+
+- **Trigger**: Global state
+  - **Type**: general-guideline
+  - **What to look for**: mutable globals
+  - **Why it's a problem**: hard to reason about
+  - **Severity**: request-changes
+  - **Example**: "avoid globals"
+
+- **Trigger**: Exception swallowing
+  - **Type**: invariant-false
+  - **What to look for**: empty except blocks
+  - **Why it's a problem**: hides bugs
+  - **Severity**: reject
+  - **Example**: "don't swallow errors"
+
+- **Trigger**: Inconsistent error handling
+  - **Type**: general-guideline
+  - **What to look for**: mixed error patterns
+  - **Why it's a problem**: confusion
+  - **Severity**: request-changes
+  - **Example**: "be consistent"
+
+- **Trigger**: Missing validation
+  - **Type**: invariant-true
+  - **What to look for**: unvalidated input
+  - **Why it's a problem**: security risk
+  - **Severity**: reject
+  - **Example**: "validate this"
+
+- **Trigger**: Hardcoded credentials
+  - **Type**: invariant-false
+  - **What to look for**: secrets in code
+  - **Why it's a problem**: security vulnerability
+  - **Severity**: reject
+  - **Example**: "never hardcode secrets"
+
+- **Trigger**: SQL injection risk
+  - **Type**: invariant-false
+  - **What to look for**: string concatenation in queries
+  - **Why it's a problem**: security vulnerability
+  - **Severity**: reject
+  - **Example**: "use parameterized queries"
+
+- **Trigger**: XSS vulnerability
+  - **Type**: invariant-false
+  - **What to look for**: unescaped output
+  - **Why it's a problem**: security vulnerability
+  - **Severity**: reject
+  - **Example**: "escape this"
+
+- **Trigger**: Path traversal
+  - **Type**: invariant-false
+  - **What to look for**: unvalidated file paths
+  - **Why it's a problem**: security vulnerability
+  - **Severity**: reject
+  - **Example**: "validate paths"
+
+- **Trigger**: Command injection
+  - **Type**: invariant-false
+  - **What to look for**: shell commands with user input
+  - **Why it's a problem**: security vulnerability
+  - **Severity**: reject
+  - **Example**: "don't shell out"
+
+- **Trigger**: Insecure random
+  - **Type**: invariant-false
+  - **What to look for**: random for security
+  - **Why it's a problem**: predictable
+  - **Severity**: reject
+  - **Example**: "use crypto random"
+
+- **Trigger**: Weak cryptography
+  - **Type**: invariant-false
+  - **What to look for**: deprecated algorithms
+  - **Why it's a problem**: security vulnerability
+  - **Severity**: reject
+  - **Example**: "use modern crypto"
+""")
+        from scripts.verify_skill import verify_trigger_format
+
+        passes, errors = verify_trigger_format(skill_file)
+        assert passes is True, f"Valid format failed: {errors}"
+
+    def test_fourth_format_fails(self, tmp_path):
+        """C2: A fourth format (not gpt-oss, glm, or mistral) should fail."""
+        skill_file = tmp_path / "invalid.md"
+        skill_file.write_text("""# Review Triggers
+
+Trigger: Some trigger without proper format
+Another trigger without format
+""")
+        from scripts.verify_skill import verify_trigger_format
+
+        passes, errors = verify_trigger_format(skill_file)
+        assert passes is False
+        assert "Unknown trigger format" in str(errors)
+
+
 class TestCheckStyleProportion:
     """Tests for style proportion checking."""
 

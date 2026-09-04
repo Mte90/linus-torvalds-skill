@@ -635,7 +635,8 @@ def verify_trigger_format(skill_path: Path) -> tuple[bool, list[str]]:
     import sys
 
     sys.path.insert(0, str(Path(__file__).parent / "report"))
-    from trigger_patterns import extract_triggers
+
+    from trigger_patterns import TRIGGER_FORMAT_PATTERNS, extract_triggers
 
     if not skill_path.exists():
         return False, [f"Skill file not found: {skill_path}"]
@@ -658,18 +659,18 @@ def verify_trigger_format(skill_path: Path) -> tuple[bool, list[str]]:
     if len(triggers) < 30:
         errors.append(f"Only {len(triggers)} triggers extracted (expected >= 30)")
 
-    # Check for consistent format
-    if style == "gpt-oss":
-        # Should have "What to look for:" in each trigger
-        pass  # Already validated by extraction
-    elif style == "glm":
-        # Should have "**Trigger**:" format
-        if not re.search(r"\*\*Trigger\*\*:", content):
-            errors.append("Missing '**Trigger**:' markers")
-    elif style == "mistral":
-        # Should have "- **Title**" format
-        if not re.search(r"^\s*-\s*\*\*", content, re.MULTILINE):
-            errors.append("Missing '- **Title**' bullet format")
+    # C2: Validate against TRIGGER_FORMAT_PATTERNS - the format contract
+    # Only the detected style's pattern should match; no fourth format may pass
+    if style not in TRIGGER_FORMAT_PATTERNS:
+        errors.append(f"Unknown style '{style}' not in TRIGGER_FORMAT_PATTERNS")
+    else:
+        # Check that triggers match the expected format for this style
+        pattern = TRIGGER_FORMAT_PATTERNS[style]
+        matches = list(pattern.finditer(content))
+        if len(matches) < len(triggers):
+            errors.append(
+                f"Format mismatch: {len(matches)} pattern matches vs {len(triggers)} extracted triggers"
+            )
 
     return len(errors) == 0, errors
 

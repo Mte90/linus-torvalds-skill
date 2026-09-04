@@ -128,23 +128,23 @@ def generate_markdown(
     )
     lines.append("")
     lines.append(
-        "| Model | Skill file | Distill mode | Token budget | Wall-clock timeout | Severity bias note |"
+        "| Model | Skill file | Distill mode | Token budget | Wall-clock timeout | Severity calibration |"
     )
     lines.append(
-        "|-------|------------|--------------|--------------|-------------------|-------------------|"
+        "|-------|------------|--------------|--------------|-------------------|---------------------|"
     )
     lines.append(
-        "| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | two-stage (14 categories + synthesis) | 16000 | 120s (WALL_CLOCK_DEFAULT) | balanced |"
+        "| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | two-stage (14 categories + synthesis) | 16000 | 120s (profile.default) | balanced |"
     )
     lines.append(
-        "| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single-call | 16000 (GLM_MAX_TOKENS) | 600s / 1800s (WALL_CLOCK_GLM) | downgrade ONLY style/docs borderline, never correctness/error-handling (see `MODEL_SEVERITY_BIAS` in `distill.py`) |"
+        "| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single-call (profile.default) | 16000 | 600s / 1800s (profile.slow) | downgrade ONLY style/docs borderline, never correctness/error-handling |"
     )
     lines.append(
-        "| mistral-small-4-119b | `linus-torvalds-skill/SKILL-Mistral.md` | two-stage | 16000 | 120s | under-rates → upgrade borderline |"
+        "| mistral-small-4-119b | `linus-torvalds-skill/SKILL-Mistral.md` | two-stage | 16000 | 120s (profile.default) | under-rates → upgrade borderline |"
     )
     lines.append("")
     lines.append(
-        "**Source:** `src/torvalds_skill/distill.py:MODEL_SEVERITY_BIAS`, `src/torvalds_skill/config.py:_MODEL_TIMEOUTS` and `GLM_MAX_TOKENS`. Regenerate per `docs/CONTRIBUTING.md`."
+        "**Source:** `src/torvalds_skill/profiles.py` for per-model `max_tokens`, `timeout`, and `distill_mode` settings. Regenerate per `docs/CONTRIBUTING.md`."
     )
     lines.append("")
     lines.append(

@@ -145,17 +145,19 @@ class _WallClockTimeout:
         return False
 
 
-def _detect_truncation(text: str, doc_type: str = "skill") -> bool:
+def _detect_truncation(text: str, doc_type: str = "skill", strict: bool | None = None) -> bool:
     """Detect if LLM output is truncated mid-sentence or mid-section.
 
     Args:
         text: The LLM output text to check
         doc_type: Type of document being generated ("skill" or "soul")
+        strict: If True, use stricter truncation detection (mid-word endings, reasoning-model rules).
+                If None, inferred from doc_type (soul=True, skill=False).
 
     Returns True if the output appears incomplete:
     - Ends without proper closing (no terminal punctuation, no code fence close)
     - Token count is suspiciously low (< 500 for skill, < 800 for soul)
-    - For strict-truncation profiles: also checks for mid-word endings
+    - For strict mode: also checks for mid-word endings
     - Incomplete YAML frontmatter (starts with --- but no closing ---)
     - Incomplete markdown sections (last ## heading has no content after it)
     - Missing required skill sections (Reviewer Mindset, Review Triggers, Severity Decision Tree)
@@ -214,12 +216,12 @@ def _detect_truncation(text: str, doc_type: str = "skill") -> bool:
         if last_chars and last_chars[-1].islower() and not any(c in last_chars[-5:] for c in ".!?"):
             return True
 
-    # For reasoning models, be stricter — must end with punctuation or code fence or section marker
-    # Use doc_type to get profile for stricter truncation check
-    from .profiles import get_profile
+    # Strict mode: use stricter truncation detection (mid-word endings, reasoning-model rules).
+    # If not explicitly set, infer from doc_type: soul=True, skill=False.
+    if strict is None:
+        strict = doc_type == "soul"
 
-    profile = get_profile("glm5.2" if doc_type == "soul" else "gpt-oss-120b")
-    if profile.reasoning:
+    if strict:
         if (
             stripped.endswith(".")
             or stripped.endswith("!")
@@ -422,7 +424,8 @@ def _call_llm(
         models_to_try.extend(fallback_models)
 
     last_err = None
-    primary_result = None
+    primary_result: str | None = None
+    primary_truncated = False
 
     for call_model in models_to_try:
         # Get profile for this model to check if it's a reasoning model
@@ -522,15 +525,18 @@ def _call_llm(
                     last_err = RuntimeError("empty_response")
                     break
 
-                # Check for truncation (doc_type="skill" for distill output)
-                if _detect_truncation(result, doc_type="skill"):
+                # Check for truncation (doc_type="skill" for distill output, strict=False for skill)
+                if _detect_truncation(result, doc_type="skill", strict=False):
+                    # Policy: return partial result on truncation (don't retry with same prompt)
+                    # Rationale: same prompt → same truncation → wasted tokens
+                    # IMPORTANT: truncated responses are NOT cached to disk (they're model-specific failures)
+                    if call_model == primary_model:
+                        primary_result = result
+                        primary_truncated = True
                     print(
                         f"warning: truncation detected with {call_model}, returning partial result",
                         file=sys.stderr,
                     )
-                    # Return partial result immediately — don't retry same prompt with different model
-                    # (same prompt → same truncation → wasted tokens)
-                    # IMPORTANT: truncated responses are NOT cached to disk (they're model-specific failures)
                     if cache_key:
                         with _cache_lock:
                             if len(_call_llm._cache) >= _call_llm._max_size:  # type: ignore[attr-defined]
@@ -539,21 +545,23 @@ def _call_llm(
                     return result
 
                 # Success - no truncation
-                if call_model != primary_model:
-                    print(f"info: fallback model {call_model} succeeded", file=sys.stderr)
-                    # Try to patch if we have a primary result
-                    if primary_result is not None:
-                        patched: str = _patch_truncated_section(primary_result, result)
-                        # Cache the patched result (thread-safe)
-                        if cache_key:
-                            with _cache_lock:
-                                if len(_call_llm._cache) >= _call_llm._max_size:  # type: ignore[attr-defined]
-                                    _call_llm._cache.popitem(last=False)  # type: ignore[attr-defined]  # evict least-recently-used
-                                _call_llm._cache[cache_key] = patched  # type: ignore[attr-defined]
-                                _call_llm._cache.move_to_end(cache_key)  # type: ignore[attr-defined]
-                            # Write to disk cache (only non-truncated responses)
-                            _disk_cache.set(cache_key, call_model, patched)
-                        return patched
+                if call_model != primary_model and primary_truncated:
+                    print(
+                        f"info: fallback model {call_model} succeeded, patching primary result",
+                        file=sys.stderr,
+                    )
+                    # Patch fallback result with primary truncated output
+                    patched: str = _patch_truncated_section(primary_result, result)  # type: ignore[arg-type]
+                    # Cache the patched result (thread-safe)
+                    if cache_key:
+                        with _cache_lock:
+                            if len(_call_llm._cache) >= _call_llm._max_size:  # type: ignore[attr-defined]
+                                _call_llm._cache.popitem(last=False)  # type: ignore[attr-defined]  # evict least-recently-used
+                            _call_llm._cache[cache_key] = patched  # type: ignore[attr-defined]
+                            _call_llm._cache.move_to_end(cache_key)  # type: ignore[attr-defined]
+                        # Write to disk cache (only non-truncated responses)
+                        _disk_cache.set(cache_key, call_model, patched)
+                    return patched
                 # Cache the result (thread-safe)
                 if cache_key:
                     with _cache_lock:

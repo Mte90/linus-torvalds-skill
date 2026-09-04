@@ -831,7 +831,7 @@ def match_finding_to_trigger(finding: Finding, triggers: list[str]) -> tuple[str
                 best_trigger = trigger
 
     # Threshold for "covered": at least some keyword overlap
-    if best_score >= 0.05:  # Raised threshold to reduce false positives
+    if best_score >= 0.05:  # Empirical threshold for trigger-finding matching
         return best_trigger, best_score
     return None, best_score
 

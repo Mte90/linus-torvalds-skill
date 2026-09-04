@@ -85,6 +85,14 @@ def extract_triggers_mistral(content: str) -> Iterator[tuple[str, str]]:
 
     Format: - **Title** bullets organized by levels.
 
+    CRITICAL FIX (C4): Only extract top-level bullets (column 0) within "Level" sections.
+    The original pattern over-matched:
+    1. Any bold bullet including nested field labels (Type, Severity, Example, etc.)
+    2. Bullets outside Level sections (Key Definitions, Reviewer Mindset, etc.)
+
+    C4 Fix: Match only bullets at column 0 (^- not ^\\s*-) AND only within Level sections.
+    This excludes nested field labels which are indented with 2 spaces.
+
     Yields:
         (title, description) pairs where title is the bullet text and
         description is empty (Mistral format uses title as the trigger).
@@ -92,24 +100,33 @@ def extract_triggers_mistral(content: str) -> Iterator[tuple[str, str]]:
     # Extract level headings (### Level X: ...)
     level_pattern = re.compile(r"^###\s+Level\s+\d+:\s*(.+)$", re.MULTILINE)
 
-    # Extract bullet triggers: - **Title**
-    bullet_pattern = re.compile(r"^\s*-\s*\*\*(.+?)\*\*\s*$", re.MULTILINE)
+    # Extract bullet triggers: - **Title** at column 0 only (no leading whitespace)
+    # This excludes nested field labels like "  - **Type**:" which have 2-space indent
+    bullet_pattern = re.compile(r"^-\s*\*\*(.+?)\*\*")
+
+    # Field labels to skip (these are nested under triggers, not triggers themselves)
+    FIELD_LABELS = ("Type:", "Severity:", "What to look for:", "Why it's a problem:", "Example:")
 
     current_level = "General"
+    in_level_section = False  # C4: Track if we're inside a Level section
 
     for line in content.split("\n"):
         level_match = level_pattern.match(line.strip())
         if level_match:
             current_level = level_match.group(1).strip()
+            in_level_section = True  # C4: Entering a Level section
             continue
 
-        bullet_match = bullet_pattern.match(line.strip())
-        if bullet_match:
+        # Check for section end (new ### heading that's not a Level)
+        if line.strip().startswith("###") and not line.strip().startswith("### Level"):
+            in_level_section = False  # C4: Exiting Level section
+            continue
+
+        bullet_match = bullet_pattern.match(line)  # C4: Match only column-0 bullets
+        if bullet_match and in_level_section:  # C4: Only yield if in Level section
             bullet_text = bullet_match.group(1).strip()
-            # Skip non-trigger bullets (Type, What to look for, etc.)
-            if bullet_text and not bullet_text.startswith(
-                ("Type:", "What to look for", "Why it's")
-            ):
+            # Skip field labels (shouldn't match due to column-0 constraint, but be safe)
+            if bullet_text and not bullet_text.startswith(FIELD_LABELS):
                 yield (current_level, bullet_text)
 
 

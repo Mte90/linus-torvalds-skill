@@ -25,13 +25,13 @@ The skill adds the most value for mistral, which gained 12 critical finding(s) e
 
 Skills are NOT identical — each variant is distilled from the same 350 patterns but with model-specific prompt calibration, token budgets, and execution mode.
 
-| Model | Skill file | Distill mode | Token budget | Wall-clock timeout | Severity bias note |
-|-------|------------|--------------|--------------|-------------------|-------------------|
-| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | two-stage (14 categories + synthesis) | 16000 | 120s (WALL_CLOCK_DEFAULT) | balanced |
-| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single-call | 16000 (GLM_MAX_TOKENS) | 600s / 1800s (WALL_CLOCK_GLM) | downgrade ONLY style/docs borderline, never correctness/error-handling (see `MODEL_SEVERITY_BIAS` in `distill.py`) |
-| mistral-small-4-119b | `linus-torvalds-skill/SKILL-Mistral.md` | two-stage | 16000 | 120s | under-rates → upgrade borderline |
+| Model | Skill file | Distill mode | Token budget | Wall-clock timeout | Severity calibration |
+|-------|------------|--------------|--------------|-------------------|---------------------|
+| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | two-stage (14 categories + synthesis) | 16000 | 120s (profile.default) | balanced |
+| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single-call (profile.default) | 16000 | 600s / 1800s (profile.slow) | downgrade ONLY style/docs borderline, never correctness/error-handling |
+| mistral-small-4-119b | `linus-torvalds-skill/SKILL-Mistral.md` | two-stage | 16000 | 120s (profile.default) | under-rates → upgrade borderline |
 
-**Source:** `src/torvalds_skill/distill.py:MODEL_SEVERITY_BIAS`, `src/torvalds_skill/config.py:_MODEL_TIMEOUTS` and `GLM_MAX_TOKENS`. Regenerate per `docs/CONTRIBUTING.md`.
+**Source:** `src/torvalds_skill/profiles.py` for per-model `max_tokens`, `timeout`, and `distill_mode` settings. Regenerate per `docs/CONTRIBUTING.md`.
 
 This explains why glm5.2 previously lost 3 criticals (over-filtering style) and why trigger coverage differs across models.
 

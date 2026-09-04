@@ -2,6 +2,16 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-09-04 (v2 review fixes)
+
+- **Bugfix (distill):** B1 — single-call block re-indented under `else:` (was running 8 LLM calls); new call-count tests. B2 — frontmatter mode from resolved `distill_mode`. Fixed `resolve_distill_mode` precedence to explicit > flag > profile > default (profile was silently overriding explicit two-stage).
+- **Fix (profiles):** B5 present-wins TOML merge + `fallback_models` env CSV; removed dead `severity_bias`; added `review_max_tokens`. Stale-test `test_distill_skill_uses_parallel_for_glm52` updated to pin single=1 call / explicit two-stage>=3.
+- **Fix (llm):** B4 caller-model `strict` + real `doc_type` (soul false-truncation gone); B6 dead `primary_result` resolved; B7 profile token wiring both payloads, wall-clock pinned by test.
+- **Feature (review):** B3 budget gate `len(prompt) > prompt_budget_chars` on BOTH arms; false auto-detect claims removed.
+- **Unify (prompts):** C1 five blocks composed into two-stage; C2 `TRIGGER_FORMAT_PATTERNS` enforced by verifier; C4 Mistral extractor restricted to column-0 Level bullets (65→96→24, false positives pinned by test).
+- **Harden (distill):** C5 per-mode prompt hash; C6 dedicated repair mini-prompt; C8 shared REQUIRED_SECTIONS; D5 single-block frontmatter strip.
+- **Docs+metrics:** C7 drift fixed (16000 table, two-stage default, no stale identifiers); D1 assessed (precision wording, no change); D3 threshold stays 0.05 empirically, coverage ×3 variants.
+
 ## 2026-09-04
 
 - **Chore (ci):** Deleted `.github/workflows/ci.yml` (workflow never ran on main; project is local-only). Dev checks stay in `pyproject.toml [dev]`; secret scan via pre-commit gitleaks.

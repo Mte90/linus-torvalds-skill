@@ -26,6 +26,9 @@ from pathlib import Path
 from . import config
 from .audit import log_decision
 from .distill_data import (
+    REQUIRED_SECTIONS as SHARED_REQUIRED_SECTIONS,
+)
+from .distill_data import (
     load_interlocutor_variation_data,
     load_interview_data,
     validate_severity_consistency,
@@ -539,17 +542,20 @@ def _distill_single_call(
     return skill_md
 
 
-REQUIRED_SECTIONS = [
-    "Reviewer Mindset",
-    "Review Triggers",
-    "Precedence and Priorities",
-    "Decision Cards",
-    "Key Definitions",
-    "Anti-Patterns",
-    "Voice and Tone",
-    "Severity Calibration",
-    "Severity Decision Tree",
-]
+# Repair mini system prompt (C6: dedicated prompt for one-section generation)
+REPAIR_MINI_SYSTEM_PROMPT = """\
+You are writing ONE section of a Linus Torvalds code-review skill.
+The skill captures Torvalds' reviewing METHOD distilled from thousands of his
+real code reviews on the Linux kernel mailing list.
+
+Your task is to write a single section that is:
+- Concise (200-500 words)
+- Language-agnostic — no C/kernel-specific terms in triggers
+- Grounded in the corpus statistics provided
+- Formatted with bullet lists, not tables
+
+Write ONLY this section, starting with a '## Section Name' header.
+"""
 
 
 def _repair_missing_sections(
@@ -570,7 +576,7 @@ def _repair_missing_sections(
     """
     missing = [
         s
-        for s in REQUIRED_SECTIONS
+        for s in SHARED_REQUIRED_SECTIONS
         if not re.search(rf"^#+\s+{re.escape(s)}\s*$", skill_md, re.MULTILINE)
     ]
     if not missing:
@@ -616,7 +622,7 @@ def _repair_missing_sections(
             else:
                 # Fallback if no calibration data
                 prompt += "Reference corpus-wide severity distribution.\n"
-        generated = _call_llm(prompt, model=model, system_prompt=DISTILL_SYSTEM_PROMPT)
+        generated = _call_llm(prompt, model=model, system_prompt=REPAIR_MINI_SYSTEM_PROMPT)
         if generated.strip():
             skill_md = skill_md.rstrip() + "\n\n" + generated.strip() + "\n"
             print(f"  repaired: {section}", flush=True)
@@ -728,65 +734,64 @@ def distill_skill(
         # Stage 1: Distill each category
         print(f"\nStage 1: distilling {len(categories)} categories...", flush=True)
         fragments = {}
+        # Determine max_workers from profile (per-profile decision based on provider rate limits,
+        # not model speed — slow models like GLM keep parallelism due to provider rate-limit constraints)
+        from .profiles import get_profile
 
-    # Determine max_workers from profile (per-profile decision based on provider rate limits,
-    # not model speed — slow models like GLM keep parallelism due to provider rate-limit constraints)
-    from .profiles import get_profile
+        profile = get_profile(model)
+        max_workers = profile.parallel_workers
 
-    profile = get_profile(model)
-    max_workers = profile.parallel_workers
+        # Filter out empty categories first
+        non_empty_categories = [cat for cat in categories if by_category[cat]]
+        empty_categories = [cat for cat in categories if not by_category[cat]]
 
-    # Filter out empty categories first
-    non_empty_categories = [cat for cat in categories if by_category[cat]]
-    empty_categories = [cat for cat in categories if not by_category[cat]]
+        # Handle empty categories
+        for cat in empty_categories:
+            fragments[cat] = ""
 
-    # Handle empty categories
-    for cat in empty_categories:
-        fragments[cat] = ""
-
-    # Run parallel distillation for non-empty categories
-    if non_empty_categories:
-        non_empty_patterns = {cat: by_category[cat] for cat in non_empty_categories}
-        fragments, failed_categories = _run_categories_parallel(
-            non_empty_categories,
-            non_empty_patterns,
-            _distill_category,
-            model=model,
-            max_workers=max_workers,
-        )
-
-        # Retry failed categories sequentially once
-        if failed_categories:
-            print(
-                f"\nRetrying {len(failed_categories)} failed category/categories sequentially...",
-                flush=True,
+        # Run parallel distillation for non-empty categories
+        if non_empty_categories:
+            non_empty_patterns = {cat: by_category[cat] for cat in non_empty_categories}
+            fragments, failed_categories = _run_categories_parallel(
+                non_empty_categories,
+                non_empty_patterns,
+                _distill_category,
+                model=model,
+                max_workers=max_workers,
             )
-            still_failed = []
-            for cat in failed_categories:
-                print(f"  retrying {cat}...", flush=True)
-                fragment = _distill_category(cat, by_category[cat], model=model)
-                if fragment:
-                    fragments[cat] = fragment
-                    print("    retry succeeded", flush=True)
-                else:
-                    still_failed.append(cat)
 
-            # Warn about categories that still failed
-            if still_failed:
+            # Retry failed categories sequentially once
+            if failed_categories:
                 print(
-                    f"\nWARNING: {len(still_failed)} category/categories failed after retry and will be missing from synthesis:",
-                    file=sys.stderr,
+                    f"\nRetrying {len(failed_categories)} failed category/categories sequentially...",
+                    flush=True,
                 )
-                for cat in still_failed:
-                    print(f"  - {cat}", file=sys.stderr)
-        else:
-            fragments = {cat: "" for cat in categories}
+                still_failed = []
+                for cat in failed_categories:
+                    print(f"  retrying {cat}...", flush=True)
+                    fragment = _distill_category(cat, by_category[cat], model=model)
+                    if fragment:
+                        fragments[cat] = fragment
+                        print("    retry succeeded", flush=True)
+                    else:
+                        still_failed.append(cat)
 
-        # Stage 2: Synthesize final skill
-        print("\nStage 2: synthesizing final skill...", flush=True)
-        skill_md = _synthesize_skill(
-            fragments, calibration if calibration else {}, interview_data, iv_data, model=model
-        )
+                # Warn about categories that still failed
+                if still_failed:
+                    print(
+                        f"\nWARNING: {len(still_failed)} category/categories failed after retry and will be missing from synthesis:",
+                        file=sys.stderr,
+                    )
+                    for cat in still_failed:
+                        print(f"  - {cat}", file=sys.stderr)
+            else:
+                fragments = {cat: "" for cat in categories}
+
+            # Stage 2: Synthesize final skill
+            print("\nStage 2: synthesizing final skill...", flush=True)
+            skill_md = _synthesize_skill(
+                fragments, calibration if calibration else {}, interview_data, iv_data, model=model
+            )
 
     # Post-process
     print("\npost-processing...")
@@ -814,13 +819,19 @@ def distill_skill(
     # Write output
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Compute hashes for traceability
-    prompt_hash = hashlib.sha256(
-        (DISTILL_SYSTEM_PROMPT + str(calibration)).encode("utf-8")
-    ).hexdigest()[:16]
+    # Compute hashes for traceability (C5: hash over prompts actually used per mode)
+    if distill_mode == "single":
+        # Single-call mode: hash over DISTILL_SYSTEM_PROMPT
+        prompt_preimage = DISTILL_SYSTEM_PROMPT + str(calibration)
+    else:
+        # Two-stage mode: hash over category + synthesis prompts
+        category_prompt = build_category_system_prompt("testing")  # representative category
+        synthesis_prompt = build_synthesis_system_prompt()
+        prompt_preimage = category_prompt + synthesis_prompt + str(calibration)
+    prompt_hash = hashlib.sha256(prompt_preimage.encode("utf-8")).hexdigest()[:16]
     input_data = json.dumps(data, sort_keys=True).encode("utf-8") if data else b""
     input_hash = hashlib.sha256(input_data).hexdigest()[:16]
-    mode = "single" if single_call else "two-stage"
+    mode = distill_mode
     date_utc = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Build frontmatter
@@ -835,8 +846,10 @@ def distill_skill(
         "---\n\n"
     )
 
-    # Prepend frontmatter to skill content
-    skill_md_with_frontmatter = frontmatter + skill_md.lstrip("-\n")
+    # Prepend frontmatter to skill content (D5: strip exactly one leading frontmatter block)
+    skill_md_with_frontmatter = frontmatter + re.sub(
+        r"^\s*---\s*\n.*?\n---\s*\n", "", skill_md, count=1, flags=re.S
+    )
 
     output_path.write_text(skill_md_with_frontmatter, encoding="utf-8")
     word_count = len(skill_md.split())

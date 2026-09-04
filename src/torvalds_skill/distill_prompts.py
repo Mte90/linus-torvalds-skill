@@ -556,6 +556,14 @@ You are writing a section of a code review skill document, focusing on ONE categ
 
 {LANGUAGE_AGNOSTICISM}
 
+{SEVERITY_QUOTAS}
+
+{NON_FIRE_LIST}
+
+{INTERVIEW_RULES}
+
+{CROSS_FILE_SPEC}
+
 ═══════════════════════════════════════════════════════════════════════
 SKILL QUALITIES
 ═══════════════════════════════════════════════════════════════════════
@@ -598,6 +606,11 @@ Output format (markdown):
 
 Remember: Every trigger must be language-agnostic. If it mentions C keywords or kernel
 concepts, generalize it to the underlying design problem.
+
+NON-EXHAUSTIVE CATALOG: The triggers you list are a STARTING SET, NOT A CEILING. This
+is explicitly NOT an exhaustive catalog of every possible bug — it captures recurring
+themes from the corpus. When reviewing code, ask: "What else could be wrong here?"
+beyond the specific triggers listed.
 """
 
 
@@ -607,6 +620,14 @@ def build_synthesis_system_prompt() -> str:
 You are synthesizing category-specific skill fragments into a unified SKILL.md document.
 
 {LANGUAGE_AGNOSTICISM}
+
+{SEVERITY_QUOTAS}
+
+{NON_FIRE_LIST}
+
+{INTERVIEW_RULES}
+
+{CROSS_FILE_SPEC}
 
 ═══════════════════════════════════════════════════════════════════════
 SKILL QUALITIES
@@ -646,6 +667,11 @@ OUTPUT STRUCTURE
 
 ## Quick Reference Checklist
 [15-20 concrete items grouped by theme]
+
+NON-EXHAUSTIVE CATALOG: The triggers you list are a STARTING SET, NOT A CEILING. This
+is explicitly NOT an exhaustive catalog of every possible bug — it captures recurring
+themes from the corpus. When reviewing code, ask: "What else could be wrong here?"
+beyond the specific triggers listed.
 
 Keep output between 4000-7000 words total. Complete ALL sections.
 """

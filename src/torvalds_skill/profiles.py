@@ -41,12 +41,12 @@ class ModelProfile:
         prompt_budget_chars: Max prompt length before auto-chunking triggers
         distill_mode: "single" or "two-stage" for skill generation
         strict_truncation: Stricter truncation detection for this model
-        severity_bias: Default bias string (empty/None = no injected bias)
         timeout: Default timeout in seconds for API calls
         max_tokens: Max tokens for generation
         parallel_workers: Max parallel workers for distill (GLM keeps parallelism due to provider rate limits)
         review_timeout: Timeout for review pipeline (run_review.py)
         fallback_models: Ordered list of fallback models on truncation/failure
+        review_max_tokens: Token budget for review path (None = fall back to max_tokens)
     """
 
     reasoning: bool = False
@@ -54,12 +54,12 @@ class ModelProfile:
     prompt_budget_chars: int = 50000
     distill_mode: str = "two-stage"
     strict_truncation: bool = False
-    severity_bias: str | None = None
     timeout: int = 120
     max_tokens: int = 16000
     parallel_workers: int = 1
     review_timeout: int = 900
     fallback_models: list[str] = field(default_factory=list)
+    review_max_tokens: int | None = None
 
 
 # Built-in known profiles table
@@ -71,12 +71,12 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         prompt_budget_chars=50000,
         distill_mode="two-stage",
         strict_truncation=False,
-        severity_bias=None,
         timeout=120,
         max_tokens=16000,
         parallel_workers=3,  # Non-GLM models can parallelize
         review_timeout=900,
         fallback_models=["mistral-small-4-119b", "glm5.2"],
+        review_max_tokens=None,
     ),
     "glm5.2": ModelProfile(
         reasoning=True,
@@ -84,12 +84,12 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         prompt_budget_chars=30000,  # Smaller budget due to reasoning overhead
         distill_mode="single",  # GLM requires single-call mode
         strict_truncation=True,
-        severity_bias=None,  # Bias must be measured from with-skill vs baseline deltas
         timeout=600,
         max_tokens=16000,  # GLM_MAX_TOKENS from config.py
         parallel_workers=3,  # GLM keeps parallelism (provider rate-limit decision, explicit per task 3.2)
         review_timeout=2400,  # 40 min for GLM5.2 reviews
         fallback_models=["mistral-small-4-119b", "gpt-oss-120b"],
+        review_max_tokens=None,
     ),
     "mistral-small-4-119b": ModelProfile(
         reasoning=False,
@@ -97,12 +97,12 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         prompt_budget_chars=50000,
         distill_mode="two-stage",
         strict_truncation=False,
-        severity_bias=None,
         timeout=120,
         max_tokens=16000,
         parallel_workers=3,
         review_timeout=900,
         fallback_models=["gpt-oss-120b", "glm5.2"],
+        review_max_tokens=None,
     ),
 }
 
@@ -113,12 +113,12 @@ DEFAULT_PROFILE = ModelProfile(
     prompt_budget_chars=50000,
     distill_mode="two-stage",
     strict_truncation=False,
-    severity_bias=None,
     timeout=120,
     max_tokens=16000,
     parallel_workers=1,
     review_timeout=900,
     fallback_models=[],
+    review_max_tokens=None,
 )
 
 
@@ -178,7 +178,11 @@ def _load_toml_profile(model_name: str) -> ModelProfile | None:
                             profile_data[key] = val
 
         if profile_data:
-            return ModelProfile(**profile_data)  # type: ignore[arg-type]
+            # Use dataclasses.replace for present-wins merge semantics
+            from dataclasses import replace
+
+            base = KNOWN_PROFILES.get(model_name, DEFAULT_PROFILE)
+            return replace(base, **profile_data)  # type: ignore[arg-type]
     except Exception:
         pass
 
@@ -201,11 +205,12 @@ def _load_env_override(model_name: str) -> dict[str, Any]:
         "prompt_budget_chars",
         "distill_mode",
         "strict_truncation",
-        "severity_bias",
         "timeout",
         "max_tokens",
         "parallel_workers",
         "review_timeout",
+        "fallback_models",
+        "review_max_tokens",
     ]
 
     for field_name in fields:
@@ -229,6 +234,14 @@ def _load_env_override(model_name: str) -> dict[str, Any]:
                 overrides[field_name] = (
                     env_val if env_val in ("single", "two-stage") else "two-stage"
                 )
+            elif field_name == "fallback_models":
+                # Parse CSV: "a,b,c" -> ["a", "b", "c"]
+                overrides[field_name] = [m.strip() for m in env_val.split(",") if m.strip()]
+            elif field_name == "review_max_tokens":
+                try:
+                    overrides[field_name] = int(env_val)
+                except ValueError:
+                    pass
             else:
                 overrides[field_name] = env_val
 
@@ -263,41 +276,20 @@ def get_profile(model: str | None = None, default: ModelProfile | None = None) -
     # 2. Try TOML override
     toml_profile = _load_toml_profile(model)
     if toml_profile:
-        # Merge TOML profile with known profile (TOML takes precedence)
-        profile = ModelProfile(
-            reasoning=toml_profile.reasoning or profile.reasoning,
-            slow=toml_profile.slow or profile.slow,
-            prompt_budget_chars=toml_profile.prompt_budget_chars or profile.prompt_budget_chars,
-            distill_mode=toml_profile.distill_mode or profile.distill_mode,
-            strict_truncation=toml_profile.strict_truncation or profile.strict_truncation,
-            severity_bias=toml_profile.severity_bias
-            if toml_profile.severity_bias is not None
-            else profile.severity_bias,
-            timeout=toml_profile.timeout or profile.timeout,
-            max_tokens=toml_profile.max_tokens or profile.max_tokens,
-            parallel_workers=toml_profile.parallel_workers or profile.parallel_workers,
-            review_timeout=toml_profile.review_timeout or profile.review_timeout,
-            fallback_models=toml_profile.fallback_models or profile.fallback_models,
+        # Merge TOML profile with known profile using dataclasses.replace
+        # Present-wins semantics: false/0/"" in TOML override defaults
+        from dataclasses import replace
+
+        profile = replace(
+            profile, **{k: v for k, v in toml_profile.__dict__.items() if v is not None}
         )
 
     # 3. Apply environment overrides (highest precedence)
     env_overrides = _load_env_override(model)
     if env_overrides:
-        profile = ModelProfile(
-            reasoning=env_overrides.get("reasoning", profile.reasoning),
-            slow=env_overrides.get("slow", profile.slow),
-            prompt_budget_chars=env_overrides.get(
-                "prompt_budget_chars", profile.prompt_budget_chars
-            ),
-            distill_mode=env_overrides.get("distill_mode", profile.distill_mode),
-            strict_truncation=env_overrides.get("strict_truncation", profile.strict_truncation),
-            severity_bias=env_overrides.get("severity_bias", profile.severity_bias),
-            timeout=env_overrides.get("timeout", profile.timeout),
-            max_tokens=env_overrides.get("max_tokens", profile.max_tokens),
-            parallel_workers=env_overrides.get("parallel_workers", profile.parallel_workers),
-            review_timeout=env_overrides.get("review_timeout", profile.review_timeout),
-            fallback_models=env_overrides.get("fallback_models", profile.fallback_models),
-        )
+        from dataclasses import replace
+
+        profile = replace(profile, **env_overrides)
 
     return profile
 
@@ -318,14 +310,11 @@ def resolve_distill_mode(explicit_mode: str | None, single_call: bool, model: st
     Returns:
         Resolved distill mode: "single" or "two-stage"
     """
-    if explicit_mode is None:
-        # Check single_call for backward compatibility
-        explicit_mode = "single" if single_call else "two-stage"
-
-    # If model is specified and explicit mode is two-stage, check profile
-    if model and explicit_mode == "two-stage":
-        profile = get_profile(model)
-        if profile.distill_mode == "single":
-            explicit_mode = "single"
-
-    return explicit_mode
+    if explicit_mode is not None:
+        return explicit_mode
+    # Legacy --single-call flag (deprecated) wins over the profile default.
+    if single_call:
+        return "single"
+    if model:
+        return get_profile(model).distill_mode
+    return "two-stage"

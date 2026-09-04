@@ -22,7 +22,7 @@ Five stages, each with a single responsibility:
 | 2. Extract | review emails | `moves.jsonl` (38,293 moves) | Yes (1 call/email) | ~2 hours |
 | 3. Cluster | `moves.jsonl` | `patterns.json` (350 samples) | No (stratified) | seconds |
 | 3b. Calibrate | `moves.jsonl` | `calibration.json` (severity stats) | No (rule-based) | seconds |
-| 4. Distill | `patterns.json` + `calibration.json` | `SKILL.md` (5,000-9,000 words depending on model) | Yes (1 call) | ~2 min |
+| 4. Distill | `patterns.json` + `calibration.json` | `SKILL.md` (5,000-9,000 words depending on model) | Yes (1 or 15 calls based on profile) | ~2 min |
 
 ## Usage
 

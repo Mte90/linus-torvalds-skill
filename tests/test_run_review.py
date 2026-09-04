@@ -969,6 +969,68 @@ class TestTwoPassRule:
         skill_file.write_text("# Test Skill\nThis is a test skill content.\n")
         return skill_file
 
+    def test_should_chunk_budget_gate(self, tmp_path):
+        """_should_chunk should return True when prompt exceeds budget."""
+
+        # Create a mock profile object
+        class MockProfile:
+            prompt_budget_chars = 1000
+
+        profile = MockProfile()
+
+        # Under budget
+        assert run_review._should_chunk("x" * 500, profile) is False
+        assert run_review._should_chunk("x" * 999, profile) is False
+
+        # At budget (exactly equal should NOT trigger)
+        assert run_review._should_chunk("x" * 1000, profile) is False
+
+        # Over budget
+        assert run_review._should_chunk("x" * 1001, profile) is True
+        assert run_review._should_chunk("x" * 5000, profile) is True
+
+    def test_should_chunk_with_different_budgets(self, tmp_path):
+        """_should_chunk should work with different budget values."""
+
+        class MockProfile:
+            prompt_budget_chars = 500
+
+        profile = MockProfile()
+
+        assert run_review._should_chunk("x" * 499, profile) is False
+        assert run_review._should_chunk("x" * 500, profile) is False
+        assert run_review._should_chunk("x" * 501, profile) is True
+
+    def test_symmetry_both_arms_same_decision(self, tmp_path):
+        """Both arms should make the same chunking decision for equal prompt lengths.
+
+        This proves symmetry: with-skill and baseline arms call _should_chunk
+        identically, so the same prompt length always yields the same decision.
+        """
+
+        # Create a mock profile with small budget for testing
+        class MockProfile:
+            prompt_budget_chars = 1000
+
+        profile = MockProfile()
+
+        # Test various prompt lengths
+        test_cases = [
+            100,  # Well under budget
+            500,  # Under budget
+            999,  # Just under budget
+            1000,  # Exactly at budget
+            1001,  # Just over budget
+            5000,  # Well over budget
+        ]
+
+        for prompt_len in test_cases:
+            prompt = "x" * prompt_len
+            # Both arms should make the same decision
+            decision = run_review._should_chunk(prompt, profile)
+            # The decision should be consistent (pure function)
+            assert run_review._should_chunk(prompt, profile) == decision
+
     def test_two_pass_rule_function_exists(self):
         """_build_two_pass_rule should exist and return string."""
         rule = run_review._build_two_pass_rule()

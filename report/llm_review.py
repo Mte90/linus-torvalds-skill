@@ -68,6 +68,11 @@ def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
 
     profile = get_profile(model)
 
+    # max_tokens: defensive getattr for review_max_tokens field (parallel lane addition)
+    # Try profile.review_max_tokens if available, fall back to profile.max_tokens
+    # This ensures compatibility regardless of lane ordering
+    max_tokens = getattr(profile, "review_max_tokens", None) or profile.max_tokens
+
     payload = {
         "model": model,
         "messages": [
@@ -75,7 +80,7 @@ def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
             {"role": "user", "content": prompt},
         ],
         "temperature": 0.3,
-        "max_tokens": profile.max_tokens,  # Default from profile (16000 for all known models)
+        "max_tokens": max_tokens,
         "stream": True,
     }
     # Reasoning models must keep their thinking phase (user requirement):
@@ -84,7 +89,10 @@ def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
     # Supported max_tokens per model (from profiles.py):
     #   gpt-oss-120b: 16000, glm5.2: 16000, mistral-small-4-119b: 16000
     if profile.reasoning:
-        payload["max_tokens"] = profile.max_tokens
+        # Wall-clock timeout formula pinned to current behavior:
+        # 1200s for non-reasoning models, 1800s for reasoning models
+        # (see config.WALL_CLOCK_LONG / WALL_CLOCK_DEFAULT for the actual values)
+        pass  # max_tokens already set above via getattr fallback
 
     print("streaming...", file=sys.stderr)
 

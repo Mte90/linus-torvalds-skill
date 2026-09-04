@@ -146,6 +146,21 @@ def load_interlocutor_variation_data(project_root: Path) -> str:
     return "## INTERLOCUTOR AND VARIATION DATA\n\n" + "\n".join(lines)
 
 
+# Shared required sections constant (C8: single home for REQUIRED_SECTIONS)
+# Both distill.py repair and validate_skill_structure use this
+REQUIRED_SECTIONS = [
+    "Reviewer Mindset",
+    "Review Triggers",
+    "Precedence and Priorities",
+    "Decision Cards",
+    "Key Definitions",
+    "Anti-Patterns",
+    "Voice and Tone",
+    "Severity Calibration",
+    "Severity Decision Tree",
+]
+
+
 def validate_skill_structure(skill_text: str) -> list[str]:
     """Check that all required top-level sections exist as ## Section Name headings.
 
@@ -158,17 +173,7 @@ def validate_skill_structure(skill_text: str) -> list[str]:
     """
     import re
 
-    required = [
-        "Reviewer Mindset",
-        "Review Triggers",
-        "Severity Calibration",
-        "Severity Decision Tree",
-        "Precedence and Priorities",
-        "Decision Cards",
-        "Key Definitions",
-        "Voice and Tone",
-    ]
-
+    required = REQUIRED_SECTIONS
     missing = []
     for section in required:
         pattern = rf"^##\s+{re.escape(section)}\s*$"
