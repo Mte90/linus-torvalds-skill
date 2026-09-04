@@ -238,7 +238,11 @@ def stage_cluster():
 
 
 def stage_distill(
-    top_n: int, model: str | None = None, out: str | None = None, single_call: bool = False
+    top_n: int,
+    model: str | None = None,
+    out: str | None = None,
+    single_call: bool = False,
+    distill_mode: str | None = None,
 ):
     """Distill patterns.json → SKILL.md (or custom output path)."""
     if not PATTERNS.exists():
@@ -252,6 +256,7 @@ def stage_distill(
         model=model,
         calibration_path=CALIBRATION,
         single_call=single_call,
+        distill_mode=distill_mode,
     )
 
 
