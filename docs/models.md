@@ -69,10 +69,10 @@ python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistr
 
 | Model | Skill words | Soul words | Strictness | Verbosity | Tonal aggression | Best for |
 |---|---|---|---|---|---|---|
-| gpt-oss-120b | 6,780 | 9,739 | Medium | Medium | Medium | Production code review (recommended default) |
-| glm5.2 | 8,890 | 4,128 | High | High | High | Detailed reasoning, complex architecture reviews |
-| mistral-small-4-119b | 5,410 | 1,970 | Medium | Medium | Medium | Quick checks, fast iteration cycles |
-| qwen3.8-27b | 6,200 | 2,500 | Medium | Medium | Medium | Balanced, practical reviews |
+| gpt-oss-120b | 6,780 | 2,448 | Medium | Medium | Medium | Production code review (recommended default) |
+| glm5.2 | 8,890 | 7,155 | High | High | High | Detailed reasoning, complex architecture reviews |
+| mistral-small-4-119b | 5,410 | 3,476 | Medium | Medium | Medium | Quick checks, fast iteration cycles |
+| qwen3.8-27b | 8,473 | 6,990 | Medium | Medium | Medium | Balanced, practical reviews |
 
 **Tradeoffs:**
 
@@ -84,7 +84,6 @@ python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistr
 
 - **qwen3.8-27b** (balanced, practical): Produces well-structured skill files with clear triggers and practical examples. The soul is balanced and professional. Good for general code reviews where clarity and completeness matter.
 
-All three models reach the same verdicts on critical issues (correctness bugs, API breaks, memory safety). The differences are in depth of explanation and generation speed, not fundamental review quality.
 All four models reach the same verdicts on critical issues (correctness bugs, API breaks, memory safety). The differences are in depth of explanation and generation speed, not fundamental review quality.
 
 ## What you get
@@ -96,18 +95,17 @@ All four models reach the same verdicts on critical issues (correctness bugs, AP
 | `SKILL.md` | gpt-oss-120b | ~6,780 | Default. Best balance. |
 | `SKILL-GLM.md` | glm5.2 | ~8,890 | Reasoning model. Most thorough. |
 | `SKILL-Mistral.md` | mistral-small-4-119b | ~5,410 | Fastest. |
-| `SKILL-Qwen.md` | qwen3.8-27b | ~6,200 | Balanced. |
+| `SKILL-Qwen.md` | qwen3.8-27b | ~8,473 | Balanced. |
 
 **Soul files** (`soul/`) — the *persona*: identity, values, voice. **Includes profanity** — replicates Torvalds' actual tone, swearing only when a defect is dangerous or feedback is ignored.
 
 | File | Model | Words |
 |---|---|---|
-| `soul.md` | gpt-oss-120b | ~9,739 |
-| `soul-glm.md` | glm5.2 | ~4,128 |
-| `soul-mistral.md` | mistral-small-4-119b | ~1,970 |
-| `soul-qwen.md` | qwen3.8-27b | ~2,500 |
+| `soul.md` | gpt-oss-120b | ~2,448 |
+| `soul-glm.md` | glm5.2 | ~7,155 |
+| `soul-mistral.md` | mistral-small-4-119b | ~3,476 |
+| `soul-qwen.md` | qwen3.8-27b | ~6,990 |
 
-All skills and souls were generated with [regolo.ai](https://regolo.ai) using gpt-oss-120b (default), glm5.2, and mistral-small-4-119b.
 All skills and souls were generated with [regolo.ai](https://regolo.ai) using gpt-oss-120b (default), glm5.2, mistral-small-4-119b, and qwen3.8-27b.
 
 ## Review-phase costs

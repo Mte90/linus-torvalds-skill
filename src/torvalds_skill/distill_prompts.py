@@ -96,6 +96,17 @@ TRIGGER_TYPES = """\nFour qualities of review rules — EVERY trigger must be ON
   d) **General guideline for identifiable pattern**: A concrete pattern that can be detected (e.g., "When you see X, flag it because Y"). Must have clear detection criteria, not vague advice.
 """
 
+UNIFIED_TRIGGER_FORMAT = """\n## TRIGGER OUTPUT FORMAT (MANDATORY)
+Every trigger MUST use this exact structure:
+
+- **Trigger**: <language-agnostic description of the pattern>
+  - **Type**: invariant-true | invariant-false | precedence-rule | general-guideline
+  - **What to look for**: concrete detection criteria
+  - **Why it's a problem**: underlying design principle being violated
+  - **Severity**: reject | request-changes | nitpick | discussion
+  - **Example**: "[verbatim Torvalds quote]"
+"""
+
 SEVERITY_QUOTAS = """\n## PER-CATEGORY SEVERITY QUOTAS (BINDING CONSTRAINTS)
 The following severity distributions are BINDING quotas derived from corpus statistics.
 Each category MUST follow these proportions when assigning severities:
@@ -377,6 +388,7 @@ SKILL QUALITIES
 
 1. Language-agnostic — see the critical rule above. This is non-negotiable.
 2. {TRIGGER_TYPES.strip()}
+   {UNIFIED_TRIGGER_FORMAT.strip()}
 3. Explicit precedence chain — state the hierarchy early in the skill:
    - Correctness (invariants, safety, no crashes) > Performance > Complexity > Style
    - Protecting existing users > Adding new features
@@ -570,6 +582,7 @@ SKILL QUALITIES
 
 1. Language-agnostic — see the critical rule above. This is non-negotiable.
 2. {TRIGGER_TYPES.strip()}
+   {UNIFIED_TRIGGER_FORMAT.strip()}
 3. Explicit precedence chain: Correctness > Performance > Complexity > Style
 4. Concrete definitions — define key terms explicitly
 5. Actionable — tell the reviewer WHAT to do and WHEN
@@ -635,6 +648,7 @@ SKILL QUALITIES
 
 1. Language-agnostic — triggers must work for any language
 2. {TRIGGER_TYPES.strip()}
+   {UNIFIED_TRIGGER_FORMAT.strip()}
 3. Explicit precedence chain: Correctness > Performance > Complexity > Style
 4. Concrete definitions — define key terms explicitly
 5. Actionable — tell the reviewer WHAT to do and WHEN

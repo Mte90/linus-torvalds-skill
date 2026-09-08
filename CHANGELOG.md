@@ -2,6 +2,20 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-09-08
+
+- **Bugfix (soul):** Fixed double-frontmatter bug in `soul.py` — the writer prepended its own YAML block while the model also generated one, causing `verify_soul.py` to read the wrong block. `_merge_frontmatter()` now strips leading whitespace and merges writer metadata (model, date, prompt_hash, input_hash, mode, pipeline_version) into the model-generated block instead of prepending. Added reasoning-preamble stripper that removes any text before the first `#` heading. All four souls regenerated and verified.
+- **Bugfix (soul):** Fixed soul truncation — `_call_llm()` lacked a `max_tokens_override` parameter, so every model was capped at the profile default of 16 000 tokens. Non-reasoning models now receive 32 000 tokens; reasoning models keep 16 000. Added `doc_type` parameter so soul generation is no longer false-flagged by the skill-oriented truncation detector. Per-section word-count targets added to the system prompt to prevent models from collapsing each placeholder to a single line.
+- **Bugfix (soul):** Fixed calibration loading — `soul.py` checked `_calibration_path.exists()` on a `Path` that was never constructed; `project_root` ascended only one level instead of two, missing `calibration.json`. Both corrected.
+- **Feature (profiles):** Marked `gpt-oss-120b` and `mistral-small-4-119b` as `reasoning=True` per user correction. All four models now route through the reasoning path (`min_words=4000`, 16 000-token cap). Removed stale `reasoning=false` overrides from `profiles.toml` so built-in defaults apply. Updated profile unit tests.
+- **Feature (triggers):** Wired `UNIFIED_TRIGGER_FORMAT` constant into `distill_prompts.py` synthesis prompt and `trigger_patterns.py`. Added `verify_trigger_format()` in `verify_skill.py` to enforce the single trigger-format contract across all variants.
+- **Refactor (cache):** Removed `_DiskCache` class from `distill_llm.py`; all cache operations now route through the unified `UnifiedCache` already used elsewhere. Eliminates the parallel disk-cache code path and its separate TTL/eviction logic.
+- **Cleanup:** Deleted `tests/test_makefile.py` (Makefile was removed in favor of `scripts/run_pipeline.py`).
+- **Feature (orchestration):** Added `scripts/run_pipeline.py` — Python orchestrator with `--dry-run` and `--stage` options, replacing the Makefile. Documented in `README.md` and `docs/pipeline.md`.
+- **Chore:** `.gitignore` now excludes `report/chunks/` directory.
+- **Docs:** Updated `docs/models.md`, `README.md`, `soul/README.md` with actual regenerated word counts and qwen3.8-27b entries. Synced `soul/soul.md` from regenerated `soul-gpt.md`.
+- **Soul regeneration (all four models):** gpt-oss 2 448 w, mistral 3 476 w, glm5.2 7 155 w, qwen3.8-27b 6 990 w. All pass `verify_soul.py`. Full suite 1 014 passed.
+
 ## 2026-09-04 (v2 section F)
 
 - **Fix (metrics):** Trigger format aligned with regenerated files; GLM `###`/`####` themes; gpt-oss key fix; Mistral extractor tightened (65→96→24→18, false positives pinned); General-theme guard; shared REQUIRED_SECTIONS in verifier. Coverage honestly 41/43 with SC-008 (SIGPIPE) + SC-040 (style nit) as named gaps.

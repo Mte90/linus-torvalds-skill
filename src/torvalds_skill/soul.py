@@ -7,8 +7,11 @@ how to *be*: its values, temperament, and decision-making philosophy.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +19,8 @@ from . import config
 from .distill import _format_calibration_for_prompt
 from .distill_llm import _call_llm
 from .distill_sanitize import sanitize_skill
+
+SOUL_PIPELINE_VERSION = "soul-frontmatter-v1"
 
 SOUL_SYSTEM_PROMPT = """\
 You are an expert at distilling the decisional system of a senior engineer
@@ -350,7 +355,12 @@ clear feedback, or is willfully lazy. It does NOT fire for honest mistakes
 or genuine learners. The calibration is the point.
 
 ## Output format
-Target word count: 8000-12000 words. Write comprehensively but concisely.
+MINIMUM {min_words} words. Do NOT write concisely. Every section must be thorough,
+detailed, and fully developed. A short document is a failed document.
+
+Each section below has a word target. These are floors, not ceilings. The
+document must reach {min_words} words total. If a section falls short, expand
+it with more examples, more quotes, more reasoning — not padding.
 
 Write a markdown document with this structure:
 
@@ -375,46 +385,66 @@ metadata:
 # Soul of the Torvalds Reviewer
 
 ## Identity
-[Narrative paragraph: who this reviewer is, derived from interview data.]
+[10% of total. Narrative, first-person: who this reviewer is, how they got
+here, what they care about, derived from interview data. Write at least 3
+substantial paragraphs. This is the emotional core of the document.]
 
 ## Operating Principles
 ### Core Philosophy
-[3-6 fundamental values, cited from interview data.]
+[8% of total. 3-6 fundamental values, each with a full paragraph explaining
+the value, why it matters, and a quote from interview data supporting it.]
 ### Observable Behaviors
-[3-6 concrete, verifiable behaviors in first person.]
+[8% of total. 3-6 concrete, verifiable behaviors in first person. Each
+behavior gets a paragraph with an example of when it fires.]
 
 ## Decision Patterns
-[If-then rules with triggers, actions, and rationales. 8-12 patterns.]
+[25% of total — the largest section. 8-12 if-then rules. Each rule has:
+- Trigger condition (what in the code/practice fires it)
+- Action (what the reviewer does)
+- Rationale (why)
+- A verbatim quote from the moves corpus illustrating it
+- N/350 sampled moves showing this pattern
+Write each rule as a full paragraph, not a one-liner.]
 
 ## Review Workflow
-[Numbered step-by-step review process, derived from patterns.]
+[10% of total. Numbered step-by-step review process, derived from patterns.
+Each step gets a paragraph explaining what to look for and why.]
 
 ## Communication Style
 ### Prohibitions (never do these)
+[3% of total. Each prohibition with a brief rationale.]
 ### Mandatory patterns (always do these)
+[5% of total. Each pattern with an example.]
 ### Opening patterns
+[3% of total. How reviews begin, with examples.]
 ### Closing patterns
+[3% of total. How reviews end, with examples.]
 
 ## Emergent Hierarchy
-[Derived from calibration data, ranked by reject rate.]
+[6% of total. Derived from calibration data, ranked by reject rate. Each
+tier gets a paragraph explaining what falls into it and why.]
 
 ## Interlocutor Model
-[Derived from INTERLOCUTOR DATA: maintainers, newcomers, peers.]
+[6% of total. Derived from INTERLOCUTOR DATA: maintainers, newcomers, peers.
+Describe each type and how the reviewer adapts.]
 
 ## Escalation Rules
-[Autonomy boundaries: decide alone, ask user, iterate.]
+[5% of total. Autonomy boundaries: decide alone, ask user, iterate. Each
+rule with a concrete example.]
 
 ## Error Gravity
-[Quantitative error classification: fatal, fixable, tolerable.]
+[5% of total. Quantitative error classification: fatal, fixable, tolerable.
+Each class with examples and post-error behavior.]
 
 ## Anti-Soul
-[Forbidden behaviors, at least 7 items.]
+[3% of total. Forbidden behaviors, at least 7 items. Each with why it's
+forbidden.]
 
 ## Voices (verbatim quotes)
-[8-12 verbatim Torvalds quotes, sourced.]
+[2% of total. 8-12 verbatim Torvalds quotes, sourced.]
 
 ## Insult Vocabulary
-[Actual insults with firing conditions.]
+[2% of total. Actual insults with firing conditions.]
 ```
 
 ## Rules
@@ -494,13 +524,16 @@ def build_soul_prompt(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
-def _build_soul_system_prompt(calibration: dict | None = None) -> str:
+def _build_soul_system_prompt(
+    calibration: dict | None = None,
+    min_words: int = 8000,
+) -> str:
     """Build the soul system prompt with calibration data injected.
 
     If calibration data is provided, inject formatted severity statistics
     into the prompt where the instructions reference calibration data.
     """
-    prompt = SOUL_SYSTEM_PROMPT
+    prompt = SOUL_SYSTEM_PROMPT.format(min_words=min_words)
 
     if calibration:
         # Format calibration data using the distill repair pattern
@@ -536,6 +569,75 @@ def _strip_code_fences(text: str) -> str:
     return body
 
 
+def _strip_reasoning_preamble(text: str) -> str:
+    """Strip reasoning/thinking content emitted in the content channel.
+
+    Reasoning models sometimes prepend chain-of-thought analysis before the
+    actual document. Cut everything before the first real section heading
+    (## Section 0, ## Identity) or a YAML frontmatter fence (---).
+    """
+    pattern = re.compile(r"^(?:##\s*(?:Section\s*0|Identity)|---\s*$)", re.MULTILINE)
+    match = pattern.search(text)
+    if match and match.start() > 0:
+        preamble = text[: match.start()].strip()
+        if len(preamble) > 50:
+            return text[match.start() :]
+    return text
+
+
+def _merge_frontmatter(response: str, prompt_hash: str, model: str, date_utc: str) -> str:
+    """Merge writer traceability fields into model-generated frontmatter.
+
+    If response has frontmatter, inject prompt_hash, model, date, pipeline_version
+    before the closing ---. If no frontmatter exists, prepend a complete block.
+    """
+    stripped = response.lstrip()
+    if not stripped.startswith("---"):
+        # Model didn't generate frontmatter; prepend writer fields only
+        return (
+            "---\n"
+            f"prompt_hash: {prompt_hash}\n"
+            f"model: {model}\n"
+            f"date: {date_utc}\n"
+            f"pipeline_version: {SOUL_PIPELINE_VERSION}\n"
+            "---\n\n"
+            + response
+        )
+
+    # Find the closing --- line
+    lines = stripped.splitlines(keepends=True)
+    close_idx = None
+    for i, line in enumerate(lines[1:], 1):
+        if line.strip() == "---":
+            close_idx = i
+            break
+
+    if close_idx is None:
+        # Malformed frontmatter; prepend writer fields only
+        return (
+            "---\n"
+            f"prompt_hash: {prompt_hash}\n"
+            f"model: {model}\n"
+            f"date: {date_utc}\n"
+            f"pipeline_version: {SOUL_PIPELINE_VERSION}\n"
+            "---\n\n"
+            + response
+        )
+
+    # Insert writer fields before the closing ---
+    writer_fields = (
+        f"prompt_hash: {prompt_hash}\n"
+        f"model: {model}\n"
+        f"date: {date_utc}\n"
+        f"pipeline_version: {SOUL_PIPELINE_VERSION}\n"
+    )
+    before_close = "".join(lines[:close_idx])
+    closing = lines[close_idx]
+    after_close = "".join(lines[close_idx + 1 :])
+
+    return before_close + writer_fields + closing + after_close
+
+
 def generate_soul(
     patterns_path: Path,
     output_path: Path,
@@ -548,7 +650,7 @@ def generate_soul(
 
     # Load calibration data and append to user prompt
     if project_root is None:
-        project_root = patterns_path.parent.parent.parent
+        project_root = patterns_path.parent.parent
     calibration_path = project_root / "data" / "calibration.json"
     if calibration_path.exists():
         calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
@@ -603,11 +705,70 @@ def generate_soul(
 
     if model is None:
         model = config.MODEL
+
+    # Reasoning models (GLM5.2, qwen3.8-27b) are capped at 16000 tokens
+    # by provider constraint. Reasoning phase consumes tokens, leaving fewer
+    # for content. Lower the word target for them so the prompt doesn't
+    # demand output the model cannot produce.
+    from .profiles import get_profile
+
+    profile = get_profile(model)
+    min_words = 4000 if profile.reasoning else 8000
+    max_tokens_override = None if profile.reasoning else 32000
+
     # Build system prompt with calibration data injected
-    system_prompt = _build_soul_system_prompt(calibration if calibration_path.exists() else None)
-    response = _call_llm(user_prompt, system_prompt=system_prompt, model=model)
+    system_prompt = _build_soul_system_prompt(
+        calibration if calibration_path.exists() else None,
+        min_words=min_words,
+    )
+    response = _call_llm(
+        user_prompt,
+        system_prompt=system_prompt,
+        model=model,
+        max_tokens_override=max_tokens_override,
+        doc_type="soul",
+    )
     response = _strip_code_fences(response)
+    response = _strip_reasoning_preamble(response)
     response = sanitize_skill(response)
+
+    # Word-count verification: if output is below the minimum and this is
+    # not a reasoning model (reasoning models are token-capped by provider),
+    # retry once with a larger token budget.
+    actual_words = len(response.split())
+    if actual_words < min_words and not profile.reasoning:
+        print(
+            f"soul short ({actual_words}w < {min_words}w min); "
+            f"retrying with 48000 token budget",
+            file=sys.stderr,
+        )
+        retry_response = _call_llm(
+            user_prompt,
+            system_prompt=system_prompt,
+            model=model,
+            max_tokens_override=48000,
+            doc_type="soul",
+            retries=1,
+        )
+        retry_response = _strip_code_fences(retry_response)
+        retry_response = _strip_reasoning_preamble(retry_response)
+        retry_response = sanitize_skill(retry_response)
+        retry_words = len(retry_response.split())
+        if retry_words > actual_words:
+            response = retry_response
+            actual_words = retry_words
+            print(f"retry improved to {actual_words}w", file=sys.stderr)
+        else:
+            print(
+                f"retry did not improve ({retry_words}w); keeping original",
+                file=sys.stderr,
+            )
+
+    prompt_hash = hashlib.sha256(
+        (system_prompt + str(calibration if calibration_path.exists() else {})).encode("utf-8")
+    ).hexdigest()[:16]
+    date_utc = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    response = _merge_frontmatter(response, prompt_hash, model, date_utc)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(response, encoding="utf-8")

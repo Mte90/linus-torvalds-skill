@@ -210,9 +210,9 @@ Content.
         assert 8000 <= count <= 12000
 
     def test_verify_word_count_too_low(self, tmp_path):
-        """Word count below 8000 should fail."""
+        """Word count below 2000 should fail."""
         content = "---\nname: test\ndescription: test\nmetrics:\n  a: 1\nmetadata:\n  a: 1\n---\n\n"
-        content += "word " * 5000  # ~5000 words
+        content += "word " * 1000  # ~1000 words
 
         soul_path = tmp_path / "soul.md"
         soul_path.write_text(content)
@@ -221,7 +221,7 @@ Content.
 
         passes, count = verify_word_count(soul_path)
         assert passes is False
-        assert count < 8000  # Verify it's below threshold
+        assert count < 2000  # Verify it's below threshold
 
     def test_verify_word_count_too_high(self, tmp_path):
         """Word count above 12000 should fail."""

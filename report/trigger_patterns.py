@@ -233,11 +233,5 @@ STYLE_NAME_MAP = {
     "mistral": "mistral",
 }
 
-# Unified trigger format for distillation output
-UNIFIED_TRIGGER_FORMAT = """- **Trigger**: <language-agnostic description of the pattern>
-  - **Type**: invariant-true | invariant-false | precedence-rule | general-guideline
-  - **What to look for**: concrete detection criteria
-  - **Why it's a problem**: underlying design principle being violated
-  - **Severity**: reject | request-changes | nitpick | discussion
-  - **Example**: "[verbatim Torvalds quote]"
-"""
+# Unified trigger format for distillation output — single source of truth in distill_prompts.py
+from torvalds_skill.distill_prompts import UNIFIED_TRIGGER_FORMAT  # noqa: E402,F401

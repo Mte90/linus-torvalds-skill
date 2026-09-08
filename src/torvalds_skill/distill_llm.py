@@ -14,106 +14,13 @@ import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
-from pathlib import Path
 
 from . import config
+from .cache import cache_get, cache_set
 from .distill_prompts import DISTILL_SYSTEM_PROMPT
 
 # Thread-safe in-memory cache with LRU eviction
 _cache_lock = threading.Lock()
-
-
-class _DiskCache:
-    """Disk-backed LLM cache with TTL support.
-
-    Stores entries in JSONL format: {"key": "<sha256>", "model": "...", "response": "...", "ts": <unix epoch>}
-    Lazy loads the entire file into memory on first access, then keeps in sync with appends.
-    """
-
-    def __init__(self):
-        self._cache_path = Path(config.LLM_CACHE_PATH)
-        self._ttl_hours = config.LLM_CACHE_TTL_HOURS
-        self._cache: dict[str, dict] = {}  # key -> {model, response, ts}
-        self._loaded = False
-        self._lock = threading.Lock()
-
-    def _load(self):
-        """Load cache from disk. Called once per process."""
-        if self._loaded:
-            return
-        with self._lock:
-            if self._loaded:
-                return
-            self._cache.clear()
-            if not self._cache_path.exists():
-                self._loaded = True
-                return
-
-            # Read file line by line, skip corrupt last line
-            with open(self._cache_path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                        if all(k in entry for k in ("key", "model", "response", "ts")):
-                            self._cache[entry["key"]] = {
-                                "model": entry["model"],
-                                "response": entry["response"],
-                                "ts": entry["ts"],
-                            }
-                    except json.JSONDecodeError:
-                        # Skip corrupt lines (including partial last line)
-                        continue
-            self._loaded = True
-
-    def get(self, key: str) -> tuple[str, str] | None:
-        """Get cached entry if not expired. Returns (model, response) or None."""
-        if self._ttl_hours <= 0:
-            return None
-        self._load()
-        with self._lock:
-            entry = self._cache.get(key)
-            if entry is None:
-                return None
-            # Check TTL
-            if time.time() - entry["ts"] > self._ttl_hours * 3600:
-                return None
-            return (entry["model"], entry["response"])
-
-    def set(self, key: str, model: str, response: str):
-        """Append entry to disk cache and update in-memory cache."""
-        if self._ttl_hours <= 0:
-            return
-        self._load()
-        with self._lock:
-            # Update in-memory cache
-            self._cache[key] = {"model": model, "response": response, "ts": time.time()}
-            # Append to disk (create parent dirs if needed)
-            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._cache_path, "a", encoding="utf-8") as f:
-                f.write(
-                    json.dumps(
-                        {"key": key, "model": model, "response": response, "ts": time.time()}
-                    )
-                    + "\n"
-                )
-
-    def clear_expired(self):
-        """Remove expired entries from in-memory cache."""
-        if self._ttl_hours <= 0:
-            return
-        with self._lock:
-            now = time.time()
-            cutoff = now - self._ttl_hours * 3600
-            self._cache = {k: v for k, v in self._cache.items() if v["ts"] > cutoff}
-
-
-# Global disk cache instance
-_disk_cache = _DiskCache()
-
-
 class _WallClockTimeout:
     """Context manager enforcing a wall-clock timeout via a watchdog thread.
 
@@ -222,21 +129,14 @@ def _detect_truncation(text: str, doc_type: str = "skill", strict: bool | None =
         strict = doc_type == "soul"
 
     if strict:
-        if (
-            stripped.endswith(".")
-            or stripped.endswith("!")
-            or stripped.endswith("?")
-            or stripped.endswith("```")
-            or stripped.endswith("---")
-            or stripped.endswith("##")
-            or stripped.endswith("#")
-        ):
+        proper_endings = (".", "!", "?", "```", "---", "##", "#", "*")
+        if any(stripped.endswith(ending) for ending in proper_endings):
             return False  # Proper ending
         # Doesn't end properly for reasoning model
         return True
 
     # General check for other models
-    proper_endings = (".", "!", "?", "```", "---", "##", "#")
+    proper_endings = (".", "!", "?", "```", "---", "##", "#", "*")
     if any(stripped.endswith(ending) for ending in proper_endings):
         return False
 
@@ -245,7 +145,7 @@ def _detect_truncation(text: str, doc_type: str = "skill", strict: bool | None =
     if words:
         last_word = words[-1]
         # If last word doesn't end with punctuation and isn't a code element
-        if not any(last_word.endswith(p) for p in (".", "!", "?", ")", "]", "`")):
+        if not any(last_word.endswith(p) for p in (".", "!", "?", ")", "]", "`", "*")):
             return True
 
     return False
@@ -355,6 +255,8 @@ def _call_llm(
     model: str | None = None,
     system_prompt: str | None = None,
     wall_clock_override: int | None = None,
+    max_tokens_override: int | None = None,
+    doc_type: str = "skill",
 ) -> str:
     """Call the LLM for the distillation step. Returns raw text.
 
@@ -397,9 +299,9 @@ def _call_llm(
                 return str(cache[cache_key])  # type: ignore[attr-defined, no-any-return]
 
         # Check disk cache (thread-safe)
-        disk_result = _disk_cache.get(cache_key)
+        disk_result = cache_get("distill", model, prompt, {"system_prompt": sys_prompt})
         if disk_result is not None:
-            disk_model, disk_response = disk_result
+            disk_response = disk_result
             # Load into memory cache
             with _cache_lock:
                 if len(_call_llm._cache) >= _call_llm._max_size:  # type: ignore[attr-defined]
@@ -449,6 +351,10 @@ def _call_llm(
         #   gpt-oss-120b: 16000, glm5.2: 16000, mistral-small-4-119b: 16000
         if is_reasoning:
             payload["max_tokens"] = call_profile.max_tokens
+        # Caller can override max_tokens (e.g., soul generation needs more
+        # tokens than the distill default to reach 8000+ words).
+        if max_tokens_override is not None:
+            payload["max_tokens"] = max_tokens_override
 
         # Per-read timeout: catches dead connections (no bytes for 120s).
         # Wall-clock timeout: catches keepalive-stalled SSE streams where
@@ -541,7 +447,7 @@ def _call_llm(
 
                 # Check for truncation (doc_type="skill" for distill output, strict=False for skill)
                 if _detect_truncation(
-                    result, doc_type="skill", strict=call_profile.strict_truncation
+                    result, doc_type=doc_type, strict=call_profile.strict_truncation
                 ):
                     # Policy: return partial result on truncation (don't retry with same prompt)
                     # Rationale: same prompt → same truncation → wasted tokens
@@ -576,7 +482,7 @@ def _call_llm(
                             _call_llm._cache[cache_key] = patched  # type: ignore[attr-defined]
                             _call_llm._cache.move_to_end(cache_key)  # type: ignore[attr-defined]
                         # Write to disk cache (only non-truncated responses)
-                        _disk_cache.set(cache_key, call_model, patched)
+                        cache_set("distill", model, prompt, patched, {"system_prompt": sys_prompt})
                     return patched
                 # Cache the result (thread-safe)
                 if cache_key:
@@ -586,7 +492,7 @@ def _call_llm(
                         _call_llm._cache[cache_key] = result  # type: ignore[attr-defined]
                         _call_llm._cache.move_to_end(cache_key)  # type: ignore[attr-defined]
                     # Write to disk cache (only non-truncated responses)
-                    _disk_cache.set(cache_key, call_model, result)
+                    cache_set("distill", model, prompt, result, {"system_prompt": sys_prompt})
                 return result
 
             except (

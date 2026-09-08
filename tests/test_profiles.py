@@ -50,18 +50,18 @@ class TestGetProfile:
         assert profile.parallel_workers == 3  # GLM keeps parallelism
 
     def test_get_gpt_oss_120b_profile(self):
-        """gpt-oss-120b profile should have default settings."""
+        """gpt-oss-120b profile should have reasoning=True (reasoning model)."""
         profile = get_profile("gpt-oss-120b")
-        assert profile.reasoning is False
-        assert profile.distill_mode == "two-stage"
-        assert profile.review_timeout == 900
+        assert profile.reasoning is True
+        assert profile.distill_mode == "single"
+        assert profile.review_timeout == 2400
         assert profile.parallel_workers == 3
 
     def test_get_mistral_profile(self):
-        """mistral-small-4-119b profile should have default settings."""
+        """mistral-small-4-119b profile should have reasoning=True (reasoning model)."""
         profile = get_profile("mistral-small-4-119b")
-        assert profile.reasoning is False
-        assert profile.distill_mode == "two-stage"
+        assert profile.reasoning is True
+        assert profile.distill_mode == "single"
         assert profile.parallel_workers == 3
 
     def test_unknown_model_returns_default(self):
