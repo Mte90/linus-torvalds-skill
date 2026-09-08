@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import config
+from .cache import cache_clear, cache_compact, cache_stats
 from .calibrate_interviews import calibrate_interviews
 from .classify import is_review
 from .classify_interviews import classify_interviews
@@ -29,6 +30,7 @@ from .distill import distill_skill
 from .extract import extract_moves
 from .extract_interviews import extract_interviews
 from .models import EmailRecord, iter_corpus
+from .profiles import get_profile, get_profile_table
 from .validate import validate_all
 
 DATA = Path("data")
@@ -265,11 +267,21 @@ def stage_run(sample_size: int, workers: int):
     stage_classify()
     stage_extract(sample_size, workers, resume=False)
     stage_cluster()
+    # Calibrate before distill - graceful skip with warning if calibration data absent
+    try:
+        stage_calibrate_interviews()
+    except SystemExit as e:
+        # calibrate_interviews raises SystemExit if email moves file not found
+        print(f"Warning: Calibration skipped ({e}). Distilling without calibration data.")
     stage_distill(top_n=40)
 
 
-def stage_interviews_pipeline(model: str, resume: bool):
+def stage_interviews_pipeline(model: str | None = None, resume: bool = False):
     """Run the full interview pipeline: classify → extract → cluster → calibrate."""
+    # Use config.MODEL if not specified
+    if model is None:
+        model = config.MODEL
+
     # Step 1: Classify interviews
     print("Step 1/4: Classifying interviews...")
     classified_count = classify_interviews("data/interviews/", "data/interviews_classified.jsonl")
@@ -301,8 +313,11 @@ def stage_classify_interviews():
     print(f"Classified {count} passages")
 
 
-def stage_extract_interviews(model: str, resume: bool):
+def stage_extract_interviews(model: str | None = None, resume: bool = False):
     """Run extract_interviews stage."""
+    # Use config.MODEL if not specified
+    if model is None:
+        model = config.MODEL
     count = extract_interviews(
         "data/interviews_classified.jsonl", "data/interview_moves.jsonl", model=model
     )
@@ -334,6 +349,32 @@ def stage_validate():
         sys.exit(1)
 
 
+def stage_profiles():
+    """List known profiles and active overrides."""
+    print("Known profiles:")
+    for model_name, profile in get_profile_table():
+        print(f"  {model_name}:")
+        print(f"    reasoning={profile.reasoning}, slow={profile.slow}")
+        print(f"    timeout={profile.timeout}s, max_tokens={profile.max_tokens}")
+        print(
+            f"    parallel_workers={profile.parallel_workers}, distill_mode={profile.distill_mode}"
+        )
+        if profile.fallback_models:
+            print(f"    fallback_models={profile.fallback_models}")
+
+    # Show active overrides for current model
+    print(f"\nActive model: {config.MODEL}")
+    active_profile = get_profile(config.MODEL)
+    print(f"Resolved profile for {config.MODEL}:")
+    print(f"  reasoning={active_profile.reasoning}, slow={active_profile.slow}")
+    print(f"  timeout={active_profile.timeout}s, max_tokens={active_profile.max_tokens}")
+    print(
+        f"  parallel_workers={active_profile.parallel_workers}, distill_mode={active_profile.distill_mode}"
+    )
+    if active_profile.fallback_models:
+        print(f"  fallback_models={active_profile.fallback_models}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="torvalds_skill",
@@ -349,6 +390,14 @@ def main():
     )
     p_extract.add_argument("--workers", type=int, default=8, help="concurrent LLM calls")
     p_extract.add_argument("--resume", action="store_true", help="skip already-processed emails")
+    p_extract.add_argument(
+        "--no-cache", action="store_true", help="bypass cache (equivalent to CACHE_ENABLED=0)"
+    )
+    p_extract.add_argument(
+        "--fresh",
+        action="store_true",
+        help="clear cache before extraction (equivalent to --no-cache + clear)",
+    )
 
     sub.add_parser("cluster", help="cluster moves → patterns")
 
@@ -397,8 +446,8 @@ def main():
     p_interviews_pipeline.add_argument(
         "--model",
         type=str,
-        default="gpt-oss-120b",
-        help="LLM model for extraction (default: gpt-oss-120b)",
+        default=None,
+        help="LLM model for extraction (default: from config)",
     )
     p_interviews_pipeline.add_argument(
         "--resume", action="store_true", help="resume from checkpoint"
@@ -411,7 +460,7 @@ def main():
         "extract-interviews", help="extract moves from interviews"
     )
     p_extract_interviews.add_argument(
-        "--model", type=str, default="gpt-oss-120b", help="LLM model (default: gpt-oss-120b)"
+        "--model", type=str, default=None, help="LLM model (default: from config)"
     )
     p_extract_interviews.add_argument(
         "--resume", action="store_true", help="resume from checkpoint"
@@ -425,6 +474,16 @@ def main():
 
     sub.add_parser("audit", help="generate audit report, flowchart, and reproduce script")
 
+    sub.add_parser("profiles", help="list known profiles and active overrides")
+
+    # Cache management subcommand
+    p_cache = sub.add_parser("cache", help="cache management (stats, clear, compact)")
+    p_cache.add_argument(
+        "command",
+        choices=["stats", "clear", "compact"],
+        help="Cache operation: stats (show info), clear (delete all), compact (remove expired + dedupe)",
+    )
+
     args = parser.parse_args()
 
     active_model = getattr(args, "model", None) or config.MODEL
@@ -433,6 +492,14 @@ def main():
     if args.stage == "classify":
         stage_classify()
     elif args.stage == "extract":
+        # Handle cache flags
+        if args.fresh:
+            count = cache_clear()
+            print(f"Cleared {count} cache entries before extraction")
+        if args.no_cache or args.fresh:
+            import os
+
+            os.environ["CACHE_ENABLED"] = "0"
         stage_extract(args.sample, args.workers, args.resume)
     elif args.stage == "cluster":
         stage_cluster()
@@ -501,6 +568,25 @@ def main():
         from .audit import run_audit
 
         run_audit()
+    elif args.stage == "profiles":
+        stage_profiles()
+    elif args.stage == "cache":
+        if args.command == "stats":
+            stats = cache_stats()
+            print(f"Cache path: {stats['path']}")
+            print(f"TTL: {stats['ttl_hours']} hours")
+            print(f"Active entries: {stats['active_entries']}")
+            print(f"Expired entries: {stats['expired_entries']}")
+            print(f"File size: {stats['file_size_bytes']} bytes")
+        elif args.command == "clear":
+            count = cache_clear()
+            print(f"Cleared {count} cache entries")
+        elif args.command == "compact":
+            removed = cache_compact()
+            stats = cache_stats()
+            print(
+                f"Compacted cache: removed {removed} entries, {stats['active_entries']} remaining"
+            )
 
 
 if __name__ == "__main__":

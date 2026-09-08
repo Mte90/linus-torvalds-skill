@@ -20,13 +20,12 @@ import logging
 import os
 import random
 import re
-import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import config
+from . import cache, config
 from .audit import log_decision
 from .models import EmailRecord
 
@@ -74,20 +73,30 @@ STRICT_SEVERITIES = {"reject", "request-changes"}
 LENIENT_SEVERITIES = {"nitpick"}
 
 
-# Cache configuration - read at runtime, not import time
+# Cache configuration - use unified cache module
+# For backward compatibility, EXTRACT_CACHE=0 still disables cache
+# But prefer CACHE_ENABLED=0 for unified control
 def _get_cache_enabled():
     """Check if cache is enabled."""
+    # Check unified cache env first, fall back to legacy EXTRACT_CACHE
+    if os.environ.get("CACHE_ENABLED") is not None:
+        return os.environ.get("CACHE_ENABLED", "1") != "0"
     return os.environ.get("EXTRACT_CACHE", "1") != "0"
 
 
-def _get_cache_path():
-    """Get cache path from environment."""
-    return os.environ.get("EXTRACT_CACHE_PATH", "data/extract_cache.jsonl")
+# Unified cache is imported lazily to avoid circular imports
+def _get_cache():
+    """Get unified cache instance."""
+    from . import cache
+
+    return cache.get_cache()
 
 
-# Thread lock for cache access
-_CACHE_LOCK = threading.Lock()
-_CACHE_DATA: dict[str, dict] | None = None
+def _compute_cache_key(model_name: str, prompt_text: str) -> str:
+    """Compute cache key for backward compatibility (deprecated, use unified cache)."""
+    from . import cache
+
+    return cache._compute_key("extract", model_name, prompt_text, None)
 
 
 def _get_logger():
@@ -195,76 +204,6 @@ def _get_cache_logger():
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
     return logger
-
-
-def _compute_cache_key(model_name: str, prompt_text: str) -> str:
-    """Compute SHA-256 cache key from model name and prompt text."""
-    return hashlib.sha256(f"{model_name}:{prompt_text}".encode()).hexdigest()
-
-
-def _load_cache() -> dict[str, dict]:
-    """Load cache from JSONL file into memory. Returns empty dict if file doesn't exist or is empty."""
-    global _CACHE_DATA
-    if _CACHE_DATA is not None:
-        return _CACHE_DATA
-
-    cache: dict[str, dict] = {}
-    cache_path = Path(_get_cache_path())
-
-    if not cache_path.exists():
-        _CACHE_DATA = cache
-        return cache
-
-    try:
-        with open(cache_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    key = entry.get("key")
-                    if key:
-                        cache[key] = entry
-                except json.JSONDecodeError:
-                    # Skip corrupt lines silently
-                    continue
-    except OSError:
-        # If we can't read the file, start with empty cache
-        pass
-
-    _CACHE_DATA = cache
-    return cache
-
-
-def _save_cache_entry(key: str, response: str):
-    """Append a cache entry to the JSONL file. Thread-safe."""
-    cache_path = Path(_get_cache_path())
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-    entry = {
-        "key": key,
-        "response": response,
-        "ts": int(time.time()),
-    }
-
-    with _CACHE_LOCK:
-        with open(cache_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-        # Update in-memory cache
-        if _CACHE_DATA is not None:
-            _CACHE_DATA[key] = entry
-
-
-def _get_cached_response(key: str) -> str | None:
-    """Get cached response by key. Returns None if not found."""
-    with _CACHE_LOCK:
-        cache = _load_cache()
-        entry = cache.get(key)
-        if entry:
-            return entry.get("response")
-    return None
 
 
 def _call_llm(email: EmailRecord, retries: int | None = None) -> dict:
@@ -449,11 +388,14 @@ def extract_moves(email: EmailRecord) -> dict:
     # Build user content for cache key computation
     user_content = f"Subject: {email.subject}\nDate: {email.date}\n\n{email.body[:8000]}"
     prompt_text = SYSTEM_PROMPT + user_content
-    cache_key = _compute_cache_key(config.MODEL, prompt_text)
+
+    # Use unified cache with key = SHA(stage + model + prompt + params)
+    params = {"temperature": 0.1}
+    cache_key = cache._compute_key("extract", config.MODEL, prompt_text, params)
 
     # Check cache before calling LLM
     if _get_cache_enabled():
-        cached_response = _get_cached_response(cache_key)
+        cached_response = cache.get_cache().get(cache_key)
         if cached_response is not None:
             try:
                 parsed = _parse_json_response(cached_response)
@@ -487,7 +429,7 @@ def extract_moves(email: EmailRecord) -> dict:
         if _get_cache_enabled():
             raw_response = result.get("_raw_content")
             if raw_response:
-                _save_cache_entry(cache_key, raw_response)
+                cache.get_cache().set(cache_key, raw_response)
 
         return {
             "email_message_id": email.message_id,

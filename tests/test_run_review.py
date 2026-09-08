@@ -86,10 +86,11 @@ class TestModelConfig:
 
     def test_models_dict_has_three_models(self):
         """MODELS dict should have exactly three models."""
-        assert len(run_review.MODELS) == 3
+        assert len(run_review.MODELS) == 4
         assert "gpt-oss-120b" in run_review.MODELS
         assert "glm5.2" in run_review.MODELS
         assert "mistral-small-4-119b" in run_review.MODELS
+        assert "qwen3.8-27b" in run_review.MODELS
 
     def test_gpt_oss_skill_path(self):
         """gpt-oss-120b should point to SKILL.md."""
@@ -105,6 +106,11 @@ class TestModelConfig:
         """mistral-small-4-119b should point to SKILL-Mistral.md."""
         expected = run_review.SKILL_DIR / "SKILL-Mistral.md"
         assert run_review.MODELS["mistral-small-4-119b"] == expected
+
+    def test_qwen_skill_path(self):
+        """qwen3.8-27b should point to SKILL-Qwen.md."""
+        expected = run_review.SKILL_DIR / "SKILL-Qwen.md"
+        assert run_review.MODELS["qwen3.8-27b"] == expected
 
 
 class TestTimeoutConfig:

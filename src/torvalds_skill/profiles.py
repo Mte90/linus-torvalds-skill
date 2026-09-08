@@ -104,9 +104,29 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         fallback_models=["gpt-oss-120b", "glm5.2"],
         review_max_tokens=None,
     ),
+    "qwen3.8-27b": ModelProfile(
+        # Reasoning model (verified: spends budget on thinking traces before
+        # content, like glm5.2) — single-call distill, long timeouts.
+        reasoning=True,
+        slow=True,
+        prompt_budget_chars=30000,
+        distill_mode="single",
+        strict_truncation=True,
+        timeout=600,
+        max_tokens=16000,
+        parallel_workers=3,
+        review_timeout=2400,
+        fallback_models=["gpt-oss-120b", "mistral-small-4-119b"],
+        review_max_tokens=None,
+    ),
 }
 
 # Default profile for unknown models
+# Rationale for defaults:
+# - parallel_workers=3: Match known profiles (gpt-oss-120b, glm5.2, mistral) for consistent throughput
+# - distill_mode="two-stage": Safer default for unknown models; single-call is GLM-specific
+# - no fallback_models: Unknown models shouldn't chain to known profiles automatically
+# - timeout=120: Standard timeout; slow/reasoning models set this explicitly in their profiles
 DEFAULT_PROFILE = ModelProfile(
     reasoning=False,
     slow=False,
@@ -115,78 +135,47 @@ DEFAULT_PROFILE = ModelProfile(
     strict_truncation=False,
     timeout=120,
     max_tokens=16000,
-    parallel_workers=1,
+    parallel_workers=3,  # Match known profiles for consistent throughput
     review_timeout=900,
-    fallback_models=[],
+    fallback_models=[],  # Unknown models don't auto-fallback to known profiles
     review_max_tokens=None,
 )
 
 
 def _load_toml_profile(model_name: str) -> ModelProfile | None:
-    """Load profile from profiles.toml if present.
+    """Load profile from profiles.toml if present using stdlib tomllib.
 
     TOML structure:
     [profiles.glm5.2]
     reasoning = true
     timeout = 900
     max_tokens = 32000
+    fallback_models = ["model-a", "model-b"]
     """
+    import tomllib
+
     toml_path = Path(__file__).resolve().parent.parent.parent / "profiles.toml"
     if not toml_path.exists():
         return None
 
     try:
-        # Simple TOML parser (stdlib only, no external deps)
         content = toml_path.read_text(encoding="utf-8")
-        lines = content.splitlines()
+        data = tomllib.loads(content)
 
         # Find [profiles.MODEL_NAME] section
-        in_section = False
-        profile_data: dict[str, Any] = {}
+        profiles_section = data.get("profiles", {})
+        if model_name not in profiles_section:
+            return None
 
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
+        profile_data = profiles_section[model_name]
 
-            # Section header
-            if line.startswith("["):
-                in_section = line == f"[profiles.{model_name}]"
-                continue
+        # Use dataclasses.replace for present-wins merge semantics
+        from dataclasses import replace
 
-            if in_section and "=" in line:
-                key, _, val = line.partition("=")
-                key, val = key.strip(), val.strip()
-                # Parse value
-                if val.lower() == "true":
-                    profile_data[key] = True
-                elif val.lower() == "false":
-                    profile_data[key] = False
-                elif val.startswith('"') and val.endswith('"'):
-                    profile_data[key] = val[1:-1]
-                elif val.startswith("[") and val.endswith("]"):
-                    # Parse list
-                    items = val[1:-1].split(",")
-                    profile_data[key] = [item.strip().strip('"') for item in items if item.strip()]
-                else:
-                    try:
-                        profile_data[key] = int(val)
-                    except ValueError:
-                        try:
-                            profile_data[key] = float(val)
-                        except ValueError:
-                            profile_data[key] = val
-
-        if profile_data:
-            # Use dataclasses.replace for present-wins merge semantics
-            from dataclasses import replace
-
-            base = KNOWN_PROFILES.get(model_name, DEFAULT_PROFILE)
-            return replace(base, **profile_data)  # type: ignore[arg-type]
+        base = KNOWN_PROFILES.get(model_name, DEFAULT_PROFILE)
+        return replace(base, **profile_data)  # type: ignore[arg-type]
     except Exception:
-        pass
-
-    return None
+        return None
 
 
 def _load_env_override(model_name: str) -> dict[str, Any]:

@@ -99,7 +99,7 @@ def generate_markdown(
 
     # Default model names for backward compatibility
     if model_names is None:
-        model_names = ["gpt-oss-120b", "glm5.2", "mistral"]
+        model_names = ["gpt-oss-120b", "glm5.2", "mistral", "qwen3.8-27b"]
     lines = []
 
     # YAML frontmatter
@@ -141,6 +141,9 @@ def generate_markdown(
     )
     lines.append(
         "| mistral-small-4-119b | `linus-torvalds-skill/SKILL-Mistral.md` | two-stage | 16000 | 120s (profile.default) | under-rates → upgrade borderline |"
+    )
+    lines.append(
+        "| qwen3.8-27b | `linus-torvalds-skill/SKILL-Qwen.md` | single-call (profile.reasoning) | 16000 | 600s / 2400s (profile.slow) | none measured |"
     )
     lines.append("")
     lines.append(

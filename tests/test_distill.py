@@ -1198,19 +1198,13 @@ Some intro text.
         assert "Example" not in titles
 
     def test_mistral_count_below_65_with_false_positive_examples(self):
-        """C4: Real Mistral skill extraction yields < 65 triggers (was 96, now 24).
+        """C4: Real Mistral skill extraction yields < 65 triggers (was 96, now 18).
 
         Before fix: 96 triggers (over-matched nested field labels + non-Level bullets)
-        After fix: 24 triggers (only column-0 bullets in Level sections)
+        After fix: 18 triggers (only column-0 bullets in Level sections - Theme headings)
 
-        Removed false positives (from SKILL-Mistral.md):
-        1. "Type" - nested field label under every trigger
-        2. "Severity" - nested field label under every trigger
-        3. "Example" - nested field label under every trigger
-        4. "What to look for" - nested field label
-        5. "Why it's a problem" - nested field label
-        6. "Correctness is the only non-negotiable" - outside Level section (Reviewer Mindset)
-        7. "Good taste is when the special case disappears" - outside Level section
+        Note: The Mistral format uses - **Theme: X** as top-level bullets within Level sections.
+        The extraction correctly captures these as (level, theme) pairs.
         """
         from report.trigger_patterns import extract_triggers_mistral
 
@@ -1220,23 +1214,27 @@ Some intro text.
         # Count must be strictly below 65
         assert len(triggers) < 65, f"Mistral count {len(triggers)} exceeds ceiling of 65"
 
-        # Actual count should be around 24 (verified)
-        assert len(triggers) == 24, f"Expected 24 triggers, got {len(triggers)}"
+        # Actual count should be 18 (verified after fix)
+        assert len(triggers) == 18, f"Expected 18 triggers, got {len(triggers)}"
 
-        titles = [t[1] for t in triggers]
+        themes = [t[1] for t in triggers]
+        levels = [t[0] for t in triggers]
 
-        # True triggers should be present
-        assert "Code must be correct before anything else" in titles
-        assert "Security bugs are ordinary bugs" in titles
-        assert "Eliminate special cases by reframing data structures" in titles
+        # True themes should be present
+        assert "Theme: Correctness Invariants" in themes
+        assert "Theme: Safety Invariants" in themes
+        assert "Theme: Data Structure Taste" in themes
 
-        # False positives should NOT be present
-        assert "Type" not in titles
-        assert "Severity" not in titles
-        assert "Example" not in titles
-        assert "What to look for" not in titles
-        assert "Correctness is the only non-negotiable" not in titles
-        assert "Good taste is when the special case disappears" not in titles
+        # All triggers should be within Level sections (not General)
+        assert all(level != "General" for level in levels), (
+            f"Found triggers outside Level sections: {levels}"
+        )
+
+        # False positives should NOT be present (nested field labels)
+        assert "Type" not in themes
+        assert "Severity" not in themes
+        assert "Example" not in themes
+        assert "What to look for" not in themes
 
 
 class TestDistillPromptSeverityQuotas:

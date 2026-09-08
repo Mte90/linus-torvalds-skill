@@ -23,8 +23,12 @@ import re
 import sys
 from pathlib import Path
 
-# Add report directory to path for importing trigger_patterns
+# Add paths for importing modules
 sys.path.insert(0, str(Path(__file__).parent.parent / "report"))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+# Import shared REQUIRED_SECTIONS from distill_data (C8: single source of truth)
+from torvalds_skill.distill_data import REQUIRED_SECTIONS
 
 DEFAULT_SKILL_PATH = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
 PATTERNS_PATH = Path(__file__).parent.parent / "data" / "patterns.json"
@@ -37,18 +41,6 @@ REQUIRED_FRONTMATTER_FIELDS = [
     "model",
     "date",
     "pipeline_version",
-]
-
-REQUIRED_SECTIONS = [
-    "Reviewer Mindset",
-    "Review Triggers",
-    "Precedence and Priorities",
-    "Decision Cards",
-    "Key Definitions",
-    "Anti-Patterns",
-    "Voice and Tone",
-    "Severity Calibration",
-    "Severity Decision Tree",
 ]
 
 CATEGORIES = [
@@ -636,36 +628,47 @@ def verify_trigger_format(skill_path: Path) -> tuple[bool, list[str]]:
 
     sys.path.insert(0, str(Path(__file__).parent / "report"))
 
-    from trigger_patterns import TRIGGER_FORMAT_PATTERNS, extract_triggers
+    from trigger_patterns import (
+        STYLE_NAME_MAP,
+        TRIGGER_FORMAT_PATTERNS,
+        detect_style,
+        extract_triggers,
+        has_known_markers,
+    )
 
     if not skill_path.exists():
         return False, [f"Skill file not found: {skill_path}"]
 
     content = skill_path.read_text(encoding="utf-8", errors="replace")
 
-    # Auto-detect style
-    if "**What to look for:**" in content:
-        style = "gpt-oss"
-    elif re.search(r"\*\*Trigger\*\*:\s*[^\*]", content):
-        style = "glm"
-    elif re.search(r"^\s*-\s*\*\*[A-Z]", content, re.MULTILINE):
-        style = "mistral"
-    else:
-        return False, ["Unknown trigger format - cannot auto-detect style"]
+    # Single shared auto-detect (Trigger Contract — never reimplement here)
+    style = detect_style(content)
+
+    # Normalize style name (C2: gpt-oss -> gpt_oss)
+    style_key = STYLE_NAME_MAP.get(style, style)
 
     triggers = extract_triggers(content, style=style)
 
     errors = []
-    if len(triggers) < 30:
-        errors.append(f"Only {len(triggers)} triggers extracted (expected >= 30)")
+    if not has_known_markers(content):
+        return False, ["Unknown trigger format - cannot auto-detect style"]
+    # Per-variant floor: mistral trades recall for precision by design
+    # (column-0 Level-only bullets; pinned by tests/test_trigger_routing.py),
+    # so its breakage-detection floor is lower. The gate catches extraction
+    # breakage (near-zero counts), not trigger quantity.
+    min_triggers = 15 if style == "mistral" else 30
+    if len(triggers) < min_triggers:
+        errors.append(
+            f"Only {len(triggers)} triggers extracted (expected >= {min_triggers} for {style})"
+        )
 
     # C2: Validate against TRIGGER_FORMAT_PATTERNS - the format contract
     # Only the detected style's pattern should match; no fourth format may pass
-    if style not in TRIGGER_FORMAT_PATTERNS:
-        errors.append(f"Unknown style '{style}' not in TRIGGER_FORMAT_PATTERNS")
+    if style_key not in TRIGGER_FORMAT_PATTERNS:
+        errors.append(f"Unknown style key '{style_key}' not in TRIGGER_FORMAT_PATTERNS")
     else:
         # Check that triggers match the expected format for this style
-        pattern = TRIGGER_FORMAT_PATTERNS[style]
+        pattern = TRIGGER_FORMAT_PATTERNS[style_key]
         matches = list(pattern.finditer(content))
         if len(matches) < len(triggers):
             errors.append(
@@ -673,6 +676,34 @@ def verify_trigger_format(skill_path: Path) -> tuple[bool, list[str]]:
             )
 
     return len(errors) == 0, errors
+
+
+def check_general_theme_threshold(skill_path: Path, threshold: int = 5) -> tuple[bool, int]:
+    """Check if too many triggers are filed under 'General' theme.
+
+    This detects when extraction fails to properly group triggers by theme,
+    causing them to fall into the default 'General' bucket.
+
+    Args:
+        skill_path: Path to the skill file
+        threshold: Maximum allowed triggers in 'General' theme (default 5)
+
+    Returns:
+        Tuple of (passes, general_count). Passes if general_count <= threshold.
+    """
+    from trigger_patterns import detect_style, extract_triggers
+
+    content = skill_path.read_text(encoding="utf-8")
+
+    # Single shared auto-detect (Trigger Contract — never reimplement here)
+    style = detect_style(content)
+
+    triggers = extract_triggers(content, style=style)
+
+    # Count triggers in 'General' theme
+    general_count = sum(1 for (theme, _) in triggers if theme == "General")
+
+    return general_count <= threshold, general_count
 
 
 def main() -> int:
@@ -821,7 +852,16 @@ def main() -> int:
     else:
         print("  [SKIP] patterns.json not found (run cluster first)")
 
-    # 7. Severity calibration referenced
+    # 7. Check for excessive 'General' theme (extraction failure indicator)
+    print()
+    general_pass, general_count = check_general_theme_threshold(skill_path, threshold=5)
+    all_pass &= check(
+        "Extraction groups triggers by theme (not 'General')",
+        general_pass,
+        f"{general_count} triggers in 'General' theme" if not general_pass else "ok",
+    )
+
+    # 8. Severity calibration referenced
     print()
     severity_keywords = ["reject", "request-changes", "nitpick", "approve"]
     sev_found = sum(1 for s in severity_keywords if s.lower() in text_lower)

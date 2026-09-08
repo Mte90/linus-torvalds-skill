@@ -76,6 +76,7 @@ MODELS = {
     "gpt-oss-120b": SKILL_DIR / "SKILL.md",
     "glm5.2": SKILL_DIR / "SKILL-GLM.md",
     "mistral-small-4-119b": SKILL_DIR / "SKILL-Mistral.md",
+    "qwen3.8-27b": SKILL_DIR / "SKILL-Qwen.md",
 }
 
 # TIMEOUTS replaced by profile.review_timeout - removed hard-coded dict
@@ -161,8 +162,37 @@ def compute_file_hash(path: Path) -> str | None:
         return None
 
 
+def compute_input_hash(model: str, mode: str) -> str | None:
+    """Compute SHA256 hash of inputs (skill + source files).
+
+    Returns None if any input is missing.
+    """
+    if mode == "baseline":
+        input_files = [TARGET / src for src in SOURCE_FILES]
+    else:
+        skill_file = MODELS.get(model)
+        if not skill_file or not skill_file.exists():
+            return None
+        input_files = [skill_file] + [TARGET / src for src in SOURCE_FILES]
+
+    h = hashlib.sha256()
+    for inp in input_files:
+        if not inp.exists():
+            return None
+        try:
+            with open(inp, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    h.update(chunk)
+        except OSError:
+            return None
+    return h.hexdigest()
+
+
 def should_skip_model(model: str, mode: str, force: bool) -> tuple[bool, str]:
     """Check if a model/mode combination should be skipped.
+
+    Skip if: output exists AND output_hash matches AND input_hash matches.
+    Re-run if: any input changed (skill or source files).
 
     Returns (should_skip, reason).
     """
@@ -191,28 +221,19 @@ def should_skip_model(model: str, mode: str, force: bool) -> tuple[bool, str]:
     if current_hash != checkpoint.get("output_hash"):
         return False, "output hash mismatch"
 
-    # Check if inputs are newer than checkpoint
-    input_files = []
-    if mode != "baseline":
-        skill_file = MODELS.get(model)
-        if skill_file:
-            input_files.append(skill_file)
+    # Check if input hash matches (skill + source files)
+    current_input_hash = compute_input_hash(model, mode)
+    if current_input_hash is None:
+        return False, "input file missing"
 
-    # Add source files to input check
-    for src in SOURCE_FILES:
-        input_files.append(TARGET / src)
+    checkpoint_input_hash = checkpoint.get("input_hash")
+    if checkpoint_input_hash is None:
+        return False, "no input hash in checkpoint (legacy)"
 
-    checkpoint_ts = checkpoint.get("timestamp")
-    for inp in input_files:
-        if inp.exists():
-            try:
-                inp_mtime = inp.stat().st_mtime
-                if checkpoint_ts and inp_mtime > checkpoint_ts:
-                    return False, f"input {inp.name} newer than checkpoint"
-            except OSError:
-                pass
+    if current_input_hash != checkpoint_input_hash:
+        return False, "input hash mismatch (skill or source changed)"
 
-    return True, "checkpoint valid"
+    return True, "checkpoint valid (input+output hashes match)"
 
 
 def record_checkpoint(model: str, mode: str, out_file: Path, status: str) -> None:
@@ -223,6 +244,7 @@ def record_checkpoint(model: str, mode: str, out_file: Path, status: str) -> Non
     state[key] = {
         "timestamp": datetime.now(UTC).timestamp(),
         "output_hash": compute_file_hash(out_file) if out_file.exists() else None,
+        "input_hash": compute_input_hash(model, mode),
         "status": status,
     }
 
@@ -245,6 +267,7 @@ def verify_skill_assets():
         SKILL_DIR / "SKILL.md",
         SKILL_DIR / "SKILL-GLM.md",
         SKILL_DIR / "SKILL-Mistral.md",
+        SKILL_DIR / "SKILL-Qwen.md",
     ]
     for skill_file in skill_files:
         if not skill_file.exists():

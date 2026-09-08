@@ -467,7 +467,7 @@ async def process_email_with_delay(
 async def extract_async(
     input_path: str,
     output_path: str,
-    model: str = "gpt-oss-120b",
+    model: str | None = None,
     max_workers: int = 20,
     resume: bool = False,
     batch_size: int = 1,
@@ -479,7 +479,7 @@ async def extract_async(
     Args:
         input_path: Path to input file (mbox or jsonl)
         output_path: Path to write JSONL output
-        model: Model name to use (default: gpt-oss-120b)
+        model: Model name to use (default: from config)
         max_workers: Maximum concurrent LLM calls (default: 20)
         resume: If True, resume from checkpoint
         batch_size: Number of emails per LLM call (1 = sequential)
@@ -488,6 +488,11 @@ async def extract_async(
     Returns:
         Count of extracted moves
     """
+    # Use config.MODEL if not specified
+    if model is None:
+        from . import config
+
+        model = config.MODEL
     input_file = Path(input_path)
     output_file = Path(output_path)
     checkpoint_path = output_file.parent / "checkpoint.jsonl"
@@ -608,9 +613,7 @@ if __name__ == "__main__":
         default="data/moves_async.jsonl",
         help="Output JSONL file path (default: data/moves_async.jsonl)",
     )
-    parser.add_argument(
-        "--model", default="gpt-oss-120b", help="Model name to use (default: gpt-oss-120b)"
-    )
+    parser.add_argument("--model", default=None, help="Model name to use (default: from config)")
     parser.add_argument(
         "--max-workers", type=int, default=20, help="Maximum concurrent LLM calls (default: 20)"
     )

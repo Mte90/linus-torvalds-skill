@@ -2,10 +2,10 @@
 
 Per-category analysis of what each model kept, dropped, or re-weighted from the same corpus (38,293 review moves).
 
-## Shared Core (All Three Models Agree)
+## Shared Core (All Four Models Agree)
 
 ### Reviewer Mindsets
-All three variants capture the same 7 core attitudes:
+All four variants capture the same 7 core attitudes:
 1. **Data-structure first** — "Good programmers worry about data structures, not code"
 2. **Special-case elimination** — "Eliminate the special case so the edge case has nowhere to hide"
 3. **Talk is cheap, show me the code** — Concrete patches over speculation
@@ -15,7 +15,7 @@ All three variants capture the same 7 core attitudes:
 7. **Security is bugs** — Security issues are ordinary bugs, not a separate category
 
 ### Level 1 Invariants (Non-Negotiables)
-All three variants include these fatal flaws:
+All four variants include these fatal flaws:
 - **Fatal assertions for recoverable errors** — `panic()`/`BUG_ON()` on user input
 - **Breaking public API/ABI without migration** — "We don't change UI. That is ALWAYS a bug"
 - **Unvalidated boundary crossings** — Copying from user space without bounds checks
@@ -23,7 +23,7 @@ All three variants include these fatal flaws:
 - **Stack pointer escapes** — Returning pointers to local variables
 
 ### Precedence Chain
-All three variants enforce: **Correctness > Performance > Complexity > Style**
+All four variants enforce: **Correctness > Performance > Complexity > Style**
 
 ---
 
@@ -102,24 +102,46 @@ All three variants enforce: **Correctness > Performance > Complexity > Style**
 - Shortest word count (see [docs/models.md](models.md) for current values) but covers all core triggers
 - Uses "invariant-false" and "invariant-true" consistently
 
+### qwen3.8-27b (`SKILL-Qwen.md`) — Balanced, Practical
+
+**Structure**: 8 thematic sections with 3-5 triggers each
+
+**Unique emphases**:
+- **Practical examples** — Each trigger includes a concrete code example
+- **Severity decision tree** — Flowchart-style guidance for edge cases
+- **Cross-reference table** — Links related triggers across categories
+
+**What it dropped**:
+- No explicit "Process & Governance" theme
+- Less detailed on severity calibration statistics
+
+**Severity calibration**:
+- Balanced approach: aligns with gpt-oss on most categories
+- Slightly more lenient on style issues
+
+**Notable detail**:
+- Well-structured for both human reading and programmatic parsing
+- Good middle ground between gpt-oss comprehensiveness and mistral conciseness
+
 ---
 
 ## Severity Calibration Drift
 
 Same triggers, different severity assignments:
 
-| Trigger | gpt-oss-120b | glm5.2 | mistral |
+| Trigger | gpt-oss-120b | glm5.2 | mistral | qwen3.8-27b |
 |---|---|---|---|
 | Fatal assertion on user input | reject | reject | request-changes |
 | Breaking public API | reject | reject | request-changes |
 | Lock upgrade (read → write) | reject | reject | reject |
 | Exposing internal structs | request-changes | request-changes | request-changes |
-| Magic constants | request-changes | reject | request-changes |
+| Magic constants | request-changes | reject | request-changes | request-changes |
 | Duplicated logic | nitpick | request-changes | request-changes |
 | Missing commit rationale | request-changes | request-changes | request-changes |
-| Unvalidated boundary crossing | reject | reject | reject |
+| Unvalidated boundary crossing | reject | reject | reject | reject |
 
 **Key observations**:
+- **qwen3.8-27b is balanced** — Aligns with gpt-oss on most categories, practical for general use
 - **GLM is most aggressive** — Higher reject rate for complexity issues (magic constants, speculative generality)
 - **Mistral is most lenient** — Downgrades "fatal assertion" from reject to request-changes
 - **gpt-oss is balanced** — Splits the difference, aligns with corpus statistics
@@ -132,11 +154,11 @@ Same triggers, different severity assignments:
 |---|---|---|---|
 | **Sections** | 12 major sections | 10 major sections | 9 major sections |
 | **Themes** | 10 (A-J) | 15 (numbered) | 6 (tiered) |
-| **Triggers** | ~45 detailed | ~55 detailed | ~35 compact |
+| **Triggers** | ~45 detailed | ~55 detailed | ~35 compact | ~40 balanced |
 | **Decision Cards** | 6 cards | 0 cards | 7 cards |
 | **Anti-Patterns** | 13 patterns | 0 patterns | 10 patterns |
 | **Severity Stats** | Full table | Embedded | Qualitative only |
-| **Cross-File Review** | Yes | No | Yes |
+| **Cross-File Review** | Yes | No | Yes | Yes |
 
 ---
 
@@ -148,7 +170,9 @@ Same triggers, different severity assignments:
 
 3. **Pick mistral** if you need speed or small context — CI integration, quick checks, YAML parsing
 
-**All three variants will catch the same critical bugs** (memory safety, concurrency, API breaks). The differences are in:
+4. **Pick qwen3.8-27b** if you want balanced practicality — good for general reviews, clear examples, structured format
+
+**All four variants will catch the same critical bugs** (memory safety, concurrency, API breaks). The differences are in:
 - Depth of explanation
 - Severity calibration for edge cases
 - Structural organization (affects prompt engineering)
@@ -157,6 +181,6 @@ Same triggers, different severity assignments:
 
 ## Methodology Note
 
-This analysis compares the three skill files generated from the **same corpus** (38,293 moves, 350 sampled patterns from `data/patterns.json`) using the **same pipeline** (`distill.py`) but **three different LLMs**. The divergence is not a bug — it's evidence of how much the generation model shapes the distillation output.
+This analysis compares the four skill files generated from the **same corpus** (38,293 moves, 350 sampled patterns from `data/patterns.json`) using the **same pipeline** (`distill.py`) but **four different LLMs**. The divergence is not a bug — it's evidence of how much the generation model shapes the distillation output.
 
 To regenerate and verify, see [docs/CONTRIBUTING.md](CONTRIBUTING.md) for the canonical regeneration commands.

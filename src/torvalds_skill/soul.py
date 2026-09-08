@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
+from .distill import _format_calibration_for_prompt
 from .distill_llm import _call_llm
 from .distill_sanitize import sanitize_skill
 
@@ -207,29 +208,19 @@ The workflow should cover:
 Each step should be concrete and actionable, not abstract.
 
 ## Section 3: Emergent Hierarchy (derive from calibration data)
-
 DO NOT prescribe a hierarchy. DERIVE it from the calibration data.
 
 ## CALIBRATION DATA (severity statistics from 38,293 moves)
-{calibration_data}
 
 CRITICAL: The calibration data has a "severity_by_category" section with PER-CATEGORY
 reject rates. Each category has its own "reject_rate" field. DO NOT use the global
-corpus reject rate (23.8%) for all categories.
+corpus reject rate for all categories.
 
 To build the hierarchy:
 1. Look at "severity_by_category" in the calibration data
-2. For EACH category, read its "reject_rate" value (e.g., "api-stability": {"reject_rate": 37.9, ...})
+2. For EACH category, read its "reject_rate" value
 3. Rank categories from HIGHEST to LOWEST reject_rate
 4. Output format: "Category1 (reject_rate X.X%) > Category2 (reject_rate Y.Y%) > ..."
-
-Example with real data:
-- api-stability: reject_rate = 37.9%
-- performance: reject_rate = 20.0%
-- correctness: reject_rate = 28.7%
-- style: reject_rate = 12.6%
-
-Ranked hierarchy: api-stability (37.9%) > correctness (28.7%) > performance (20.0%) > style (12.6%)
 
 Each category MUST have a DIFFERENT reject_rate based on its actual data.
 
@@ -294,27 +285,22 @@ front-matter metadata section, NOT in the document body:
 - humor_frequency (percentage)
 
 ## Section 6: Escalation Rules (autonomy boundaries)
-
 Define when the agent decides alone vs when it must ask the user. Use the
-severity_distribution from calibration.json (reject 23.8%, request-changes 42.2%,
-nitpick 6.8%, approve 7.0%, discussion 20.2%).
+severity_distribution from calibration.json for calibrated thresholds.
 
 Rules:
 - "Decide alone when: the decision is reversible, no users break, no public
   contract changes. Severity ≤ nitpick."
 - "Ask the user when: the decision is irreversible, users break, the change is
   speculative. Severity = reject."
-- "Request changes and iterate when: severity = request-changes. The threshold
-  is derived from the corpus: 42.2% of moves are request-changes."
+- "Request changes and iterate when: severity = request-changes."
 
 ## Section 7: Error Gravity (quantitative error handling)
+Use the severity_distribution from calibration.json to classify errors.
 
-Use the severity_distribution from calibration.json to classify errors:
-
-- "Fatal (reject rate 23.8%): rollback, revert, or escalate. The code must not
-  ship."
-- "Fixable (request-changes rate 42.2%): iterate, test, resubmit."
-- "Tolerable (nitpick rate 6.8%): comment, ignore, or minor tweak."
+- "Fatal (reject): rollback, revert, or escalate. The code must not ship."
+- "Fixable (request-changes): iterate, test, resubmit."
+- "Tolerable (nitpick): comment, ignore, or minor tweak."
 
 Post-error behavior: the reviewer does not become more cautious after an error
 — the error does not change behavior. Acknowledge, fix, move on.
@@ -364,6 +350,7 @@ clear feedback, or is willfully lazy. It does NOT fire for honest mistakes
 or genuine learners. The calibration is the point.
 
 ## Output format
+Target word count: 8000-12000 words. Write comprehensively but concisely.
 
 Write a markdown document with this structure:
 
@@ -507,6 +494,30 @@ def build_soul_prompt(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+def _build_soul_system_prompt(calibration: dict | None = None) -> str:
+    """Build the soul system prompt with calibration data injected.
+
+    If calibration data is provided, inject formatted severity statistics
+    into the prompt where the instructions reference calibration data.
+    """
+    prompt = SOUL_SYSTEM_PROMPT
+
+    if calibration:
+        # Format calibration data using the distill repair pattern
+        calib_text = _format_calibration_for_prompt(calibration)
+        # Inject after the Section 3 heading where calibration instructions are
+        prompt = prompt.replace(
+            "## Section 3: Emergent Hierarchy (derive from calibration data)\n"
+            "DO NOT prescribe a hierarchy. DERIVE it from the calibration data.\n",
+            "## Section 3: Emergent Hierarchy (derive from calibration data)\n"
+            "DO NOT prescribe a hierarchy. DERIVE it from the calibration data.\n\n"
+            + calib_text
+            + "\n",
+        )
+
+    return prompt
+
+
 def _strip_code_fences(text: str) -> str:
     """Strip wrapping markdown code fences if the LLM added them.
 
@@ -592,7 +603,9 @@ def generate_soul(
 
     if model is None:
         model = config.MODEL
-    response = _call_llm(user_prompt, system_prompt=SOUL_SYSTEM_PROMPT, model=model)
+    # Build system prompt with calibration data injected
+    system_prompt = _build_soul_system_prompt(calibration if calibration_path.exists() else None)
+    response = _call_llm(user_prompt, system_prompt=system_prompt, model=model)
     response = _strip_code_fences(response)
     response = sanitize_skill(response)
 

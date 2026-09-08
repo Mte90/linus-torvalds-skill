@@ -177,18 +177,23 @@ def _load_skip_list(skip_list_path: Path) -> set[str]:
     return skipped
 
 
-def extract_interviews(input_path: str, output_path: str, model: str = "gpt-oss-120b") -> int:
+def extract_interviews(input_path: str, output_path: str, model: str | None = None) -> int:
     """
     Extract review moves from interview passages.
 
     Args:
         input_path: Path to JSONL file with classified passages
         output_path: Path to write JSONL output (one JSON object per line)
-        model: Model name to use (default: gpt-oss-120b)
+        model: Model name to use (default: from config)
 
     Returns:
         Count of extracted moves
     """
+    # Use config.MODEL if not specified
+    if model is None:
+        from . import config
+
+        model = config.MODEL
     input_file = Path(input_path)
     output_file = Path(output_path)
     checkpoint_path = output_file.parent / "interview_checkpoint.jsonl"
@@ -291,9 +296,7 @@ if __name__ == "__main__":
         default="data/interview_moves.jsonl",
         help="Output JSONL file path (default: data/interview_moves.jsonl)",
     )
-    parser.add_argument(
-        "--model", default="gpt-oss-120b", help="Model name to use (default: gpt-oss-120b)"
-    )
+    parser.add_argument("--model", default=None, help="Model name to use (default: from config)")
     parser.add_argument(
         "--resume",
         action="store_true",

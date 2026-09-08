@@ -2,9 +2,23 @@
 
 All changes to the torvalds-skill project, organized by day.
 
-## 2026-09-04 
+## 2026-09-04 (v2 section F)
+
+- **Fix (metrics):** Trigger format aligned with regenerated files; GLM `###`/`####` themes; gpt-oss key fix; Mistral extractor tightened (65→96→24→18, false positives pinned); General-theme guard; shared REQUIRED_SECTIONS in verifier. Coverage honestly 41/43 with SC-008 (SIGPIPE) + SC-040 (style nit) as named gaps.
+- **Feature (soul):** Salvage guard + retry; `scripts/verify_soul.py`; real calibration injection (no invented stats); word target 8000-12000.
+- **Docs:** `.env.example`, `scripts/generate_variant_table.py`, cache/profile/cost docs, profiles.example.toml, AGENTS.md soul+cache+override rules and scoped 900-line rule.
+- **Refactor (agnostic):** Unknown-model defaults (workers 3, 120s); reasoning routed; stdlib tomllib; `torvalds_skill profiles` command; defaults → config.MODEL; stage_run calibrates.
+- **Feature (orchestration):** `Makefile` regen-all chain; input-hash skip; end-to-end costs ($2.30-4.60).
+- **Feature (cache):** Unified cache + review client (key includes params), TTL 7d, `--no-cache`/`cache stats|clear`; fixed payload deletion + CLI wiring test gap found in reconciliation.
+- **Fix (qwen):** `qwen3.8-27b` profile corrected to reasoning/slow/single-call after a 30-min two-stage timeout with zero cached responses; endpoint probe showed thinking-trace behavior. Wired through review/comparison/variant-table/coverage (graceful skip until SKILL-Qwen.md exists).
+
+## 2026-09-04 (v2 generation + re-review)
+
 - **Review (v2 skills):** Regenerated all 3 skills (unified prompts, quotas, non-fire, truthful frontmatter) + soul (9739 words, B4 cache path). Re-ran SmallChat with symmetric budget-gate chunking. Verdicts: gpt-oss +3 (3 found/0 lost), mistral +9 (9/0, inflation caveat), glm5.2 -2 (0/2, improved from -4). Focus gate: all models 100% CORE. Benchmark: gpt P44.4/R9.3, glm P42.9/R7.0, mistral P22.7/R11.6. D2: remaining gap is GLM's 2 baseline-only CRITICALs (NUL-termination, fd bounds) with only weak trigger matches — matcher semantics, not missing triggers.
 - **Bugfix (cli):** `stage_distill()` never accepted `distill_mode` (TypeError on every CLI regen); plumbed through + `tests/test_cli.py` wiring tests. Full suite 958 passed.
+
+## 2026-09-04 (v2 review fixes)
+
 - **Bugfix (distill):** B1 — single-call block re-indented under `else:` (was running 8 LLM calls); new call-count tests. B2 — frontmatter mode from resolved `distill_mode`. Fixed `resolve_distill_mode` precedence to explicit > flag > profile > default (profile was silently overriding explicit two-stage).
 - **Fix (profiles):** B5 present-wins TOML merge + `fallback_models` env CSV; removed dead `severity_bias`; added `review_max_tokens`. Stale-test `test_distill_skill_uses_parallel_for_glm52` updated to pin single=1 call / explicit two-stage>=3.
 - **Fix (llm):** B4 caller-model `strict` + real `doc_type` (soul false-truncation gone); B6 dead `primary_result` resolved; B7 profile token wiring both payloads, wall-clock pinned by test.
@@ -12,6 +26,9 @@ All changes to the torvalds-skill project, organized by day.
 - **Unify (prompts):** C1 five blocks composed into two-stage; C2 `TRIGGER_FORMAT_PATTERNS` enforced by verifier; C4 Mistral extractor restricted to column-0 Level bullets (65→96→24, false positives pinned by test).
 - **Harden (distill):** C5 per-mode prompt hash; C6 dedicated repair mini-prompt; C8 shared REQUIRED_SECTIONS; D5 single-block frontmatter strip.
 - **Docs+metrics:** C7 drift fixed (16000 table, two-stage default, no stale identifiers); D1 assessed (precision wording, no change); D3 threshold stays 0.05 empirically, coverage ×3 variants.
+
+## 2026-09-04
+
 - **Chore (ci):** Deleted `.github/workflows/ci.yml` (workflow never ran on main; project is local-only). Dev checks stay in `pyproject.toml [dev]`; secret scan via pre-commit gitleaks.
 - **Feature (metrics):** `report/trigger_patterns.py` extracts 57/44/65 triggers across variants; title+description matching; baseline prompt symmetric (two-pass); trigger-format contract shared with `verify_skill.py`; benchmark-coverage test (43/43); comparison regenerated with real coverage.
 - **Refactor (prompts):** Prompt blocks componentized once in `distill_prompts.py` (651 lines); `MODEL_SEVERITY_BIAS` removed from prompt path; frontmatter traceability (6 fields, verified); repair grounded in `calibration.json`; doc counts unified at 350 patterns.

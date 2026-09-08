@@ -1,6 +1,7 @@
 # Validation: antirez/smallchat
 
 The skill was tested on [antirez/smallchat](https://github.com/antirez/smallchat) (706 LOC, C) — a minimal TCP chat server. Six independent reviews were generated: each of the three models reviewed the codebase twice, once with the Torvalds skill loaded and once without (baseline).
+The skill was tested on [antirez/smallchat](https://github.com/antirez/smallchat) (706 LOC, C) — a minimal TCP chat server. Eight independent reviews were generated: each of the four models reviewed the codebase twice, once with the Torvalds skill loaded and once without (baseline).
 
 ## Validation Methodology
 
@@ -25,10 +26,13 @@ The six review files:
 | [`review-baseline-glm5.2.md`](../report/baseline/review-baseline-glm5.2.md) | baseline | glm5.2 |
 | [`review-mistral-small-4-119b.md`](../report/review-mistral-small-4-119b.md) | with skill | mistral-small-4-119b |
 | [`review-baseline-mistral-small-4-119b.md`](../report/baseline/review-baseline-mistral-small-4-119b.md) | baseline | mistral-small-4-119b |
+| [`review-qwen3.8-27b.md`](../report/review-qwen3.8-27b.md) | with skill | qwen3.8-27b |
+| [`review-baseline-qwen3.8-27b.md`](../report/baseline/review-baseline-qwen3.8-27b.md) | baseline | qwen3.8-27b |
 
 ## Key Findings
 
 - All three models reached the same verdict: **FAIL** (the codebase has real bugs)
+- All four models reached the same verdict: **FAIL** (the codebase has real bugs)
 - **glm5.2** gained +2 net critical findings with the skill (4 new, 2 lost) — the only model where the skill added net critical value
 - **gpt-oss-120b** and **mistral** showed net negative critical coverage — the skill narrowed focus too aggressively and suppressed criticals the baseline caught
 - The trigger-coverage column in `comparison.md` distinguishes skill gaps (trigger exists, model didn't fire it) from out-of-scope bugs (no trigger covers that type)

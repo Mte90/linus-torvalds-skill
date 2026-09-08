@@ -9,21 +9,37 @@ import re
 from collections.abc import Iterator
 
 
+def _normalize_unicode(content: str) -> str:
+    """Replace model-emitted unicode quirks with ASCII before regex matching.
+
+    LLMs emit narrow no-break spaces (U+202F), non-breaking spaces, and
+    non-breaking hyphens (U+2011) that `\\s` / literal patterns miss
+    (seen live in SKILL-Qwen.md `Theme\\u202f1` headings).
+    """
+    return content.replace("\u202f", " ").replace("\u00a0", " ").replace("\u2011", "-")
+
+
 def extract_triggers_gpt_oss(content: str) -> Iterator[tuple[str, str]]:
     """Extract triggers from gpt-oss style (SKILL.md format).
 
-    Format: ### Number. Title headings with - **What to look for:** blocks.
+    Format: ### Level X – Title headings with #### Theme: subsections and
+            - **What to look for**: blocks.
 
     Yields:
         (title, description) pairs where title is the theme/heading and
         description is the "What to look for" text.
     """
-    # Extract theme headings (### Number. Title)
-    theme_pattern = re.compile(r"^###\s+\d+\.\s*(.+)$", re.MULTILINE)
+    content = _normalize_unicode(content)
+    # Extract theme headings (#### Theme: Title, or numbered
+    # `#### Theme N – Title` as emitted by single-call reasoning models)
+    theme_pattern = re.compile(
+        r"^####\s+Theme\s*(?::\s*(.+)|\d+\s*[\-\u2013\u2014]\s*(.+))\s*$",
+        re.MULTILINE,
+    )
 
-    # Match "  **What to look for:** description" (with leading spaces, no dash)
+    # Match "  - **What to look for**: description" (with leading spaces and dash)
     what_to_look_pattern = re.compile(
-        r"^\s+\*\*What to look for:\*\*\s+(.+)$",
+        r"^\s+-\s+\*\*What to look for\*\*:\s+(.+)$",
         re.MULTILINE,
     )
 
@@ -43,7 +59,10 @@ def extract_triggers_gpt_oss(content: str) -> Iterator[tuple[str, str]]:
             and theme_matches[current_theme_idx + 1].start() < what_match.start()
         ):
             current_theme_idx += 1
-            current_theme = theme_matches[current_theme_idx].group(1).strip()
+            current_theme = (
+                theme_matches[current_theme_idx].group(1)
+                or theme_matches[current_theme_idx].group(2)
+            ).strip()
 
         what_text = what_match.group(1).strip()
         if what_text:
@@ -59,8 +78,13 @@ def extract_triggers_glm(content: str) -> Iterator[tuple[str, str]]:
         (title, description) pairs where title is the theme and
         description is the trigger text.
     """
-    # Extract theme headings (#### Theme: X)
-    theme_pattern = re.compile(r"^####\s+Theme:\s*(.+)$", re.MULTILINE)
+    content = _normalize_unicode(content)
+    # Extract theme headings (### Theme: X, #### Theme: X, or numbered
+    # `#### Theme N – Title` as emitted by single-call reasoning models)
+    theme_pattern = re.compile(
+        r"^#{3,4}\s+Theme\s*(?::\s*(.+)|\d+\s*[\-\u2013\u2014]\s*(.+))\s*$",
+        re.MULTILINE,
+    )
 
     # Extract triggers: **Trigger**: text (no italics)
     trigger_pattern = re.compile(r"\*\*Trigger\*\*:\s*(.+?)(?:\n|$)")
@@ -70,7 +94,7 @@ def extract_triggers_glm(content: str) -> Iterator[tuple[str, str]]:
     for line in content.split("\n"):
         theme_match = theme_pattern.match(line.strip())
         if theme_match:
-            current_theme = theme_match.group(1).strip()
+            current_theme = (theme_match.group(1) or theme_match.group(2)).strip()
             continue
 
         trigger_match = trigger_pattern.search(line)
@@ -107,6 +131,7 @@ def extract_triggers_mistral(content: str) -> Iterator[tuple[str, str]]:
     # Field labels to skip (these are nested under triggers, not triggers themselves)
     FIELD_LABELS = ("Type:", "Severity:", "What to look for:", "Why it's a problem:", "Example:")
 
+    content = _normalize_unicode(content)
     current_level = "General"
     in_level_section = False  # C4: Track if we're inside a Level section
 
@@ -130,6 +155,47 @@ def extract_triggers_mistral(content: str) -> Iterator[tuple[str, str]]:
                 yield (current_level, bullet_text)
 
 
+def detect_style(content: str) -> str:
+    """Single auto-detect for skill trigger formats (Trigger Contract).
+
+    All callers (dispatcher below, verify_skill.py) must use this — never
+    reimplement detection inline. The What-to-look-for marker exists in ALL
+    variants, so it cannot discriminate; theme heading SHAPE can:
+    4-hash colon themes are gpt-oss-only, 3-hash colon themes are
+    GLM-only, numbered-dash themes are qwen-only, Level sections without
+    any Theme headings are mistral-only. Verified outcomes preserved:
+    SKILL.md→gpt-oss (54/3), GLM→glm (49/0), Mistral→mistral (18/0),
+    Qwen→glm (60/0).
+    """
+    text = _normalize_unicode(content)
+    if re.search(r"^#{3,4}\s+Theme\s+\d+\s*[\-\u2013\u2014]", text, re.MULTILINE):
+        return "glm"  # numbered-dash themes (qwen single-call output)
+    if re.search(r"^###(?!#)\s+Theme:", text, re.MULTILINE):
+        return "glm"  # 3-hash colon themes (GLM two-stage output)
+    if re.search(r"^####\s+Theme:", text, re.MULTILINE):
+        return "gpt-oss"  # 4-hash colon themes (gpt-oss output)
+    if re.search(r"^### Level", text, re.MULTILINE) and re.search(r"^-\s*\*\*", text, re.MULTILINE):
+        return "mistral"  # Level sections + column-0 bullets
+    return "gpt-oss"  # Default
+
+
+def has_known_markers(content: str) -> bool:
+    """True when the content carries ANY recognized trigger-format marker.
+
+    Companions detect_style(): the default-style fallback must not mask
+    content with no triggers at all — callers use this to emit an
+    explicit 'unknown format' signal instead of a misleading count.
+    """
+    text = _normalize_unicode(content)
+    return bool(
+        re.search(r"^#{3,4}\s+Theme", text, re.MULTILINE)
+        or re.search(r"^### Level", text, re.MULTILINE)
+        or "**What to look for**" in text
+        or "**What to look for**:" in text
+        or "**Trigger**:" in text
+    )
+
+
 def extract_triggers(content: str, style: str = "auto") -> list[tuple[str, str]]:
     """Extract all triggers from a skill file.
 
@@ -141,15 +207,7 @@ def extract_triggers(content: str, style: str = "auto") -> list[tuple[str, str]]
         List of (title, description) tuples
     """
     if style == "auto":
-        # Auto-detect based on content patterns
-        if "**What to look for:**" in content:
-            style = "gpt-oss"
-        elif "**Trigger**:" in content and "#### Theme:" in content:
-            style = "glm"
-        elif re.search(r"^\s*-\s*\*\*.+?\*\*\s*$", content, re.MULTILINE):
-            style = "mistral"
-        else:
-            style = "gpt-oss"  # Default
+        style = detect_style(content)
 
     if style == "gpt-oss":
         return list(extract_triggers_gpt_oss(content))
@@ -166,6 +224,13 @@ TRIGGER_FORMAT_PATTERNS = {
     "gpt_oss": re.compile(r"\*\*What to look for\*\*:\s*(.+)", re.IGNORECASE),
     "glm": re.compile(r"\*\*Trigger\*\*:\s*(.+)", re.IGNORECASE),
     "mistral": re.compile(r"^\s*-\s*\*\*(.+?)\*\*\s*$", re.MULTILINE),
+}
+
+# Style name mapping for verify_skill.py (C2: normalize hyphen to underscore)
+STYLE_NAME_MAP = {
+    "gpt-oss": "gpt_oss",
+    "glm": "glm",
+    "mistral": "mistral",
 }
 
 # Unified trigger format for distillation output

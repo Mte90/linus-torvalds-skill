@@ -21,9 +21,11 @@ import urllib.request
 from pathlib import Path
 from pathlib import Path as _Path
 
+# Import unified cache
 _SRC = _Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in _sys.path:
     _sys.path.insert(0, str(_SRC))
+from torvalds_skill import cache as llm_cache  # noqa: E402
 from torvalds_skill import (  # noqa: E402  # import not at top due to sys.path manipulation
     config as project_config,
 )
@@ -62,40 +64,46 @@ class _WallClockTimeout:
         raise TimeoutError("wall-clock timeout exceeded")
 
 
-def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
-    """Call OpenAI-compatible chat completions API with streaming. Returns accumulated text."""
+def call_llm(
+    model: str,
+    prompt: str,
+    timeout: int = 600,
+    temperature: float = 0.3,
+    max_tokens: int | None = None,
+) -> str:
+    """Call OpenAI-compatible chat completions API with streaming. Returns accumulated text.
+
+    Uses unified cache with key = SHA(stage + model + prompt + params).
+    Cache bypass: set CACHE_ENABLED=0 env var.
+    """
     from torvalds_skill.profiles import get_profile
 
     profile = get_profile(model)
 
-    # max_tokens: defensive getattr for review_max_tokens field (parallel lane addition)
-    # Try profile.review_max_tokens if available, fall back to profile.max_tokens
-    # This ensures compatibility regardless of lane ordering
-    max_tokens = getattr(profile, "review_max_tokens", None) or profile.max_tokens
+    # max_tokens: use provided value or fall back to profile
+    if max_tokens is None:
+        max_tokens = getattr(profile, "review_max_tokens", None) or profile.max_tokens
+
+    # Compute cache key from all inputs that affect output
+    params = {"temperature": temperature, "max_tokens": max_tokens, "timeout": timeout}
+    cache_key = llm_cache._compute_key("review", model, prompt, params)
+
+    # Check cache first (if enabled)
+    if llm_cache._get_cache_enabled():
+        cached = llm_cache.get_cache().get(cache_key)
+        if cached is not None:
+            print(f"cache hit (review): {cache_key[:8]}...", file=_sys.stderr)
+            return cached
+
+    print("streaming...", file=_sys.stderr)
 
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a code reviewer."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.3,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
         "max_tokens": max_tokens,
         "stream": True,
     }
-    # Reasoning models must keep their thinking phase (user requirement):
-    # never disable it. Give them a larger budget instead so reasoning AND
-    # content both fit without truncation.
-    # Supported max_tokens per model (from profiles.py):
-    #   gpt-oss-120b: 16000, glm5.2: 16000, mistral-small-4-119b: 16000
-    if profile.reasoning:
-        # Wall-clock timeout formula pinned to current behavior:
-        # 1200s for non-reasoning models, 1800s for reasoning models
-        # (see config.WALL_CLOCK_LONG / WALL_CLOCK_DEFAULT for the actual values)
-        pass  # max_tokens already set above via getattr fallback
-
-    print("streaming...", file=sys.stderr)
-
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(CHAT_URL, data=body, headers=headers(), method="POST")
 
@@ -130,7 +138,12 @@ def call_llm(model: str, prompt: str, timeout: int = 600) -> str:
     if not result.strip() and reasoning_parts:
         result = "".join(reasoning_parts)
     word_count = len(result.split())
-    print(f"done: {word_count} words", file=sys.stderr)
+    print(f"done: {word_count} words", file=_sys.stderr)
+
+    # Cache successful non-empty responses
+    if result.strip() and llm_cache._get_cache_enabled():
+        llm_cache.get_cache().set(cache_key, result)
+
     return result
 
 
@@ -163,7 +176,7 @@ def main():
         try:
             response = call_llm(args.model, prompt, timeout)
             if not response.strip():
-                print(f"warning: empty response (attempt {attempt + 1})", file=sys.stderr)
+                print(f"warning: empty response (attempt {attempt + 1})", file=_sys.stderr)
                 if attempt == 0:
                     time.sleep(2)
                     continue

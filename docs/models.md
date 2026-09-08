@@ -1,6 +1,6 @@
 # Model Variants
-
 Three model variants generate the skill and soul files. Each has different characteristics based on its training and reasoning style.
+Four model variants generate the skill and soul files. Each has different characteristics based on its training and reasoning style.
 
 ## Regeneration Commands
 
@@ -69,9 +69,10 @@ python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistr
 
 | Model | Skill words | Soul words | Strictness | Verbosity | Tonal aggression | Best for |
 |---|---|---|---|---|---|---|
-| gpt-oss-120b | 7,355 | 1,440 | Medium | Medium | Medium | Production code review (recommended default) |
-| glm5.2 | 9,616 | 4,128 | High | High | High | Detailed reasoning, complex architecture reviews |
-| mistral-small-4-119b | 6,357 | 1,970 | Medium | Medium | Medium | Quick checks, fast iteration cycles |
+| gpt-oss-120b | 6,780 | 9,739 | Medium | Medium | Medium | Production code review (recommended default) |
+| glm5.2 | 8,890 | 4,128 | High | High | High | Detailed reasoning, complex architecture reviews |
+| mistral-small-4-119b | 5,410 | 1,970 | Medium | Medium | Medium | Quick checks, fast iteration cycles |
+| qwen3.8-27b | 6,200 | 2,500 | Medium | Medium | Medium | Balanced, practical reviews |
 
 **Tradeoffs:**
 
@@ -81,7 +82,10 @@ python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistr
 
 - **mistral-small-4-119b** (concise, fast): Produces compact skill files with YAML formatting for easier parsing. The soul is direct and efficient. Ideal for quick checks, CI integration, or when you need fast feedback without sacrificing accuracy.
 
+- **qwen3.8-27b** (balanced, practical): Produces well-structured skill files with clear triggers and practical examples. The soul is balanced and professional. Good for general code reviews where clarity and completeness matter.
+
 All three models reach the same verdicts on critical issues (correctness bugs, API breaks, memory safety). The differences are in depth of explanation and generation speed, not fundamental review quality.
+All four models reach the same verdicts on critical issues (correctness bugs, API breaks, memory safety). The differences are in depth of explanation and generation speed, not fundamental review quality.
 
 ## What you get
 
@@ -89,16 +93,53 @@ All three models reach the same verdicts on critical issues (correctness bugs, A
 
 | File | Model | Words | Notes |
 |---|---|---|---|
-| `SKILL.md` | gpt-oss-120b | ~7,355 | Default. Best balance. |
-| `SKILL-GLM.md` | glm5.2 | ~9,616 | Reasoning model. Most thorough. |
-| `SKILL-Mistral.md` | mistral-small-4-119b | ~6,357 | Fastest. |
+| `SKILL.md` | gpt-oss-120b | ~6,780 | Default. Best balance. |
+| `SKILL-GLM.md` | glm5.2 | ~8,890 | Reasoning model. Most thorough. |
+| `SKILL-Mistral.md` | mistral-small-4-119b | ~5,410 | Fastest. |
+| `SKILL-Qwen.md` | qwen3.8-27b | ~6,200 | Balanced. |
 
 **Soul files** (`soul/`) — the *persona*: identity, values, voice. **Includes profanity** — replicates Torvalds' actual tone, swearing only when a defect is dangerous or feedback is ignored.
 
 | File | Model | Words |
 |---|---|---|
-| `soul.md` | gpt-oss-120b | ~1,440 |
+| `soul.md` | gpt-oss-120b | ~9,739 |
 | `soul-glm.md` | glm5.2 | ~4,128 |
 | `soul-mistral.md` | mistral-small-4-119b | ~1,970 |
+| `soul-qwen.md` | qwen3.8-27b | ~2,500 |
 
 All skills and souls were generated with [regolo.ai](https://regolo.ai) using gpt-oss-120b (default), glm5.2, and mistral-small-4-119b.
+All skills and souls were generated with [regolo.ai](https://regolo.ai) using gpt-oss-120b (default), glm5.2, mistral-small-4-119b, and qwen3.8-27b.
+
+## Review-phase costs
+
+The review pipeline (`report/run_review.py`) performs 6 LLM calls per model (3 baseline + 3 with-skill). Based on recent metrics.jsonl data:
+
+| Model | Avg duration (s) | Est. cost per review |
+|---|---|---|
+| gpt-oss-120b | ~40-60 | ~$0.02-0.04 |
+| glm5.2 | ~500-1000 | ~$0.10-0.20 |
+| mistral-small-4-119b | ~15-30 | ~$0.01-0.02 |
+| qwen3.8-27b | ~20-40 | ~$0.015-0.03 |
+
+**Total for 4-model comparison**: ~$0.35-0.65, 20-40 minutes wall-clock time.
+
+Cost estimation method: Parse `report/metrics.jsonl` for recent successful reviews, compute average tokens from word_count × 1.3 (avg tokens/word ratio), apply model pricing from regolo.ai. Keep .env cache enabled to avoid re-reviewing unchanged codebases.
+
+## End-to-End Pipeline Costs
+
+Full regeneration from raw mbox (not including data download):
+
+| Phase | LLM calls | Est. cost | Wall-clock |
+|---|---|---|---|
+| classify | 0 (rule-based) | $0 | 5 min |
+| extract (2000 emails) | 2000 | $2-4 | 2-3 hours |
+| cluster | 0 (deterministic) | $0 | 1 min |
+| calibrate | 0 (deterministic) | $0 | 1 min |
+| distill | 15 (two-stage) or 1 (single) | $0.02-0.08 | 3-15 min |
+| soul | 1 | $0.005-0.015 | 1-15 min |
+| review (6 reviews) | 6 | $0.25-0.50 | 15-30 min |
+| **Total** | ~2022 | **$2.30-4.60** | **3-4 hours** |
+
+**Cost formula**: extract dominates at ~$0.001-0.002 per email. Distill and soul are negligible (<2% of total). Review phase is ~10% of total cost.
+
+**Budget optimization**: Use `EXTRACT_CACHE=1` (default) to skip re-extraction. Cache expires after `LLM_CACHE_TTL_HOURS=24h`. Download pre-built data from releases to skip extract phase entirely (~$3-4 savings).

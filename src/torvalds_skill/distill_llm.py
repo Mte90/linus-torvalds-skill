@@ -520,13 +520,29 @@ def _call_llm(
 
                 result = "".join(content_parts)
                 if not result.strip() and reasoning_parts:
-                    result = "".join(reasoning_parts)
+                    # Salvage guard: reasoning-only response indicates the model
+                    # returned thinking without content. This is a warning condition
+                    # — raise max_tokens and retry rather than saving raw thinking.
+                    print(
+                        "warning: reasoning-only response detected (no content produced). "
+                        "This indicates the model returned chain-of-thought without answer. "
+                        "Retry with increased max_tokens.",
+                        file=sys.stderr,
+                    )
+                    # Signal to caller that this attempt should be retried
+                    last_err = RuntimeError("reasoning_only_response")
+                    continue
+                if not result.strip():
+                    last_err = RuntimeError("empty_response")
+                    break
                 if not result.strip():
                     last_err = RuntimeError("empty_response")
                     break
 
                 # Check for truncation (doc_type="skill" for distill output, strict=False for skill)
-                if _detect_truncation(result, doc_type="skill", strict=False):
+                if _detect_truncation(
+                    result, doc_type="skill", strict=call_profile.strict_truncation
+                ):
                     # Policy: return partial result on truncation (don't retry with same prompt)
                     # Rationale: same prompt → same truncation → wasted tokens
                     # IMPORTANT: truncated responses are NOT cached to disk (they're model-specific failures)

@@ -23,7 +23,7 @@ class TestModelProfile:
         assert DEFAULT_PROFILE.strict_truncation is False
         assert DEFAULT_PROFILE.timeout == 120
         assert DEFAULT_PROFILE.max_tokens == 16000
-        assert DEFAULT_PROFILE.parallel_workers == 1
+        assert DEFAULT_PROFILE.parallel_workers == 3  # Updated: match known profiles
         assert DEFAULT_PROFILE.review_timeout == 900
         assert DEFAULT_PROFILE.fallback_models == []
         assert DEFAULT_PROFILE.review_max_tokens is None
@@ -167,6 +167,20 @@ slow = false
         """severity_bias field should not exist in ModelProfile."""
         profile = get_profile("glm5.2")
         assert not hasattr(profile, "severity_bias"), "severity_bias field should be removed"
+
+    def test_unknown_model_defaults(self):
+        """Unknown model should use DEFAULT_PROFILE with parallel_workers=3, two-stage, timeout 120."""
+        profile = get_profile("fake-off-table-model")
+        assert profile.parallel_workers == 3, "Unknown models should default to 3 parallel workers"
+        assert profile.distill_mode == "two-stage", (
+            "Unknown models should default to two-stage distill"
+        )
+        assert profile.timeout == 120, "Unknown models should default to 120s timeout"
+        assert profile.fallback_models == [], "Unknown models should have no fallback chain"
+        assert profile.reasoning is False, "Unknown models should default to non-reasoning mode"
+        assert profile.strict_truncation is False, (
+            "Unknown models should use lenient truncation detection"
+        )
 
 
 class TestNoHardCodedGlmReferences:

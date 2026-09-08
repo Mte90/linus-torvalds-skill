@@ -48,6 +48,9 @@ report/.review_state.json
 # === Baseline reviews ===
 report/baseline/
 
+# === Review chunks (generated prompts and outputs) ===
+report/chunks/
+
 # === Editor / IDE ===
 .vscode/
 .idea/

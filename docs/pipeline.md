@@ -26,8 +26,21 @@ Five stages, each with a single responsibility:
 
 ## Usage
 
+### Pipeline Orchestrator
+
 ```bash
-# Run the full pipeline
+# Run the full pipeline (calibrate → distill → verify → soul → review → comparison → stats)
+python3 scripts/run_pipeline.py
+
+# Dry-run (show commands without executing)
+python3 scripts/run_pipeline.py --dry-run
+
+# Run a single stage
+python3 scripts/run_pipeline.py --stage calibrate
+python3 scripts/run_pipeline.py --stage distill
+python3 scripts/run_pipeline.py --stage review
+
+# Run the full pipeline (legacy: make regen-all)
 python3 -m torvalds_skill run --sample 2000 --workers 16
 
 # Run individual stages
@@ -196,6 +209,70 @@ Interview-derived moves (53) are merged with email moves (38,293) in `patterns.j
 
 **Purpose:** one LLM call turns 350 samples + calibration data into a SKILL.md.
 
+## Caching
+
+All LLM stages (extract, distill, review) use a unified disk-backed cache with deterministic keys.
+
+### Cache key format
+
+Key = `SHA(stage + model + prompt_hash + params_hash)`
+
+Where:
+- **stage**: `extract`, `distill`, or `review` (different stages produce different outputs)
+- **model**: Model name (different models = different outputs)
+- **prompt_hash**: SHA-256 of the full prompt text
+- **params_hash**: SHA-256 of serialized parameters (temperature, max_tokens, etc.)
+
+**Rationale:** Every element that affects output is included in the key. Different settings (e.g., `max_tokens=500` vs `max_tokens=1000`) produce different keys, preventing stale outputs.
+
+### Cache configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `CACHE_ENABLED` | `1` | Set to `0` to bypass all caching |
+| `CACHE_PATH` | `data/unified_cache.jsonl` | Unified cache file location |
+| `CACHE_TTL_HOURS` | `168` (7d) | Cache TTL in hours |
+
+### TTL decision
+
+Content-hash keys make time-based expiry redundant for correctness—a key only returns valid results if inputs match exactly. The 7-day default TTL is a practical cleanup window, not a correctness requirement. Override via `CACHE_TTL_HOURS` env var.
+
+### CLI cache commands
+
+```bash
+# View cache statistics
+python -m torvalds_skill cache stats
+
+# Clear all cache entries
+python -m torvalds_skill cache clear
+
+# Compact cache (remove expired + dedupe)
+python -m torvalds_skill cache compact
+```
+
+### Cache bypass
+
+Use `--no-cache` flag on extract stage or set `CACHE_ENABLED=0`:
+```bash
+python -m torvalds_skill extract --no-cache --workers 16
+CACHE_ENABLED=0 python -m torvalds_skill extract --workers 16
+```
+
+### Cache invalidation
+
+Content-hash keys ensure different inputs never return stale outputs. To force re-extraction:
+1. Clear the cache: `python -m torvalds_skill cache clear`
+2. Or change input parameters (different prompt, model, temperature, etc.)
+
+### File format
+
+Cache entries are stored as JSONL:
+```json
+{"key": "<sha256>", "response": "<raw LLM output>", "ts": <unix_timestamp>}
+```
+
+Corrupt last lines are gracefully skipped on load. Thread-safe with file locking for writes.
+
 **Prompt structure:**
 
 1. **Four qualities of review rules** — every trigger must be one of:
@@ -255,9 +332,9 @@ focused on identity, decision hierarchy, and communication style.
 Three variants generated from the same `patterns.json`. See [docs/models.md](models.md) for the canonical soul variant table and word counts.
 
 ```bash
-python -m torvalds_skill soul
-python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
-python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
+PYTHONPATH=src python -m torvalds_skill soul
+PYTHONPATH=src python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
+PYTHONPATH=src python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
 ```
 
 Output: `soul/soul.md` — includes Identity, Operating Principles, Decision Patterns, Review Workflow, Communication Style, Emergent Hierarchy, Interlocutor Model, Escalation Rules, Error Gravity, Anti-Soul, Voices, and Insult Vocabulary sections.
@@ -316,12 +393,22 @@ soul/soul-mistral.md
 
 ## Configuration
 
+### Connection settings
+
 | Env var | Default | Purpose |
 |---|---|---|
 | `OPENAI_API_KEY` / `REGOLO_API_KEY` / `LLM_API_KEY` | (required) | API key (first set wins) |
 | `OPENAI_BASE_URL` / `LLM_HOST` | `https://api.regolo.ai/v1` | LLM API endpoint (first set wins) |
 | `LLM_MODEL` | `gpt-oss-120b` | Default model |
 | `LLM_MAX_RETRIES` | `3` | Retry count on 429/5xx |
+
+### Caching
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `LLM_CACHE_PATH` | `data/llm_cache.jsonl` | Cache file for LLM responses |
+| `LLM_CACHE_TTL_HOURS` | `24` | Cache TTL in hours |
+| `EXTRACT_CACHE` | `1` | Set to `0` to bypass extraction cache |
 
 CLI flags override env vars:
 

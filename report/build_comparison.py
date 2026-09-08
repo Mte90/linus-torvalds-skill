@@ -34,6 +34,11 @@ MODELS = [
         "review-mistral-small-4-119b.md",
         "baseline/review-baseline-mistral-small-4-119b.md",
     ),
+    (
+        "qwen3.8-27b",
+        "review-qwen3.8-27b.md",
+        "baseline/review-baseline-qwen3.8-27b.md",
+    ),
 ]
 
 SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"]
@@ -1349,11 +1354,13 @@ def main():
     severity_disagreements = find_severity_disagreements(matched_groups, model_names)
 
     # Compute benchmark metrics for each model's findings
+    # (None = reviews missing for this arm: score as zero hits, not a crash;
+    # the N/A verdict/metrics elsewhere already mark the arm pending)
     benchmark_metrics = {}
     if benchmark_records is not None:
         for key, findings in all_findings.items():
             model_name = key.replace("_skill", "").replace("_baseline", "")
-            benchmark_metrics[key] = compute_benchmark_metrics(findings, benchmark_records)
+            benchmark_metrics[key] = compute_benchmark_metrics(findings or [], benchmark_records)
 
     # Generate markdown
     model_names = [m[0] for m in MODELS]

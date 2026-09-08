@@ -1,0 +1,15 @@
+# profiles.example.toml — example model profile overrides.
+#
+# Copy this file to profiles.toml in the project root to override model profiles.
+# Environment variables (LLM_PROFILE_<NAME>__<FIELD>) take precedence over TOML.
+#
+# Example:
+# [profiles.glm5.2]
+# reasoning = true
+# timeout = 900
+# max_tokens = 32000
+# parallel_workers = 5
+
+[profiles.gpt-oss-120b]
+reasoning = false
+slow = false
