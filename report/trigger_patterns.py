@@ -89,7 +89,17 @@ def extract_triggers_glm(content: str) -> Iterator[tuple[str, str]]:
     # Extract triggers: **Trigger**: text (no italics)
     trigger_pattern = re.compile(r"\*\*Trigger\*\*:\s*(.+?)(?:\n|$)")
 
-    current_theme = "General"
+    # Pre-scan for the first theme to use as default for pre-theme triggers
+    # instead of "General" — triggers before the first heading belong to the
+    # first theme, not to a catch-all "General" bucket.
+    first_theme = None
+    for line in content.split("\n"):
+        theme_match = theme_pattern.match(line.strip())
+        if theme_match:
+            first_theme = (theme_match.group(1) or theme_match.group(2)).strip()
+            break
+
+    current_theme = first_theme if first_theme else "General"
 
     for line in content.split("\n"):
         theme_match = theme_pattern.match(line.strip())
@@ -122,14 +132,13 @@ def extract_triggers_mistral(content: str) -> Iterator[tuple[str, str]]:
         description is empty (Mistral format uses title as the trigger).
     """
     # Extract level headings (### Level X: ...)
-    level_pattern = re.compile(r"^###\s+Level\s+\d+:\s*(.+)$", re.MULTILINE)
+    level_pattern = re.compile(r"^###\s+\*{0,2}\s*Level\s+\d+:\s*(.+?)\*{0,2}\s*$", re.MULTILINE)
 
-    # Extract bullet triggers: - **Title** at column 0 only (no leading whitespace)
-    # This excludes nested field labels like "  - **Type**:" which have 2-space indent
-    bullet_pattern = re.compile(r"^-\s*\*\*(.+?)\*\*")
-
-    # Field labels to skip (these are nested under triggers, not triggers themselves)
-    FIELD_LABELS = ("Type:", "Severity:", "What to look for:", "Why it's a problem:", "Example:")
+    # Match trigger bullets: - **Trigger**: <description text>
+    # Only the Trigger label marks an actual trigger; other bold bullets
+    # (Type, Severity, Example, Correctness, Security, etc.) are field labels
+    # or precedence items, not triggers.
+    bullet_pattern = re.compile(r"^-\s*\*\*Trigger\*\*:\s*(.+)")
 
     content = _normalize_unicode(content)
     current_level = "General"
@@ -143,16 +152,18 @@ def extract_triggers_mistral(content: str) -> Iterator[tuple[str, str]]:
             continue
 
         # Check for section end (new ### heading that's not a Level)
-        if line.strip().startswith("###") and not line.strip().startswith("### Level"):
+        # Check for section end (exactly 3-hash heading that's not a Level)
+        if re.match(r"^###\s+\*{0,2}\s*Level", line.strip()):
+            continue  # already handled above
+        if line.strip().startswith("### ") and not line.strip().startswith("####"):
             in_level_section = False  # C4: Exiting Level section
             continue
 
-        bullet_match = bullet_pattern.match(line)  # C4: Match only column-0 bullets
-        if bullet_match and in_level_section:  # C4: Only yield if in Level section
-            bullet_text = bullet_match.group(1).strip()
-            # Skip field labels (shouldn't match due to column-0 constraint, but be safe)
-            if bullet_text and not bullet_text.startswith(FIELD_LABELS):
-                yield (current_level, bullet_text)
+        bullet_match = bullet_pattern.match(line)
+        if bullet_match and in_level_section:
+            trigger_text = bullet_match.group(1).strip()
+            if trigger_text:
+                yield (current_level, trigger_text)
 
 
 def detect_style(content: str) -> str:
@@ -174,8 +185,8 @@ def detect_style(content: str) -> str:
         return "glm"  # 3-hash colon themes (GLM two-stage output)
     if re.search(r"^####\s+Theme:", text, re.MULTILINE):
         return "gpt-oss"  # 4-hash colon themes (gpt-oss output)
-    if re.search(r"^### Level", text, re.MULTILINE) and re.search(r"^-\s*\*\*", text, re.MULTILINE):
-        return "mistral"  # Level sections + column-0 bullets
+    if re.search(r"^###\s*\*{0,2}\s*Level", text, re.MULTILINE) and re.search(r"^-\s*\*\*", text, re.MULTILINE):
+        return "mistral"  # Level sections (plain or bold-wrapped) + column-0 bullets
     return "gpt-oss"  # Default
 
 

@@ -227,7 +227,9 @@ class UnifiedCache:
         self._load()
 
         with self._lock:
-            # Count original entries from file (before any processing)
+            if not self._cache_path.exists():
+                return 0
+
             original_lines = self._cache_path.read_text(encoding="utf-8").strip().splitlines()
             original_count = len([line for line in original_lines if line.strip()])
 

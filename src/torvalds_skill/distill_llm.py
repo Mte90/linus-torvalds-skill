@@ -270,7 +270,7 @@ def _call_llm(
     Caches successful responses by prompt+model+system_prompt hash (max 200 entries).
     Cache is bypassed when retries=1 (explicit fresh attempt).
 
-    Uses disk-backed cache with 24h TTL and thread-safe access.
+    Uses unified disk-backed cache with 168h (7d) TTL and thread-safe access.
     Reuses HTTPS connections across calls to avoid TCP/TLS handshake overhead.
     """
     from . import config

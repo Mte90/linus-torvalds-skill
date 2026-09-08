@@ -319,6 +319,44 @@ def check_interview_quotes(path: Path) -> tuple[int, list[str]]:
     return len(found), found
 
 
+def check_mode_profile_consistency(path: Path) -> tuple[bool, str]:
+    """Check that skill frontmatter mode matches model profile distill_mode."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+    from torvalds_skill.profiles import get_profile
+
+    content = path.read_text(encoding="utf-8")
+
+    if not content.startswith("---"):
+        return True, "no frontmatter (skipped)"
+
+    fm_end = content.find("---", 3)
+    if fm_end == -1:
+        return True, "no frontmatter end (skipped)"
+
+    frontmatter = content[3:fm_end]
+
+    mode_match = re.search(r"^mode:\s*(.+)$", frontmatter, re.MULTILINE)
+    model_match = re.search(r"^model:\s*(.+)$", frontmatter, re.MULTILINE)
+
+    if not mode_match or not model_match:
+        return True, "mode or model field missing (skipped)"
+
+    skill_mode = mode_match.group(1).strip().strip('"').strip("'")
+    model_name = model_match.group(1).strip().strip('"').strip("'")
+
+    profile = get_profile(model_name)
+
+    if skill_mode != profile.distill_mode:
+        return False, (
+            f"skill mode='{skill_mode}' but profile distill_mode='{profile.distill_mode}' "
+            f"for model '{model_name}'"
+        )
+
+    return True, f"mode='{skill_mode}' matches profile"
+
+
 def check(label: str, condition: bool, detail: str = "") -> bool:
     status = "PASS" if condition else "FAIL"
     msg = f"  [{status}] {label}"
@@ -781,6 +819,15 @@ def main() -> int:
         "Word count in range (1500-10000)",
         1500 <= word_count <= 15000,
         f"{word_count} words",
+    )
+
+    # 2b. Mode vs profile consistency
+    print()
+    mode_pass, mode_detail = check_mode_profile_consistency(skill_path)
+    all_pass &= check(
+        "Skill mode matches model profile",
+        mode_pass,
+        mode_detail,
     )
 
     # 3. Required sections

@@ -17,7 +17,7 @@ SKILL_DIR = Path(__file__).parent.parent / "linus-torvalds-skill"
 
 # variant file -> (expected style, min triggers, max General allowed)
 EXPECTED = {
-    "SKILL.md": ("gpt-oss", 50, 5),
+    "SKILL.md": ("glm", 50, 5),
     "SKILL-GLM.md": ("glm", 40, 2),
     "SKILL-Mistral.md": ("mistral", 15, 2),
     "SKILL-Qwen.md": ("glm", 50, 5),

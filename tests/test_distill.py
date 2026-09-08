@@ -1158,31 +1158,31 @@ class TestMistralExtractionFix:
 
 Some intro text.
 
-- **This should not match** (outside Level section)
+- **Trigger**: This should not match (outside Level section)
 
-### Level 1: Fatal Flaws
+### **Level 1: Fatal Flaws**
 
-- **Unchecked allocation return** (should match)
+- **Trigger**: Unchecked allocation return
   - **Type**: invariant-true (should NOT match - indented)
   - **Severity**: reject (should NOT match - indented)
   - **Example**: "quote" (should NOT match - indented)
-- **Missing error handling** (should match)
+- **Trigger**: Missing error handling
 
 ### Key Definitions
 
-- **Bug definition** (should NOT match - not a Level section)
+- **Trigger**: Bug definition (should NOT match - not a Level section)
 
-### Level 2: Design Issues
+### **Level 2: Design Issues**
 
-- **Leaky abstraction** (should match)
+- **Trigger**: Leaky abstraction
 
 ### Quick Reference
 
-- **Checklist item** (should NOT match - not a Level section)
+- **Trigger**: Checklist item (should NOT match - not a Level section)
 """
         triggers = list(extract_triggers_mistral(content))
 
-        # Should only have 3 triggers from Level sections (column-0 bullets only)
+        # Should only have 3 triggers from Level sections (column-0 Trigger bullets only)
         assert len(triggers) == 3
         titles = [t[1] for t in triggers]
         assert "Unchecked allocation return" in titles
@@ -1198,13 +1198,14 @@ Some intro text.
         assert "Example" not in titles
 
     def test_mistral_count_below_65_with_false_positive_examples(self):
-        """C4: Real Mistral skill extraction yields < 65 triggers (was 96, now 18).
+        """C4: Real Mistral skill extraction yields < 65 triggers.
 
         Before fix: 96 triggers (over-matched nested field labels + non-Level bullets)
-        After fix: 18 triggers (only column-0 bullets in Level sections - Theme headings)
+        After C4 fix: 18 triggers (only column-0 bullets in Level sections)
+        After regeneration: 31 triggers (new skill file with richer content)
 
-        Note: The Mistral format uses - **Theme: X** as top-level bullets within Level sections.
-        The extraction correctly captures these as (level, theme) pairs.
+        The extractor matches - **Trigger**: <description> bullets at column 0
+        within Level sections, capturing the description text as the trigger.
         """
         from report.trigger_patterns import extract_triggers_mistral
 
@@ -1214,16 +1215,16 @@ Some intro text.
         # Count must be strictly below 65
         assert len(triggers) < 65, f"Mistral count {len(triggers)} exceeds ceiling of 65"
 
-        # Actual count should be 18 (verified after fix)
-        assert len(triggers) == 18, f"Expected 18 triggers, got {len(triggers)}"
+        # Actual count after regeneration
+        assert len(triggers) == 31, f"Expected 31 triggers, got {len(triggers)}"
 
-        themes = [t[1] for t in triggers]
+        trigger_texts = [t[1] for t in triggers]
         levels = [t[0] for t in triggers]
 
-        # True themes should be present
-        assert "Theme: Correctness Invariants" in themes
-        assert "Theme: Safety Invariants" in themes
-        assert "Theme: Data Structure Taste" in themes
+        # Triggers should have real description text, not the label "Trigger"
+        assert all(t != "Trigger" for t in trigger_texts), (
+            "Extractor captured the label 'Trigger' instead of the description text"
+        )
 
         # All triggers should be within Level sections (not General)
         assert all(level != "General" for level in levels), (
@@ -1231,10 +1232,10 @@ Some intro text.
         )
 
         # False positives should NOT be present (nested field labels)
-        assert "Type" not in themes
-        assert "Severity" not in themes
-        assert "Example" not in themes
-        assert "What to look for" not in themes
+        assert "Type" not in trigger_texts
+        assert "Severity" not in trigger_texts
+        assert "Example" not in trigger_texts
+        assert "What to look for" not in trigger_texts
 
 
 class TestDistillPromptSeverityQuotas:

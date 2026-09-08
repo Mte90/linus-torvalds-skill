@@ -13,7 +13,7 @@
 - **Validation Symmetry**: Both comparison arms must validate identically — either both run full checks or neither skips.
 - **Stats Generated**: Pattern/word counts and timeouts come from `data/patterns.json`; docs link to source, never type values.
 - **Soul Generation**: Soul files must be generated via the `soul` CLI stage and validated with `scripts/verify_soul.py`, not hand-edited. Match skill variant (gpt-oss → soul.md, glm → soul-glm.md, mistral → soul-mistral.md).
-- **Caching**: Extraction cache is on by default (`EXTRACT_CACHE=1`). Bypass with `EXTRACT_CACHE=0`. Cache entries expire after `LLM_CACHE_TTL_HOURS` (default 24h). Invalid cache = truncated responses never cached.
+- **Caching**: Unified cache is on by default (`CACHE_ENABLED=1`). Bypass with `CACHE_ENABLED=0`. Cache entries expire after `CACHE_TTL_HOURS` (default 168h / 7d). Cache path: `CACHE_PATH` (default `data/unified_cache.jsonl`). Invalid cache = truncated responses never cached.
 - **Profile Overrides**: Priority: env vars > profiles.toml > built-in. Env format: `LLM_PROFILE_<NAME>__<FIELD>` (e.g., `LLM_PROFILE_GLM52__TIMEOUT=900`). TOML: copy `profiles.example.toml` to `profiles.toml`.
 
 ## Local Checks

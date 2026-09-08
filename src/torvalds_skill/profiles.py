@@ -89,7 +89,7 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         parallel_workers=3,  # GLM keeps parallelism (provider rate-limit decision, explicit per task 3.2)
         review_timeout=2400,  # 40 min for GLM5.2 reviews
         fallback_models=["mistral-small-4-119b", "gpt-oss-120b"],
-        review_max_tokens=None,
+        review_max_tokens=32000,
     ),
     "mistral-small-4-119b": ModelProfile(
         reasoning=True,
@@ -102,11 +102,13 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         parallel_workers=3,
         review_timeout=2400,
         fallback_models=["gpt-oss-120b", "glm5.2"],
-        review_max_tokens=None,
+        review_max_tokens=32000,
     ),
-    "qwen3.8-27b": ModelProfile(
+        "qwen3.8-27b": ModelProfile(
         # Reasoning model (verified: spends budget on thinking traces before
         # content, like glm5.2) — single-call distill, long timeouts.
+        # Context: 240K tokens. review_max_tokens=131072 leaves room for both
+        # the reasoning phase and the final review output.
         reasoning=True,
         slow=True,
         prompt_budget_chars=30000,
@@ -117,7 +119,7 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         parallel_workers=3,
         review_timeout=2400,
         fallback_models=["gpt-oss-120b", "mistral-small-4-119b"],
-        review_max_tokens=None,
+        review_max_tokens=131072,
     ),
 }
 
@@ -164,10 +166,20 @@ def _load_toml_profile(model_name: str) -> ModelProfile | None:
 
         # Find [profiles.MODEL_NAME] section
         profiles_section = data.get("profiles", {})
-        if model_name not in profiles_section:
-            return None
-
-        profile_data = profiles_section[model_name]
+        if model_name in profiles_section:
+            profile_data = profiles_section[model_name]
+        else:
+            # Dotted model names (e.g. "glm5.2") may be parsed as nested
+            # TOML: [profiles.glm5.2] → profiles["glm5"]["2"]
+            parts = model_name.split(".")
+            if len(parts) == 2:
+                nested = profiles_section.get(parts[0], {})
+                if isinstance(nested, dict) and parts[1] in nested:
+                    profile_data = nested[parts[1]]
+                else:
+                    return None
+            else:
+                return None
 
         # Use dataclasses.replace for present-wins merge semantics
         from dataclasses import replace

@@ -133,11 +133,11 @@ Full regeneration from raw mbox (not including data download):
 | extract (2000 emails) | 2000 | $2-4 | 2-3 hours |
 | cluster | 0 (deterministic) | $0 | 1 min |
 | calibrate | 0 (deterministic) | $0 | 1 min |
-| distill | 15 (two-stage) or 1 (single) | $0.02-0.08 | 3-15 min |
+| distill | 1 (single-call) | $0.02-0.08 | 3-15 min |
 | soul | 1 | $0.005-0.015 | 1-15 min |
 | review (6 reviews) | 6 | $0.25-0.50 | 15-30 min |
 | **Total** | ~2022 | **$2.30-4.60** | **3-4 hours** |
 
 **Cost formula**: extract dominates at ~$0.001-0.002 per email. Distill and soul are negligible (<2% of total). Review phase is ~10% of total cost.
 
-**Budget optimization**: Use `EXTRACT_CACHE=1` (default) to skip re-extraction. Cache expires after `LLM_CACHE_TTL_HOURS=24h`. Download pre-built data from releases to skip extract phase entirely (~$3-4 savings).
+**Budget optimization**: Use `EXTRACT_CACHE=1` (default) to skip re-extraction. Unified cache expires after `CACHE_TTL_HOURS=168h` (7d). Download pre-built data from releases to skip extract phase entirely (~$3-4 savings).

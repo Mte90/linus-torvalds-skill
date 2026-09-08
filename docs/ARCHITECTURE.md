@@ -10,7 +10,7 @@ The distillation pipeline consists of five stages, run in order:
 2. **Extract** (`extract.py`) — LLM per email (gpt-oss-120b). Extracts structured review moves. One email at a time (batching causes 46% move loss).
 3. **Cluster** (`cluster.py`) — semantic similarity clustering, stratified sampling by category+severity+date. 25 samples/category = 350 total (canonical count).
 4. **Calibrate** (`scripts/calibrate_interviews.py`) — severity calibration from corpus stats.
-5. **Distill** (`distill.py`) — two-stage (14 categories + synthesis) or single-call mode depending on model profile. Produces `SKILL.md`.
+5. **Distill** (`distill.py`) — single-call mode (all profiles use `reasoning=True`, `distill_mode=single`). Produces `SKILL.md`.
 
 ## Review Pipeline
 

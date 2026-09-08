@@ -6,6 +6,7 @@ Dry-run: python3 scripts/run_pipeline.py --dry-run
 """
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path

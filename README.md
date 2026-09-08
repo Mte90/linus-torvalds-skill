@@ -85,6 +85,7 @@ See [docs/models.md](docs/models.md) for full variant details, token costs, and 
    - `soul.md` — gpt-oss-120b
    - `soul-glm.md` — glm5.2 (most detailed)
    - `soul-mistral.md` — mistral
+   - `soul-qwen.md` — qwen3.8-27b
 
 2. **Use it as a system prompt** for Linus-style code review persona.
 

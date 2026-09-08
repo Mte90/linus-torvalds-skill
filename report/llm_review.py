@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import signal
 import sys
 
@@ -31,6 +32,31 @@ from torvalds_skill import (  # noqa: E402  # import not at top due to sys.path 
 )
 
 CHAT_URL = project_config.CHAT_URL
+
+
+def _validate_review_format(response: str) -> bool:
+    """Check that review response is not contaminated with chain-of-thought.
+
+    Only applies when the response looks like a review (starts with frontmatter).
+    Short non-review responses (e.g. test mocks) pass without scrutiny.
+    """
+    if not response.strip():
+        return False
+    # Only validate responses that look like reviews (frontmatter present)
+    if not response.startswith("---"):
+        return True
+    lines = response.splitlines()
+    cot_markers = (
+        "Need ",
+        "Let's ",
+        "Maybe ",
+        "OK.",
+        "Hmm",
+        "Wait,",
+        "Actually",
+    )
+    cot_count = sum(1 for line in lines if line.strip().startswith(cot_markers))
+    return cot_count <= 3
 
 
 def headers() -> dict:
@@ -70,11 +96,16 @@ def call_llm(
     timeout: int = 600,
     temperature: float = 0.3,
     max_tokens: int | None = None,
+    disable_thinking: bool = False,
 ) -> str:
     """Call OpenAI-compatible chat completions API with streaming. Returns accumulated text.
 
     Uses unified cache with key = SHA(stage + model + prompt + params).
     Cache bypass: set CACHE_ENABLED=0 env var.
+
+    When disable_thinking=True, sends chat_template_kwargs={"enable_thinking": false}
+    to suppress the reasoning phase. Used as fallback when a reasoning model exhausts
+    its token budget on internal deliberation (reasoning_only_response).
     """
     from torvalds_skill.profiles import get_profile
 
@@ -85,7 +116,12 @@ def call_llm(
         max_tokens = getattr(profile, "review_max_tokens", None) or profile.max_tokens
 
     # Compute cache key from all inputs that affect output
-    params = {"temperature": temperature, "max_tokens": max_tokens, "timeout": timeout}
+    params = {
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "timeout": timeout,
+        "disable_thinking": disable_thinking,
+    }
     cache_key = llm_cache._compute_key("review", model, prompt, params)
 
     # Check cache first (if enabled)
@@ -104,6 +140,8 @@ def call_llm(
         "max_tokens": max_tokens,
         "stream": True,
     }
+    if disable_thinking:
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(CHAT_URL, data=body, headers=headers(), method="POST")
 
@@ -125,18 +163,27 @@ def call_llm(
                 if text:
                     content_parts.append(text)
                 else:
-                    # Reasoning models stream delta.reasoning_content during their
-                    # thinking phase. Keep it SEPARATE from content: mixing it in
-                    # prepends the entire chain-of-thought to the answer. It is
-                    # used only as salvage when no content was produced at all
-                    # (e.g. token budget exhausted by reasoning).
                     reasoning = delta.get("reasoning_content")
                     if reasoning:
                         reasoning_parts.append(reasoning)
 
     result = "".join(content_parts)
     if not result.strip() and reasoning_parts:
-        result = "".join(reasoning_parts)
+        print(
+            "warning: reasoning-only response detected (no content produced). "
+            "Do not use chain-of-thought as review output.",
+            file=_sys.stderr,
+        )
+        raise RuntimeError("reasoning_only_response")
+
+    if not _validate_review_format(result):
+        print(
+            "warning: review format validation failed (possible CoT contamination). "
+            "Response not cached.",
+            file=_sys.stderr,
+        )
+        raise RuntimeError("review_format_invalid")
+
     word_count = len(result.split())
     print(f"done: {word_count} words", file=_sys.stderr)
 
@@ -171,10 +218,15 @@ def main():
     else:
         timeout = profile.review_timeout
 
-    # Call API with retry
+    # Call API with retry. First attempt uses the model's native reasoning mode.
+    # If the model exhausts its token budget on reasoning (reasoning_only_response),
+    # the second attempt disables the thinking phase via chat_template_kwargs.
+    disable_thinking = False
     for attempt in range(2):
         try:
-            response = call_llm(args.model, prompt, timeout)
+            response = call_llm(
+                args.model, prompt, timeout, disable_thinking=disable_thinking
+            )
             if not response.strip():
                 print(f"warning: empty response (attempt {attempt + 1})", file=_sys.stderr)
                 if attempt == 0:
@@ -183,8 +235,21 @@ def main():
             # Write output
             Path(args.out).write_text(response)
             sys.exit(0)
+        except RuntimeError as e:
+            if str(e) == "reasoning_only_response" and attempt == 0:
+                print(
+                    "retrying with reasoning disabled (enable_thinking=false)",
+                    file=_sys.stderr,
+                )
+                disable_thinking = True
+                continue
+            print(f"error: API call failed (attempt {attempt + 1}): {e}", file=_sys.stderr)
+            if attempt == 0:
+                time.sleep(2)
+                continue
+            sys.exit(1)
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
-            print(f"error: API call failed (attempt {attempt + 1}): {e}", file=sys.stderr)
+            print(f"error: API call failed (attempt {attempt + 1}): {e}", file=_sys.stderr)
             if attempt == 0:
                 time.sleep(2)
                 continue

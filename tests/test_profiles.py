@@ -144,12 +144,19 @@ slow = false
         finally:
             del os.environ["LLM_PROFILE_GPT_OSS_120B__FALLBACK_MODELS"]
 
-    def test_review_max_tokens_default_none(self):
-        """review_max_tokens should default to None for all profiles."""
+    def test_review_max_tokens_defaults(self):
+        """Reasoning models get 32000 (room for content after thinking); others None."""
+        expected = {
+            "gpt-oss-120b": None,
+            "glm5.2": 32000,
+            "mistral-small-4-119b": 32000,
+            "qwen3.8-27b": 131072,
+        }
         for model_name in KNOWN_PROFILES:
             profile = get_profile(model_name)
-            assert profile.review_max_tokens is None, (
-                f"{model_name} should have review_max_tokens=None"
+            assert profile.review_max_tokens == expected[model_name], (
+                f"{model_name} should have review_max_tokens={expected[model_name]}, "
+                f"got {profile.review_max_tokens}"
             )
         assert DEFAULT_PROFILE.review_max_tokens is None
 
