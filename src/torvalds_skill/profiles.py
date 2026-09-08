@@ -197,7 +197,7 @@ def _load_env_override(model_name: str) -> dict[str, Any]:
     Example: LLM_PROFILE_GLM52__TIMEOUT=900
     """
     overrides: dict[str, Any] = {}
-    model_upper = model_name.upper().replace("-", "_")
+    model_upper = model_name.upper().replace("-", "_").replace(".", "_")
 
     # Field mappings (env var name -> dataclass field)
     fields = [

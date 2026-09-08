@@ -140,4 +140,4 @@ Full regeneration from raw mbox (not including data download):
 
 **Cost formula**: extract dominates at ~$0.001-0.002 per email. Distill and soul are negligible (<2% of total). Review phase is ~10% of total cost.
 
-**Budget optimization**: Use `EXTRACT_CACHE=1` (default) to skip re-extraction. Unified cache expires after `CACHE_TTL_HOURS=168h` (7d). Download pre-built data from releases to skip extract phase entirely (~$3-4 savings).
+**Budget optimization**: Use `CACHE_ENABLED=1` (default) to skip re-extraction via the unified cache. Cache expires after `CACHE_TTL_HOURS=168h` (7d). Download pre-built data from releases to skip extract phase entirely (~$3-4 savings).

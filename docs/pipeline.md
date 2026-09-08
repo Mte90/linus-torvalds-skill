@@ -409,7 +409,6 @@ soul/soul-mistral.md
 | `CACHE_PATH` | `data/unified_cache.jsonl` | Cache file for LLM responses |
 | `CACHE_TTL_HOURS` | `168` | Cache TTL in hours (7 days) |
 | `CACHE_ENABLED` | `1` | Set to `0` to bypass unified cache |
-| `EXTRACT_CACHE` | `1` | Set to `0` to bypass extraction cache |
 
 CLI flags override env vars:
 
