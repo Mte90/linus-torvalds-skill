@@ -5,13 +5,12 @@ emails into a language-agnostic code-review skill.
 
 ## Overview
 
-```
-Emails (mbox)          →  Moves (JSONL)        →  Samples (JSON)      →  Skill (MD)
-       classify              extract                 cluster               distill
-  (rule-based)          (LLM per email)         (stratified)           (LLM once)
-                                                                          ↑
-                                              data/calibration.json ───┘
-                                                (calibrate, rule-based)
+```mermaid
+flowchart LR
+    A["Emails (mbox)<br/>classify — rule-based"] --> B["Moves (JSONL)<br/>extract — LLM/email"]
+    B --> C["Samples (JSON)<br/>cluster — stratified"]
+    C --> D["Skill (MD)<br/>distill — LLM once"]
+    E["calibration.json<br/>calibrate — rule-based"] --> D
 ```
 
 Five stages, each with a single responsibility:
@@ -316,7 +315,7 @@ Request timeout is 600s for GLM5.2, 120s for others. GLM5.2 also requires
 
 ## Skill variants
 
-Three variants generated from the same `patterns.json` + `calibration.json`. See [docs/models.md](models.md) for the canonical variant table, word counts, token costs, and regeneration commands.
+Four variants generated from the same `patterns.json` + `calibration.json`. See [docs/models.md](models.md) for the canonical variant table, word counts, token costs, and regeneration commands.
 
 ```bash
 # Generate a variant
@@ -329,7 +328,7 @@ A **soul document** defines the AI's persona, values, and voice — not its rule
 The soul generator uses the same `patterns.json` but a different system prompt
 focused on identity, decision hierarchy, and communication style.
 
-Three variants generated from the same `patterns.json`. See [docs/models.md](models.md) for the canonical soul variant table and word counts.
+Four variants generated from the same `patterns.json`. See [docs/models.md](models.md) for the canonical soul variant table and word counts.
 
 ```bash
 python -m torvalds_skill soul
@@ -373,22 +372,15 @@ Checks:
 
 ## Data flow
 
-```
-data/lkml.mbox          192 MB, 31,397 emails (NNTP fetch)
-    ↓ convert
-data/corpus.jsonl        30,033 review emails (after classify)
-    ↓ extract
-data/moves.jsonl          ~12 MB, 30,033 emails, 38,293 review moves
-    ↓ cluster                        ↓ calibrate
-data/patterns.json       350 samples (297 email + 53 interview)    data/calibration.json
-    ↓ distill ←──────────────────────┘
-linus-torvalds-skill/SKILL.md         (see docs/models.md for word counts)
-linus-torvalds-skill/SKILL-GLM.md
-linus-torvalds-skill/SKILL-Mistral.md
-    ↓ soul
-soul/soul.md
-soul/soul-glm.md
-soul/soul-mistral.md
+```mermaid
+flowchart TD
+    A["data/lkml.mbox<br/>192 MB, 31,397 emails"] -->|convert| B["data/corpus.jsonl<br/>30,033 review emails"]
+    B -->|extract| C["data/moves.jsonl<br/>~12 MB, 38,293 review moves"]
+    C -->|cluster| D["data/patterns.json<br/>350 samples (297 email + 53 interview)"]
+    C -->|calibrate| E["data/calibration.json"]
+    D -->|distill| F["SKILL.md, SKILL-GLM.md<br/>SKILL-Mistral.md, SKILL-Qwen.md"]
+    E -->|distill| F
+    F -->|soul| G["soul.md, soul-glm.md<br/>soul-mistral.md, soul-qwen.md"]
 ```
 
 ## Configuration

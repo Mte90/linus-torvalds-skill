@@ -150,14 +150,14 @@ Same triggers, different severity assignments:
 
 ## Structural Divergence
 
-| Aspect | gpt-oss-120b | glm5.2 | mistral |
-|---|---|---|---|
-| **Sections** | 12 major sections | 10 major sections | 9 major sections |
-| **Themes** | 10 (A-J) | 15 (numbered) | 6 (tiered) |
+| Aspect | gpt-oss-120b | glm5.2 | mistral | qwen3.8-27b |
+|---|---|---|---|---|
+| **Sections** | 12 major sections | 10 major sections | 9 major sections | 12 major sections |
+| **Themes** | 10 (A-J) | 15 (numbered) | 6 (tiered) | 20 (numbered) |
 | **Triggers** | ~45 detailed | ~55 detailed | ~35 compact | ~40 balanced |
-| **Decision Cards** | 6 cards | 0 cards | 7 cards |
-| **Anti-Patterns** | 13 patterns | 0 patterns | 10 patterns |
-| **Severity Stats** | Full table | Embedded | Qualitative only |
+| **Decision Cards** | 6 cards | 0 cards | 7 cards | 6 cards |
+| **Anti-Patterns** | 13 patterns | 0 patterns | 10 patterns | 11 patterns |
+| **Severity Stats** | Full table | Embedded | Qualitative only | Full table |
 | **Cross-File Review** | Yes | No | Yes | Yes |
 
 ---

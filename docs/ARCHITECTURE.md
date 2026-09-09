@@ -10,7 +10,7 @@ The distillation pipeline consists of five stages, run in order:
 2. **Extract** (`extract.py`) — LLM per email (gpt-oss-120b). Extracts structured review moves. One email at a time (batching causes 46% move loss).
 3. **Cluster** (`cluster.py`) — semantic similarity clustering, stratified sampling by category+severity+date. 25 samples/category = 350 total (canonical count).
 4. **Calibrate** (`scripts/calibrate_interviews.py`) — severity calibration from corpus stats.
-5. **Distill** (`distill.py`) — single-call mode (all profiles use `reasoning=True`, `distill_mode=single`). Produces `SKILL.md`.
+5. **Distill** (`distill.py`) — distill mode determined by model profile (see `src/torvalds_skill/profiles.py`). Produces `SKILL.md`.
 
 ## Review Pipeline
 
@@ -34,8 +34,9 @@ The soul file (`soul/*.md`) is **NOT** part of the review pipeline. It was remov
 | Model | Max tokens | Reasoning |
 |-------|-----------|----------|
 | glm5.2 | 16000 | Yes |
-| gpt-oss-120b | 16000 | No |
-| mistral-small-4-119b | 16000 | No |
+| gpt-oss-120b | 16000 | Yes |
+| mistral-small-4-119b | 16000 | Yes |
+| qwen3.8-27b | 16000 | Yes |
 
 Note: These values come from `src/torvalds_skill/profiles.py` (`ModelProfile.max_tokens`). The field is the effective budget used during generation (may be lower than the model's actual context limit to avoid timeouts); reasoning output and content share it.
 

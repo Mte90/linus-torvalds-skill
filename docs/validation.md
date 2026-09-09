@@ -1,13 +1,12 @@
 # Validation: antirez/smallchat
 
-The skill was tested on [antirez/smallchat](https://github.com/antirez/smallchat) (706 LOC, C) — a minimal TCP chat server. Six independent reviews were generated: each of the three models reviewed the codebase twice, once with the Torvalds skill loaded and once without (baseline).
 The skill was tested on [antirez/smallchat](https://github.com/antirez/smallchat) (706 LOC, C) — a minimal TCP chat server. Eight independent reviews were generated: each of the four models reviewed the codebase twice, once with the Torvalds skill loaded and once without (baseline).
 
 ## Validation Methodology
 
 Each model reviews the same test codebase twice: once with the Torvalds skill loaded, once without any skill (baseline). The baseline shows the model's native code review capability, while the with-skill review shows how the skill enhances its review behavior.
 
-To validate the skill's effectiveness, we ran six code reviews (two per model) against the same codebase. This approach tests:
+To validate the skill's effectiveness, we ran eight code reviews (two per model) against the same codebase. This approach tests:
 1. **Consistency**: Do all models reach the same verdict on critical issues?
 2. **Depth**: How does model choice affect finding severity and explanation quality?
 3. **Practical utility**: Can the skill be applied to real-world codebases outside the kernel?
@@ -16,7 +15,7 @@ To validate the skill's effectiveness, we ran six code reviews (two per model) a
 
 The authoritative results are in [`report/comparison.md`](../report/comparison.md), which cross-references findings at the issue level — not just counts. It includes the stakeholder scorecard, finding consensus matrix, severity disagreement table, with-skill vs baseline comparison, per-model bug comparison, and verdict.
 
-The six review files:
+The eight review files:
 
 | Review | Mode | Model |
 |---|---|---|
@@ -31,10 +30,9 @@ The six review files:
 
 ## Key Findings
 
-- All three models reached the same verdict: **FAIL** (the codebase has real bugs)
 - All four models reached the same verdict: **FAIL** (the codebase has real bugs)
-- **glm5.2** gained +2 net critical findings with the skill (4 new, 2 lost) — the only model where the skill added net critical value
-- **gpt-oss-120b** and **mistral** showed net negative critical coverage — the skill narrowed focus too aggressively and suppressed criticals the baseline caught
+- **mistral** gained the most net critical findings with the skill (+9: 9 found, 0 lost); gpt-oss-120b and qwen3.8-27b each added +4 net critical
+- **glm5.2** was the only model with net negative critical coverage (-2: 0 found, 2 lost) — the skill narrowed focus too aggressively and suppressed criticals the baseline caught
 - The trigger-coverage column in `comparison.md` distinguishes skill gaps (trigger exists, model didn't fire it) from out-of-scope bugs (no trigger covers that type)
 
 Replicate with `python3 report/run_review.py && python3 report/build_comparison.py`.

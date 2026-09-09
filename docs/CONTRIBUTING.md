@@ -18,11 +18,13 @@ All `.md` artifacts in this repository are produced by scripts. **Do not edit th
 | Artifact | Generator | Regeneration command |
 |----------|-----------|---------------------|
 | `linus-torvalds-skill/SKILL.md` | `src/torvalds_skill/distill.py` | `python -m torvalds_skill distill --model gpt-oss-120b --out linus-torvalds-skill/SKILL.md` |
-| `linus-torvalds-skill/SKILL-GLM.md` | `src/torvalds_skill/distill.py` | `python -m torvalds_skill distill --model glm5.2 --out linus-torvalds-skill/SKILL-GLM.md --single-call` |
+| `linus-torvalds-skill/SKILL-GLM.md` | `src/torvalds_skill/distill.py` | `python -m torvalds_skill distill --model glm5.2 --out linus-torvalds-skill/SKILL-GLM.md` |
 | `linus-torvalds-skill/SKILL-Mistral.md` | `src/torvalds_skill/distill.py` | `python -m torvalds_skill distill --model mistral-small-4-119b --out linus-torvalds-skill/SKILL-Mistral.md` |
 | `soul/soul.md` | `src/torvalds_skill/soul.py` | `python -m torvalds_skill soul --model gpt-oss-120b --out soul/soul.md` |
 | `soul/soul-glm.md` | `src/torvalds_skill/soul.py` | `python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md` |
 | `soul/soul-mistral.md` | `src/torvalds_skill/soul.py` | `python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md` |
+| `linus-torvalds-skill/SKILL-Qwen.md` | `src/torvalds_skill/distill.py` | `python -m torvalds_skill distill --model qwen3.8-27b --out linus-torvalds-skill/SKILL-Qwen.md` |
+| `soul/soul-qwen.md` | `src/torvalds_skill/soul.py` | `python -m torvalds_skill soul --model qwen3.8-27b --out soul/soul-qwen.md` |
 | `report/review-*.md` | `report/run_review.py` | `python3 report/run_review.py` |
 | `report/comparison.md` | `report/build_comparison.py` | `python3 report/build_comparison.py` |
 | `data/patterns.json` | `src/torvalds_skill/cluster.py` | `python -m torvalds_skill cluster` |
@@ -72,5 +74,5 @@ Use these commands to verify the state of the project:
 | Skill language-agnostic | `python3 scripts/verify_skill.py` |
 | Comparison regenerates | `python3 report/build_comparison.py` |
 | Review pipeline syntax | `python3 -m py_compile report/run_review.py` |
-| Full review run | `python3 report/run_review.py --force` | Auto-chunking enabled for all models |
+| Full review run | `python3 report/run_review.py --force` |
 | Pipeline data valid | `python -m torvalds_skill validate` |

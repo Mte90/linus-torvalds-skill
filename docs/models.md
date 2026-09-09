@@ -1,5 +1,4 @@
 # Model Variants
-Three model variants generate the skill and soul files. Each has different characteristics based on its training and reasoning style.
 Four model variants generate the skill and soul files. Each has different characteristics based on its training and reasoning style.
 
 ## Regeneration Commands
@@ -135,7 +134,7 @@ Full regeneration from raw mbox (not including data download):
 | calibrate | 0 (deterministic) | $0 | 1 min |
 | distill | 1 (single-call) | $0.02-0.08 | 3-15 min |
 | soul | 1 | $0.005-0.015 | 1-15 min |
-| review (6 reviews) | 6 | $0.25-0.50 | 15-30 min |
+| review (8 reviews) | 8 | $0.25-0.50 | 15-30 min |
 | **Total** | ~2022 | **$2.30-4.60** | **3-4 hours** |
 
 **Cost formula**: extract dominates at ~$0.001-0.002 per email. Distill and soul are negligible (<2% of total). Review phase is ~10% of total cost.
