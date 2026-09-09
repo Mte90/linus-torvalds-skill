@@ -48,6 +48,7 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -188,24 +189,29 @@ def compute_input_hash(model: str, mode: str) -> str | None:
     return h.hexdigest()
 
 
+def _extract_input_hash_from_frontmatter(content: str) -> str | None:
+    """Extract input_hash from YAML frontmatter. Returns None if not found."""
+    if not content.lstrip().startswith("---"):
+        return None
+    stripped = content.lstrip()
+    end = stripped.find("\n---", 3)
+    if end == -1:
+        return None
+    frontmatter = stripped[3:end]
+    match = re.search(r"^input_hash:\s*(\S+)", frontmatter, re.MULTILINE)
+    return match.group(1) if match else None
+
+
 def should_skip_model(model: str, mode: str, force: bool) -> tuple[bool, str]:
     """Check if a model/mode combination should be skipped.
 
-    Skip if: output exists AND output_hash matches AND input_hash matches.
+    Skip if: output exists AND input_hash in frontmatter matches current input hash.
     Re-run if: any input changed (skill or source files).
 
     Returns (should_skip, reason).
     """
     if force:
         return False, "--force flag set"
-
-    state = load_state()
-    key = f"{model}:{mode}"
-
-    if key not in state:
-        return False, "no checkpoint found"
-
-    checkpoint = state[key]
 
     # Check if output file still exists
     if mode == "baseline":
@@ -216,24 +222,21 @@ def should_skip_model(model: str, mode: str, force: bool) -> tuple[bool, str]:
     if not out_file.exists():
         return False, "output file missing"
 
-    # Check if output hash matches
-    current_hash = compute_file_hash(out_file)
-    if current_hash != checkpoint.get("output_hash"):
-        return False, "output hash mismatch"
+    # Check if output file has valid frontmatter with input_hash
+    content = out_file.read_text()
+    stored_input_hash = _extract_input_hash_from_frontmatter(content)
+    if stored_input_hash is None:
+        return False, "no input_hash in output frontmatter (legacy)"
 
     # Check if input hash matches (skill + source files)
     current_input_hash = compute_input_hash(model, mode)
     if current_input_hash is None:
         return False, "input file missing"
 
-    checkpoint_input_hash = checkpoint.get("input_hash")
-    if checkpoint_input_hash is None:
-        return False, "no input hash in checkpoint (legacy)"
-
-    if current_input_hash != checkpoint_input_hash:
+    if current_input_hash != stored_input_hash:
         return False, "input hash mismatch (skill or source changed)"
 
-    return True, "checkpoint valid (input+output hashes match)"
+    return True, "checkpoint valid (input hash matches)"
 
 
 def record_checkpoint(model: str, mode: str, out_file: Path, status: str) -> None:
@@ -543,7 +546,7 @@ def log_metrics(
         "duration_sec": duration_sec,
         "exit_code": exit_code,
         "word_count": word_count,
-        "findings_count": findings_count,
+        "raw_findings_count": findings_count,
         "chunked": chunked,
     }
 
@@ -753,7 +756,9 @@ def _filter_findings_by_pass(findings: list[dict], file_has_pass1: dict[str, boo
     return filtered
 
 
-def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
+def merge_chunks(
+    model_label: str, chunk_dir: Path, final_file: Path, input_hash: str | None = None
+) -> bool:
     """Merge chunks mechanically into final review file. Returns True on success.
 
     Applies two-pass filtering: drops Pass-2 findings for files with Pass-1 findings,
@@ -806,18 +811,24 @@ def merge_chunks(model_label: str, chunk_dir: Path, final_file: Path) -> bool:
         f"files_reviewed: {files_reviewed}",
         f"findings_count: {total_findings}",
         f"verdict: {verdict}",
-        "---",
-        "",
-        "## Review Summary",
-        "",
-        f"**Model:** {model_label}",
-        f"**Files reviewed:** {files_reviewed}",
-        f"**Total findings:** {total_findings}",
-        f"**Findings by severity:** {severity_summary}",
-        "",
-        "## Findings",
-        "",
     ]
+    if input_hash:
+        output_lines.append(f"input_hash: {input_hash}")
+    output_lines.extend(
+        [
+            "---",
+            "",
+            "## Review Summary",
+            "",
+            f"**Model:** {model_label}",
+            f"**Files reviewed:** {files_reviewed}",
+            f"**Total findings:** {total_findings}",
+            f"**Findings by severity:** {severity_summary}",
+            "",
+            "## Findings",
+            "",
+        ]
+    )
 
     # Rebuild findings section from filtered findings, grouped by file
     findings_by_file: dict[str, list[str]] = {}
@@ -929,7 +940,8 @@ def run_review_chunked(
         return False
 
     # Merge chunks into final output (mechanical merge, no LLM call)
-    if not merge_chunks(model_label, chunk_dir, out_file):
+    input_hash = compute_input_hash(model_label, "with-skill")
+    if not merge_chunks(model_label, chunk_dir, out_file, input_hash):
         print(
             f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: merge failed, keeping chunks for manual recovery",
             file=sys.stderr,
@@ -1061,10 +1073,8 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
         print(
             f"[{datetime.now().strftime('%H:%M:%S')}] baseline {model_label}: prompt {len(prompt)} > budget {profile.prompt_budget_chars}, using chunked pipeline"
         )
-        # For baseline, we need a chunked pipeline without skill_file
-        # Reuse run_review_chunked but with skill_file=None (will need adaptation)
-        # For now, baseline uses single-call path (symmetry in decision, not implementation)
-        # TODO: Implement baseline chunked pipeline if needed
+        # Baseline chunked path: create a variant without skill_file parameter
+        return run_baseline_review_chunked(model_label, out_file, force)
 
     timeout_sec = profile.review_timeout
 
@@ -1123,6 +1133,192 @@ def run_baseline_review(model_label: str, out_file: Path, force: bool) -> bool:
         file=sys.stderr,
     )
     return False
+
+
+def run_baseline_review_chunked(
+    model_label: str,
+    out_file: Path,
+    force: bool,
+) -> bool:
+    """Run chunked baseline review pipeline (per-source-file chunks + merge). Returns True on success."""
+    started_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    start_ts = datetime.now()
+
+    # Check checkpoint
+    skip, reason = should_skip_model(model_label, "baseline", force)
+    if skip:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] [skip] {model_label} baseline: {reason}")
+        elapsed = (datetime.now() - start_ts).total_seconds()
+        log_model_metrics(model_label, "baseline", started_iso, elapsed, "skip", out_file)
+        record_checkpoint(model_label, "baseline", out_file, "skip")
+        return True
+
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] [run] {model_label} baseline (chunked)")
+
+    # Handle interrupted merge: final file exists but chunks dir also exists
+    chunk_dir = BASELINE_DIR / "chunks" / model_label
+    if not force and out_file.exists() and out_file.stat().st_size > 0 and chunk_dir.exists():
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: stale chunks dir found, cleaning up"
+        )
+        shutil.rmtree(chunk_dir)
+        return True
+
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+
+    # Timeout: use profile.review_timeout
+    from torvalds_skill.profiles import get_profile
+
+    profile = get_profile(model_label)
+    chunk_timeout = profile.review_timeout
+
+    # Check if chunks dir exists (resume from interrupted run)
+    if chunk_dir.exists() and any(chunk_dir.iterdir()):
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: resuming from existing chunks dir"
+        )
+
+    # Process each source file chunk
+    failed_chunks = 0
+    for src in SOURCE_FILES:
+        chunk_file = chunk_dir / f"{src}.md"
+
+        # Skip if chunk already exists and non-empty
+        if chunk_file.exists() and chunk_file.stat().st_size > 0:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} baseline chunk {src} already done, skipping"
+            )
+            continue
+
+        if not run_baseline_chunk_review(model_label, src, chunk_file, chunk_timeout, force):
+            failed_chunks += 1
+
+    if failed_chunks > 0:
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: {failed_chunks} chunk(s) failed, keeping chunks for retry",
+            file=sys.stderr,
+        )
+        return False
+
+    # Merge chunks into final output (mechanical merge, no LLM call)
+    input_hash = compute_input_hash(model_label, "baseline")
+    if not merge_chunks(model_label, chunk_dir, out_file, input_hash):
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: merge failed, keeping chunks for manual recovery",
+            file=sys.stderr,
+        )
+        return False
+
+    elapsed = (datetime.now() - start_ts).total_seconds()
+    log_model_metrics(model_label, "baseline", started_iso, elapsed, "ok", out_file)
+    record_checkpoint(model_label, "baseline", out_file, "ok")
+    return True
+
+
+def run_baseline_chunk_review(
+    model_label: str,
+    source_file: str,
+    chunk_file: Path,
+    timeout_sec: int,
+    force: bool,
+) -> bool:
+    """Run a single baseline chunk review with timeout + retry. Returns True on success."""
+    if not force and chunk_file.exists() and chunk_file.stat().st_size > 0:
+        word_count = len(chunk_file.read_text().split())
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] [skip] {model_label} baseline chunk {source_file} already exists ({word_count} words)"
+        )
+        return True
+
+    chunk_dir = chunk_file.parent
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+
+    for attempt in range(1, 4):
+        if attempt > 1:
+            backoff_multiplier = 2 ** (attempt - 1)
+            jitter = random.randint(0, 30)
+            retry_timeout = int(timeout_sec * backoff_multiplier + jitter)
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} baseline chunk {source_file}: retrying (attempt {attempt}, timeout {retry_timeout}s)"
+            )
+            chunk_file.unlink(missing_ok=True)
+        else:
+            retry_timeout = timeout_sec
+
+        prompt = build_baseline_chunk_prompt(source_file, chunk_file)
+        prompt_file = chunk_dir / f"{source_file}.prompt"
+        prompt_file.write_text(prompt)
+
+        start_ts = datetime.now()
+        exit_code, _ = run_llm_call(model_label, prompt_file, chunk_file, retry_timeout)
+        (datetime.now() - start_ts).total_seconds()
+
+        prompt_file.unlink(missing_ok=True)
+
+        if exit_code == 0 and chunk_file.exists() and chunk_file.stat().st_size > 0:
+            word_count = len(chunk_file.read_text().split())
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} baseline chunk {source_file} done: {word_count} words"
+            )
+            return True
+
+        if exit_code == 124:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} baseline chunk {source_file} TIMED OUT after {retry_timeout}s",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} baseline chunk {source_file} FAILED (exit {exit_code})",
+                file=sys.stderr,
+            )
+
+    print(
+        f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} baseline chunk {source_file} FAILED after 3 attempts",
+        file=sys.stderr,
+    )
+    return False
+
+
+def build_baseline_chunk_prompt(source_file: str, chunk_file: Path) -> str:
+    """Build the baseline chunk review prompt (single file, no skill)."""
+    source_content = read_source_file(source_file)
+    two_pass_rule = _build_two_pass_rule()
+
+    return f"""You are a code reviewer. Review the code below — antirez/smallchat (minimal TCP chat server, ~706 LOC).
+
+Do NOT use any tools. Do NOT read any files. Everything you need is inlined below.
+
+== SOURCE: {source_file} ==
+{source_content}
+
+{two_pass_rule}
+
+Review the source above finding:
+- Bugs and logic errors
+- Security vulnerabilities (buffer overflows, use-after-free, injection, etc.)
+- Memory leaks and resource management issues
+- Race conditions and concurrency problems
+- Performance issues
+- Code quality and maintainability concerns
+
+For each finding use:
+### [SEVERITY] Finding title
+- **Type:** bug | security | memory | concurrency | performance | code-quality
+- **Location:** file:line
+- **Issue:** what's wrong
+- **Fix:** concrete action
+- **Pass:** 1 | 2
+
+**Format rules:**
+- Use exactly `###` (three hash marks) for severity headings — not `####` or `##`
+- Use `**Field:**` format (colon inside the bold markers) for all fields
+- Severity values are: CRITICAL, HIGH, MEDIUM, LOW (uppercase only)
+
+Severity: CRITICAL | HIGH | MEDIUM | LOW
+Report every real bug you find. If a file is genuinely clean, say "No findings." Don't invent problems.
+Write findings to: {chunk_file}
+"""
 
 
 def validate_review_format(file: Path, model: str) -> bool:

@@ -349,19 +349,8 @@ def parse_review_file(filepath: Path) -> list[Finding]:
     except Exception:
         return []
 
-    filename = filepath.name
-
-    # Dispatch to appropriate parser (all now use unified parse_review)
-    if "baseline" in filename:
-        findings = parse_baseline_review(content)
-    elif "gpt-oss" in filename:
-        findings = parse_gpt_oss_review(content)
-    elif "glm5.2" in filename or "glm52" in filename:
-        findings = parse_glm52_review(content)
-    elif "mistral" in filename:
-        findings = parse_mistral_review(content)
-    else:
-        findings = parse_review(content, track_section_file=True)
+    # Direct call to unified parser (model name doesn't affect parsing logic)
+    findings = parse_review(content, track_section_file=True)
 
     return _dedup_findings(findings)
 
@@ -836,7 +825,7 @@ def match_finding_to_trigger(finding: Finding, triggers: list[str]) -> tuple[str
                 best_trigger = trigger
 
     # Threshold for "covered": at least some keyword overlap
-    if best_score >= 0.05:  # Empirical threshold for trigger-finding matching
+    if best_score >= 0.15:  # Empirical threshold for trigger-finding matching
         return best_trigger, best_score
     return None, best_score
 
@@ -1035,11 +1024,18 @@ def compare_skill_vs_baseline(
     baseline_only_with_coverage = []
     for f in baseline_only_all:
         matched_trigger, similarity = match_finding_to_trigger(f, skill_triggers or [])
+        if classify_finding_core_vs_trivia(f) == "TRIVIA":
+            classification = "out-of-scope"
+        elif matched_trigger:
+            classification = "skill-gap"
+        else:
+            classification = "sampling-loss"
         baseline_only_with_coverage.append(
             {
                 "finding": f,
                 "matched_trigger": matched_trigger,
                 "similarity": similarity,
+                "classification": classification,
             }
         )
 
@@ -1282,7 +1278,7 @@ def main():
             skill_findings = parse_review_file(skill_path)
             skill_metrics = {
                 "words": len(skill_path.read_text().split()),
-                "findings": len(skill_findings),
+                "unique_findings": len(skill_findings),
             }
             for sev in SEVERITIES:
                 skill_metrics[sev] = sum(1 for f in skill_findings if f.severity == sev)
@@ -1301,7 +1297,7 @@ def main():
             baseline_findings = parse_review_file(baseline_path)
             baseline_metrics = {
                 "words": len(baseline_path.read_text().split()),
-                "findings": len(baseline_findings),
+                "unique_findings": len(baseline_findings),
             }
             for sev in SEVERITIES:
                 baseline_metrics[sev] = sum(1 for f in baseline_findings if f.severity == sev)

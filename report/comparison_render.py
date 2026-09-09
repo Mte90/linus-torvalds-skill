@@ -3,6 +3,40 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+from torvalds_skill.profiles import get_profile
+
+
+def safe_truncate(text: str, limit: int = 40) -> str:
+    """Safely truncate text for markdown tables.
+
+    Closes backticks, cuts at word boundary, escapes pipes, and appends '...' only if truncated.
+
+    Args:
+        text: Text to truncate
+        limit: Maximum length (default 40)
+
+    Returns:
+        Truncated text with '...' if len(text) > limit, else original text
+    """
+    if len(text) <= limit:
+        return text
+
+    # Cut at word boundary (space) when possible
+    truncated = text[:limit]
+    last_space = truncated.rfind(" ")
+    if last_space > limit // 2:  # Only cut at space if it's past the middle
+        truncated = truncated[:last_space]
+
+    # Close any open backtick
+    if truncated.count("`") % 2 == 1:
+        truncated += "`"
+
+    # Escape pipes (break markdown tables)
+    truncated = truncated.replace("|", "\\|")
+
+    # Append "..." only if actually truncated
+    return truncated + "..."
+
 
 def generate_scorecard(models_data: list[dict]) -> str:
     """Generate stakeholder scorecard table and summary.
@@ -133,25 +167,38 @@ def generate_markdown(
     lines.append(
         "|-------|------------|--------------|--------------|-------------------|---------------------|"
     )
-    lines.append(
-        "| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | two-stage (14 categories + synthesis) | 16000 | 120s (profile.default) | balanced |"
-    )
-    lines.append(
-        "| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single-call (profile.default) | 16000 | 600s / 1800s (profile.slow) | downgrade ONLY style/docs borderline, never correctness/error-handling |"
-    )
-    lines.append(
-        "| mistral-small-4-119b | `linus-torvalds-skill/SKILL-Mistral.md` | two-stage | 16000 | 120s (profile.default) | under-rates → upgrade borderline |"
-    )
-    lines.append(
-        "| qwen3.8-27b | `linus-torvalds-skill/SKILL-Qwen.md` | single-call (profile.reasoning) | 16000 | 600s / 2400s (profile.slow) | none measured |"
-    )
+
+    # Generate table from runtime profiles
+    skill_files = {
+        "gpt-oss-120b": "`linus-torvalds-skill/SKILL.md`",
+        "glm5.2": "`linus-torvalds-skill/SKILL-GLM.md`",
+        "mistral": "`linus-torvalds-skill/SKILL-Mistral.md`",
+        "qwen3.8-27b": "`linus-torvalds-skill/SKILL-Qwen.md`",
+    }
+    severity_calib = {
+        "gpt-oss-120b": "balanced",
+        "glm5.2": "downgrade ONLY style/docs borderline, never correctness/error-handling",
+        "mistral": "under-rates → upgrade borderline",
+        "qwen3.8-27b": "none measured",
+    }
+
+    profile_name_map = {
+        "mistral": "mistral-small-4-119b",
+    }
+
+    for model in model_names:
+        profile = get_profile(profile_name_map.get(model, model))
+        skill_file = skill_files.get(model, "unknown")
+        distill_mode = profile.distill_mode
+        token_budget = profile.max_tokens
+        timeout = profile.timeout
+        sev_calib = severity_calib.get(model, "—")
+        lines.append(
+            f"| {model} | {skill_file} | {distill_mode} | {token_budget} | {timeout}s | {sev_calib} |"
+        )
     lines.append("")
     lines.append(
         "**Source:** `src/torvalds_skill/profiles.py` for per-model `max_tokens`, `timeout`, and `distill_mode` settings. Regenerate per `docs/CONTRIBUTING.md`."
-    )
-    lines.append("")
-    lines.append(
-        "This explains why glm5.2 previously lost 3 criticals (over-filtering style) and why trigger coverage differs across models."
     )
     lines.append("")
 
@@ -211,7 +258,7 @@ def generate_markdown(
         # Build dynamic header based on model names
         header_cols = ["#", "Issue"] + model_names + ["Consensus"]
         lines.append("| " + " | ".join(header_cols) + " |")
-        sep_cols = ["---"] + [":---:"] * len(model_names) + [":---:"]
+        sep_cols = ["---", "---"] + [":---:"] * len(model_names) + [":---:"]
         lines.append("|" + "|".join(sep_cols) + "|")
 
         file_groups = [g for g in matched_groups if g["file"] == file]
@@ -239,7 +286,7 @@ def generate_markdown(
             else:
                 consensus = "—"
 
-            title = group["title"][:50] + "..." if len(group["title"]) > 50 else group["title"]
+            title = safe_truncate(group["title"], 50)
             lines.append(f"| {row_num} | {title} | {' | '.join(marks)} | {consensus} |")
             row_num += 1
 
@@ -258,7 +305,7 @@ def generate_markdown(
         lines.append("| " + " | ".join(header_cols) + " |")
         lines.append("|" + "|".join(["-------"] + [":---:"] * len(model_names)) + "|")
         for d in severity_disagreements:
-            title = d["title"][:40] + "..." if len(d["title"]) > 40 else d["title"]
+            title = safe_truncate(d["title"], 40)
             sev_row = []
             for model in model_names:
                 found = next((s for m, s in d["severities"] if m == model), None)
@@ -292,8 +339,7 @@ def generate_markdown(
                 count = trigger_coverage.get(model_name, {}).get(trigger, 0)
                 marks.append(f"✓ ({count})" if count > 0 else "✗")
 
-            # Truncate trigger name for display
-            trigger_display = trigger[:30] + "..." if len(trigger) > 30 else trigger
+            trigger_display = safe_truncate(trigger, 30)
             lines.append(f"| {trigger_display} | {' | '.join(marks)} |")
     else:
         lines.append("*No trigger data available.*")
@@ -378,7 +424,7 @@ def generate_markdown(
                 skill_f = pair["skill"]
                 baseline_f = pair["baseline"]
                 if skill_f and baseline_f:
-                    issue = skill_f.title[:60] + "..." if len(skill_f.title) > 60 else skill_f.title
+                    issue = safe_truncate(skill_f.title, 60)
                     file = skill_f.file or "—"
                     baseline_sev = baseline_f.severity
                     skill_sev = skill_f.severity
@@ -396,28 +442,33 @@ def generate_markdown(
         # Table 2: Baseline-only (skill missed)
         lines.append("**Baseline-only (skill missed):**")
         lines.append("")
+        lines.append(
+            "*Classification: `skill-gap` = CORE finding with matched trigger (skill should catch); "
+            "`out-of-scope` = TRIVIA finding (intentionally uncovered); "
+            "`sampling-loss` = CORE finding with no matched trigger (pattern absent from 325-sample cluster).*"
+        )
+        lines.append("")
         if baseline_only:
-            lines.append("| Issue | File | Severity | Trigger coverage |")
-            lines.append("|-------|------|----------|------------------|")
+            lines.append("| Issue | File | Severity | Classification | Trigger coverage |")
+            lines.append("|-------|------|----------|----------------|------------------|")
             # Use new coverage data if available
             coverage_data = {
                 item["finding"].title: item
                 for item in comparison.get("baseline_only_with_coverage", [])
             }
             for f in baseline_only:
-                issue = f.title[:60] + "..." if len(f.title) > 60 else f.title
+                issue = safe_truncate(f.title, 60)
                 file = f.file or "—"
                 # Look up coverage data
                 cov = coverage_data.get(f.title)
                 if cov and cov["matched_trigger"]:
-                    trigger_display = (
-                        cov["matched_trigger"][:50] + "..."
-                        if len(cov["matched_trigger"]) > 50
-                        else cov["matched_trigger"]
-                    )
+                    trigger_display = safe_truncate(cov["matched_trigger"], 50)
                 else:
                     trigger_display = "unmatched"
-                lines.append(f"| {issue} | {file} | {f.severity} | {trigger_display} |")
+                classification = cov["classification"] if cov else "—"
+                lines.append(
+                    f"| {issue} | {file} | {f.severity} | {classification} | {trigger_display} |"
+                )
         else:
             lines.append("*None.*")
         lines.append("")
@@ -429,13 +480,9 @@ def generate_markdown(
             lines.append("| Issue | File | Severity | Trigger |")
             lines.append("|-------|------|----------|---------|")
             for f in skill_only:
-                issue = f.title[:60] + "..." if len(f.title) > 60 else f.title
+                issue = safe_truncate(f.title, 60)
                 file = f.file or "—"
-                trigger = (
-                    f.trigger[:40] + "..."
-                    if f.trigger and len(f.trigger) > 40
-                    else (f.trigger or "—")
-                )
+                trigger = safe_truncate(f.trigger or "—", 40)
                 lines.append(f"| {issue} | {file} | {f.severity} | {trigger} |")
         else:
             lines.append("*None.*")
@@ -568,7 +615,7 @@ def generate_markdown(
         lines.append("| " + " | ".join(header_cols) + " |")
         lines.append("|" + "|".join(["-------"] + [":---:"] * len(model_names)) + "|")
         for d in severity_disagreements:
-            title = d["title"][:40] + "..." if len(d["title"]) > 40 else d["title"]
+            title = safe_truncate(d["title"], 40)
             sev_map = dict(d["severities"])
             sev_row = []
             for model_name in model_names:
@@ -893,43 +940,14 @@ def generate_markdown(
             )
 
         lines.append("")
-
-        # Missed benchmark findings
-        # Collect all misses across models
-        all_misses = set()
-        for _key, metrics in benchmark_metrics.items():
-            all_misses.update(metrics.get("misses", []))
-
-        if all_misses:
-            lines.append("### Missed Benchmark Findings")
-            lines.append("")
-            lines.append(
-                "Benchmark records not found by any model (skill or baseline). These represent gaps in review coverage:"
-            )
-            lines.append("")
-
-            # Group misses by file for better readability
-            misses_by_file: dict[str, list[str]] = {}
-            for bid in sorted(all_misses):
-                # Find the benchmark record to get file info
-                record = next((r for r in benchmark_records if r.get("id") == bid), None)
-                if record:
-                    file = record.get("file", "unknown")
-                    if file not in misses_by_file:
-                        misses_by_file[file] = []
-                    misses_by_file[file].append(bid)
-
-            for file in sorted(misses_by_file.keys()):
-                lines.append(f"**{file}:**")
-                lines.append("")
-                for bid in sorted(misses_by_file[file]):
-                    record = next((r for r in benchmark_records if r.get("id") == bid), None)
-                    if record:
-                        severity = record.get("severity", "unknown")
-                        trigger = record.get("trigger", "").strip()[:60]
-                        lines.append(f"- {bid} (severity: {severity}, trigger: {trigger}...)")
-                lines.append("")
+        lines.append(
+            "> **Note:** The benchmark is derived entirely from model consensus (no external tool or human verification). "
+            "Precision and recall are therefore relative measures of cross-model agreement, not absolute correctness."
+        )
+        lines.append("")
 
     lines.append("")
+
+    return "\n".join(lines)
 
     return "\n".join(lines)

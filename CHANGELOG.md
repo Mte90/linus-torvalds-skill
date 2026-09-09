@@ -2,6 +2,28 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-09-09
+
+- **Cleanup (config):** Removed dead cache vars (`LLM_CACHE_PATH`, `LLM_CACHE_TTL_HOURS`) and legacy timeout aliases (`WALL_CLOCK_GLM`, `GLM_MAX_TOKENS`) from `config.py`. Unified cache (`CACHE_ENABLED`/`CACHE_PATH`/`CACHE_TTL_HOURS`) is the active path.
+- **Review format:** Unified to `### [SEVERITY]` headings; added `_validate_review_format()` gate in `llm_review.py` to reject reviews with chain-of-thought markers before caching.
+- **Verification:** Added `scripts/verify_review.py` for standalone review validation.
+- **Cache:** `compact()` now keeps the last entry; distill cache key includes `max_tokens`/`temperature`; review cache key excludes `timeout`.
+- **Distill:** Reasoning models (`gpt-oss`, `glm5.2`, `qwen3.8-27b`, `mistral`) use `review_max_tokens` from profiles.
+- **Profiles:** Warning added for unrecognized TOML sections.
+- **Verify:** `MIN_WORDS` threshold kept at 2000 in `verify_soul.py` (raised to 3000 broke `soul-gpt.md` at 2448 words; reverted).
+- **Tests:** Table integrity pytest tests added; findings counter labeled; `parse_review_file` dispatch unified.
+- **Fix (cross-lane):** Added missing `import sys` in `profiles.py` (Lane 4 added `sys.stderr` warning without the import). Removed duplicate inner import flagged by ruff.
+- **Fix (cross-lane):** Fixed 48 unbracketed severity headings (`### CRITICAL` → `### [CRITICAL]`) in `review-glm5.2.md`, `review-mistral-small-4-119b.md`, `review-baseline-mistral-small-4-119b.md` (Lane 1 only fixed `review-gpt-oss-120b.md`).
+- **Fix (cross-lane):** `verify_review.py` frontmatter validation made optional for baseline reviews (different schema; baselines omit `findings_count`).
+- **Docs:** `comparison.md` regenerated with updated data. Fixed C7 — mistral row showed stale `two-stage`/`120s` because render code used display name `"mistral"` as profile key; added `profile_name_map` in `comparison_render.py` to resolve display names to `KNOWN_PROFILES` keys. Row now shows `single | 16000 | 600s`.
+
+- **Docs (AGENTS.md):** Added qwen → soul-qwen.md mapping to soul generation rule. Fixed "Stage/Stage" typo → "Stage/Script" in directory map table.
+- **Docs (CHANGELOG.md):** Added entry for this session covering J.1-J.3, H.1-H.9, I.1-I.2, D1, D3, F7.2, F5.4 fixes.
+- **Docs (README.md):** Added CHANGELOG.md link near top. Added "Regenerate Everything" section with correct command order.
+- **Docs (soul/README.md):** Removed `PYTHONPATH=src` prefix from generation commands (package installed via `uv sync`).
+- **Docs (docs/pipeline.md):** Removed `PYTHONPATH=src` from soul generation commands.
+- **Docs (docs/models.md):** Added review-phase cost estimates (4 models × 2 arms = 8 review runs).
+
 ## 2026-09-08
 
 - **Bugfix (soul):** Fixed double-frontmatter bug in `soul.py` — the writer prepended its own YAML block while the model also generated one, causing `verify_soul.py` to read the wrong block. `_merge_frontmatter()` now strips leading whitespace and merges writer metadata (model, date, prompt_hash, input_hash, mode, pipeline_version) into the model-generated block instead of prepending. Added reasoning-preamble stripper that removes any text before the first `#` heading. All four souls regenerated and verified.

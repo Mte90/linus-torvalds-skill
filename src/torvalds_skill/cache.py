@@ -223,7 +223,10 @@ class UnifiedCache:
             }
 
     def compact(self) -> int:
-        """Remove expired entries and dedupe. Returns count of entries removed."""
+        """Remove expired entries and dedupe. Returns count of entries removed.
+
+        Deduplication keeps the LATEST entry for each key (by iterating in reverse).
+        """
         self._load()
 
         with self._lock:
@@ -240,8 +243,8 @@ class UnifiedCache:
             seen_keys: set[str] = set()
             kept_entries: list[dict] = []
 
-            # Iterate in reverse to keep latest duplicates
-            for line in original_lines:
+            # Iterate in reverse order so first occurrence of each key is the latest
+            for line in reversed(original_lines):
                 if not line:
                     continue
                 try:
@@ -255,6 +258,8 @@ class UnifiedCache:
                 except json.JSONDecodeError:
                     # Skip corrupt lines
                     continue
+            # Reverse back to maintain chronological order
+            kept_entries.reverse()
 
             # Rewrite file with deduped entries
             with self._file_lock:

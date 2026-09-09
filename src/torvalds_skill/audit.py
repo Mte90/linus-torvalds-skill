@@ -19,7 +19,8 @@ from pathlib import Path
 
 # Project root relative to this module
 ROOT = Path(__file__).resolve().parent.parent.parent
-REPORT_DIR = ROOT / "report"
+_report_dir_env = os.environ.get("TORVALDS_REPORT_DIR")
+REPORT_DIR = Path(_report_dir_env) if _report_dir_env else ROOT / "report"
 DATA_DIR = ROOT / "data"
 SKILL_DIR = ROOT / "linus-torvalds-skill"
 

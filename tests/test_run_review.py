@@ -845,7 +845,7 @@ class TestCheckpointStateManagement:
         with patch.object(run_review, "STATE_FILE", report_dir / ".review_state.json"):
             skip, reason = run_review.should_skip_model("gpt-oss-120b", "with-skill", force=False)
             assert skip is False
-            assert reason == "no checkpoint found"
+            assert reason == "no input_hash in output frontmatter (legacy)"
 
     def test_should_skip_model_force_returns_false(self, tmp_path):
         """should_skip_model should return False when force=True."""

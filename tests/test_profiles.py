@@ -128,9 +128,9 @@ slow = false
             assert profile.reasoning is False
             assert profile.slow is False
         finally:
-            # Restore original
+            # Always remove the test TOML from root so the suite is not self-poisoning
+            real_toml.unlink(missing_ok=True)
             if real_toml_exists:
-                real_toml.unlink(missing_ok=True)
                 import shutil
 
                 shutil.copy(real_toml_backup, real_toml)

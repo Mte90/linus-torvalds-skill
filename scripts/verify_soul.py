@@ -15,7 +15,7 @@ Word range rationale: Reasoning models (gpt-oss-120b, mistral-small-4-119b, glm5
 qwen3.8-27b) have a 16000-token provider cap. Reasoning phases consume tokens,
 leaving fewer for content. The writer targets min_words=4000 for reasoning models.
 Actual outputs range from 2450w (gpt-oss) to 7157w (glm5.2). The 2000-12000 range
-allows realistic variance while ensuring comprehensive coverage.
+allows realistic variance below the 4000-word prompt target while catching truncated souls.
 """
 
 from __future__ import annotations

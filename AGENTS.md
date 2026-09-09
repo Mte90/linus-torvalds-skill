@@ -12,9 +12,9 @@
 - **Trigger Contract**: Pattern extraction regexes live in `report/trigger_patterns.py`; consumed by `build_comparison.py` and `verify_skill.py`. Change all three together.
 - **Validation Symmetry**: Both comparison arms must validate identically — either both run full checks or neither skips.
 - **Stats Generated**: Pattern/word counts and timeouts come from `data/patterns.json`; docs link to source, never type values.
-- **Soul Generation**: Soul files must be generated via the `soul` CLI stage and validated with `scripts/verify_soul.py`, not hand-edited. Match skill variant (gpt-oss → soul.md, glm → soul-glm.md, mistral → soul-mistral.md).
+- **Soul Generation**: Soul files must be generated via the `soul` CLI stage and validated with `scripts/verify_soul.py`, not hand-edited. Match skill variant (gpt-oss → soul.md, glm → soul-glm.md, mistral → soul-mistral.md, qwen → soul-qwen.md).
 - **Caching**: Unified cache is on by default (`CACHE_ENABLED=1`). Bypass with `CACHE_ENABLED=0`. Cache entries expire after `CACHE_TTL_HOURS` (default 168h / 7d). Cache path: `CACHE_PATH` (default `data/unified_cache.jsonl`). Invalid cache = truncated responses never cached.
-- **Profile Overrides**: Priority: env vars > profiles.toml > built-in. Env format: `LLM_PROFILE_<NAME>__<FIELD>` (e.g., `LLM_PROFILE_GLM52__TIMEOUT=900`). TOML: copy `profiles.example.toml` to `profiles.toml`.
+- **Profile Overrides**: Priority: env vars > profiles.toml > built-in. Env format: `LLM_PROFILE_<NAME>__<FIELD>` where dots and dashes in `<NAME>` become underscores (e.g., `LLM_PROFILE_GLM5_2__TIMEOUT=900` for `glm5.2`, `LLM_PROFILE_QWEN3_8_27B__TIMEOUT=900` for `qwen3.8-27b`). TOML: copy `profiles.example.toml` to `profiles.toml`.
 
 ## Local Checks
 
@@ -33,7 +33,7 @@ Install pre-commit hooks once: `pre-commit install`. The `.pre-commit-config.yam
 
 ## Directory Map
 
-| Stage/Stage | Location |
+| Stage/Script | Location |
 |---|---|
 | CLI stages (classify, extract, cluster, distill, soul) | `src/torvalds_skill/` |
 | Utility scripts (calibrate, verify_skill, generate_variant_table) | `scripts/` |

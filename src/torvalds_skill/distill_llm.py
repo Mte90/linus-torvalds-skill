@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
+from typing import Any
 
 from . import config
 from .cache import cache_get, cache_set
@@ -21,6 +22,8 @@ from .distill_prompts import DISTILL_SYSTEM_PROMPT
 
 # Thread-safe in-memory cache with LRU eviction
 _cache_lock = threading.Lock()
+
+
 class _WallClockTimeout:
     """Context manager enforcing a wall-clock timeout via a watchdog thread.
 
@@ -283,9 +286,16 @@ def _call_llm(
 
     retries = retries if retries is not None else config.MAX_RETRIES
     sys_prompt = system_prompt if system_prompt is not None else DISTILL_SYSTEM_PROMPT
+    primary_model = model or config.MODEL
 
     # Cache key: hash of prompt + model + system_prompt
     cache_key = None
+
+    # Get profile early - needed both for cache and for fallback logic
+    from .profiles import get_profile
+
+    primary_profile = get_profile(primary_model)
+
     if retries != 1:  # Bypass cache when retries=1 (explicit fresh attempt)
         cache_input = f"{prompt}\x00{model}\x00{sys_prompt}"
         cache_key = hashlib.sha256(cache_input.encode("utf-8")).hexdigest()
@@ -299,7 +309,19 @@ def _call_llm(
                 return str(cache[cache_key])  # type: ignore[attr-defined, no-any-return]
 
         # Check disk cache (thread-safe)
-        disk_result = cache_get("distill", model, prompt, {"system_prompt": sys_prompt})
+        # Note: params include system_prompt, max_tokens, temperature for cache key uniqueness
+        is_reasoning = primary_profile.reasoning
+        cache_max_tokens = (
+            max_tokens_override
+            if max_tokens_override is not None
+            else (primary_profile.review_max_tokens if is_reasoning else primary_profile.max_tokens)
+        )
+        disk_result = cache_get(
+            "distill",
+            primary_model,
+            prompt,
+            {"system_prompt": sys_prompt, "max_tokens": cache_max_tokens, "temperature": 0.3},
+        )
         if disk_result is not None:
             disk_response = disk_result
             # Load into memory cache
@@ -314,10 +336,6 @@ def _call_llm(
         print(f"cache miss for prompt hash {cache_key[:8]}...", file=sys.stderr)
 
     # Fallback model chain from profile (exclude primary model to prevent self-fallback loops)
-    primary_model = model or config.MODEL
-    from .profiles import get_profile
-
-    primary_profile = get_profile(primary_model)
     fallback_models = [m for m in primary_profile.fallback_models if m != primary_model]
 
     # Try primary model first, then fallbacks if truncation detected
@@ -334,14 +352,14 @@ def _call_llm(
         call_profile = get_profile(call_model)
         is_reasoning = call_profile.reasoning
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": call_model,
             "messages": [
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.3,
-            "max_tokens": call_profile.max_tokens,  # Default from profile (16000 for all known models)
+            "max_tokens": call_profile.max_tokens,
             "stream": True,
         }
         # Reasoning models must keep their thinking phase (user requirement):
@@ -350,7 +368,7 @@ def _call_llm(
         # Supported max_tokens per model (from profiles.py):
         #   gpt-oss-120b: 16000, glm5.2: 16000, mistral-small-4-119b: 16000
         if is_reasoning:
-            payload["max_tokens"] = call_profile.max_tokens
+            payload["max_tokens"] = call_profile.review_max_tokens or call_profile.max_tokens
         # Caller can override max_tokens (e.g., soul generation needs more
         # tokens than the distill default to reach 8000+ words).
         if max_tokens_override is not None:
@@ -435,12 +453,21 @@ def _call_llm(
                         "Retry with increased max_tokens.",
                         file=sys.stderr,
                     )
+                    # Bump max_tokens by 50% (capped at profile max) and retry
+                    from .profiles import get_profile
+
+                    current_max = int(payload.get("max_tokens", 16000))
+                    profile = get_profile(call_model)
+                    new_max = min(int(current_max * 1.5), profile.max_tokens)
+                    if new_max > current_max:
+                        payload["max_tokens"] = new_max
+                        print(
+                            f"retrying with max_tokens={new_max} (was {current_max})",
+                            file=sys.stderr,
+                        )
                     # Signal to caller that this attempt should be retried
                     last_err = RuntimeError("reasoning_only_response")
                     continue
-                if not result.strip():
-                    last_err = RuntimeError("empty_response")
-                    break
                 if not result.strip():
                     last_err = RuntimeError("empty_response")
                     break
@@ -482,7 +509,17 @@ def _call_llm(
                             _call_llm._cache[cache_key] = patched  # type: ignore[attr-defined]
                             _call_llm._cache.move_to_end(cache_key)  # type: ignore[attr-defined]
                         # Write to disk cache (only non-truncated responses)
-                        cache_set("distill", model, prompt, patched, {"system_prompt": sys_prompt})
+                        cache_set(
+                            "distill",
+                            primary_model,
+                            prompt,
+                            patched,
+                            {
+                                "system_prompt": sys_prompt,
+                                "max_tokens": payload["max_tokens"],
+                                "temperature": payload["temperature"],
+                            },
+                        )
                     return patched
                 # Cache the result (thread-safe)
                 if cache_key:
@@ -492,7 +529,17 @@ def _call_llm(
                         _call_llm._cache[cache_key] = result  # type: ignore[attr-defined]
                         _call_llm._cache.move_to_end(cache_key)  # type: ignore[attr-defined]
                     # Write to disk cache (only non-truncated responses)
-                    cache_set("distill", model, prompt, result, {"system_prompt": sys_prompt})
+                    cache_set(
+                        "distill",
+                        primary_model,
+                        prompt,
+                        result,
+                        {
+                            "system_prompt": sys_prompt,
+                            "max_tokens": payload["max_tokens"],
+                            "temperature": payload["temperature"],
+                        },
+                    )
                 return result
 
             except (

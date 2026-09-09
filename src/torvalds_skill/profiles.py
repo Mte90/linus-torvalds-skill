@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,7 @@ class ModelProfile:
     """Capability-based profile for an LLM model.
 
     Fields replace hard-coded model-name branching across:
-    - config.py (_MODEL_TIMEOUTS, WALL_CLOCK_GLM, GLM_MAX_TOKENS)
+    - config.py (_MODEL_TIMEOUTS)
     - distill.py (max_workers rule, --single-call flag)
     - distill_llm.py (is_glm, fallback chain)
     - run_review.py (TIMEOUTS, auto-chunking)
@@ -85,7 +86,7 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         distill_mode="single",  # GLM requires single-call mode
         strict_truncation=True,
         timeout=600,
-        max_tokens=16000,  # GLM_MAX_TOKENS from config.py
+        max_tokens=16000,  # from profiles, replaces GLM_MAX_TOKENS
         parallel_workers=3,  # GLM keeps parallelism (provider rate-limit decision, explicit per task 3.2)
         review_timeout=2400,  # 40 min for GLM5.2 reviews
         fallback_models=["mistral-small-4-119b", "gpt-oss-120b"],
@@ -104,7 +105,7 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         fallback_models=["gpt-oss-120b", "glm5.2"],
         review_max_tokens=32000,
     ),
-        "qwen3.8-27b": ModelProfile(
+    "qwen3.8-27b": ModelProfile(
         # Reasoning model (verified: spends budget on thinking traces before
         # content, like glm5.2) — single-call distill, long timeouts.
         # Context: 240K tokens. review_max_tokens=131072 leaves room for both
@@ -180,6 +181,15 @@ def _load_toml_profile(model_name: str) -> ModelProfile | None:
                     return None
             else:
                 return None
+
+        # Warn about unrecognized sections
+        known_models = sorted(KNOWN_PROFILES.keys())
+        for section_name in profiles_section.keys():
+            if section_name not in known_models:
+                print(
+                    f"Warning: profiles.toml contains unrecognized profile '{section_name}' — known models: {', '.join(known_models)}",
+                    file=sys.stderr,
+                )
 
         # Use dataclasses.replace for present-wins merge semantics
         from dataclasses import replace

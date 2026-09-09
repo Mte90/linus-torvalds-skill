@@ -18,7 +18,7 @@ verdict: needs review
 
 ### smallchat-server.c
 
-### CRITICAL Resource Leak in `createClient`
+### [CRITICAL] Resource Leak in `createClient`
 - **Type:** invariant-false
 - **Trigger:** Unchecked error return in a critical path
 - **Location:** smallchat-server.c:125
@@ -28,7 +28,7 @@ verdict: needs review
 
 ---
 
-### CRITICAL Buffer Overflow in `sendMsgToAllClientsBut`
+### [CRITICAL] Buffer Overflow in `sendMsgToAllClientsBut`
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:175
@@ -40,7 +40,7 @@ verdict: needs review
 
 ---
 
-### CRITICAL Unchecked `read` in Main Loop
+### [CRITICAL] Unchecked `read` in Main Loop
 - **Type:** invariant-false
 - **Trigger:** Unchecked error return in a critical path
 - **Location:** smallchat-server.c:225
@@ -50,7 +50,7 @@ verdict: needs review
 
 ---
 
-### CRITICAL Missing Error Handling in `initChat`
+### [CRITICAL] Missing Error Handling in `initChat`
 - **Type:** invariant-false
 - **Trigger:** Crash or panic in a path that should handle errors gracefully
 - **Location:** smallchat-server.c:195
@@ -60,7 +60,7 @@ verdict: needs review
 
 ---
 
-### CRITICAL Race Condition in `freeClient`
+### [CRITICAL] Race Condition in `freeClient`
 - **Type:** invariant-false
 - **Trigger:** Data race with observable side effects
 - **Location:** smallchat-server.c:155
@@ -70,7 +70,7 @@ verdict: needs review
 
 ---
 
-### CRITICAL Silent Corruption in Nickname Handling
+### [CRITICAL] Silent Corruption in Nickname Handling
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:255
@@ -80,7 +80,7 @@ verdict: needs review
 
 ---
 
-### CRITICAL Missing Backpressure in `sendMsgToAllClientsBut`
+### [CRITICAL] Missing Backpressure in `sendMsgToAllClientsBut`
 - **Type:** invariant-false
 - **Trigger:** Work-stealing or work-sharing without backpressure
 - **Location:** smallchat-server.c:175
@@ -90,7 +90,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Error Handling in `chatMalloc`
+### [HIGH] Missing Error Handling in `chatMalloc`
 - **Type:** invariant-false
 - **Trigger:** Unchecked error return in a critical path
 - **Location:** smallchat-server.c:125, 135, 255
@@ -100,7 +100,7 @@ verdict: needs review
 
 ---
 
-### HIGH Buffer Overflow in `main` Message Handling
+### [HIGH] Buffer Overflow in `main` Message Handling
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:245
@@ -110,7 +110,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Error Handling in `write` Calls
+### [HIGH] Missing Error Handling in `write` Calls
 - **Type:** invariant-false
 - **Trigger:** Unchecked error return in a critical path
 - **Location:** smallchat-server.c:175, 205, 255
@@ -120,7 +120,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Timeout Handling in `select`
+### [HIGH] Missing Timeout Handling in `select`
 - **Type:** invariant-false
 - **Trigger:** Crash or panic in a path that should handle errors gracefully
 - **Location:** smallchat-server.c:205
@@ -130,7 +130,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Signal Handling
+### [HIGH] Missing Signal Handling
 - **Type:** invariant-false
 - **Trigger:** Crash or panic in a path that should handle errors gracefully
 - **Location:** smallchat-server.c:195
@@ -140,7 +140,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Input Validation
+### [HIGH] Missing Client Input Validation
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:245
@@ -150,7 +150,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Logging for Critical Errors
+### [HIGH] Missing Logging for Critical Errors
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:195, 205
@@ -160,7 +160,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Thread Safety in Global State
+### [HIGH] Missing Thread Safety in Global State
 - **Type:** invariant-false
 - **Trigger:** Data race with observable side effects
 - **Location:** smallchat-server.c:115, 145, 155
@@ -170,7 +170,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Disconnection Handling
+### [HIGH] Missing Client Disconnection Handling
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:235
@@ -180,7 +180,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Message Framing
+### [HIGH] Missing Message Framing
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:245
@@ -190,7 +190,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Limit Enforcement
+### [HIGH] Missing Client Limit Enforcement
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:125
@@ -200,7 +200,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Non-Blocking I/O for Client Sockets
+### [HIGH] Missing Non-Blocking I/O for Client Sockets
 - **Type:** invariant-false
 - **Trigger:** Crash or panic in a path that should handle errors gracefully
 - **Location:** smallchat-server.c:125
@@ -210,7 +210,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Socket Cleanup on Error
+### [HIGH] Missing Client Socket Cleanup on Error
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:125
@@ -220,7 +220,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Server Socket Cleanup on Error
+### [HIGH] Missing Server Socket Cleanup on Error
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:195
@@ -230,7 +230,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Nickname Validation
+### [HIGH] Missing Client Nickname Validation
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:255
@@ -240,7 +240,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Message Sanitization
+### [HIGH] Missing Client Message Sanitization
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:275
@@ -250,7 +250,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Message Truncation Handling
+### [HIGH] Missing Client Message Truncation Handling
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:275
@@ -260,7 +260,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Message Echo
+### [HIGH] Missing Client Message Echo
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:275
@@ -270,7 +270,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Connection Logging
+### [HIGH] Missing Client Connection Logging
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:215
@@ -280,7 +280,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Error Message Localization
+### [HIGH] Missing Client Error Message Localization
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:265
@@ -290,7 +290,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Message History
+### [HIGH] Missing Client Message History
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:275
@@ -300,7 +300,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Rate Limiting
+### [HIGH] Missing Client Rate Limiting
 - **Type:** invariant-false
 - **Trigger:** Work-stealing or work-sharing without backpressure
 - **Location:** smallchat-server.c:245
@@ -310,7 +310,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Authentication
+### [HIGH] Missing Client Authentication
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:125
@@ -320,7 +320,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Encryption
+### [HIGH] Missing Client Encryption
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:125
@@ -330,7 +330,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Heartbeat
+### [HIGH] Missing Client Heartbeat
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:245
@@ -340,7 +340,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Reconnection Handling
+### [HIGH] Missing Client Reconnection Handling
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:235
@@ -350,7 +350,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Nickname Uniqueness
+### [HIGH] Missing Client Nickname Uniqueness
 - **Type:** invariant-false
 - **Trigger:** Operation produces wrong results for valid inputs
 - **Location:** smallchat-server.c:255
@@ -360,7 +360,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Nickname Persistence
+### [HIGH] Missing Client Nickname Persistence
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:255
@@ -370,7 +370,7 @@ verdict: needs review
 
 ---
 
-### HIGH Missing Client Message Persistence
+### [HIGH] Missing Client Message Persistence
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-server.c:275
@@ -380,7 +380,7 @@ verdict: needs review
 
 ### smallchat-client.c
 
-### CRITICAL Finding: Unchecked error return in critical path
+### [CRITICAL] Finding: Unchecked error return in critical path
 - **Type:** invariant-false
 - **Trigger:** Unchecked error return in a critical path
 - **Location:** smallchat-client.c:108
@@ -390,7 +390,7 @@ verdict: needs review
 
 ---
 
-### CRITICAL Finding: Silent corruption of terminal state
+### [CRITICAL] Finding: Silent corruption of terminal state
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-client.c:108
@@ -400,7 +400,7 @@ verdict: needs review
 
 ---
 
-### HIGH Finding: Resource leak on error
+### [HIGH] Finding: Resource leak on error
 - **Type:** invariant-false
 - **Trigger:** Resource leak in a critical path
 - **Location:** smallchat-client.c:204
@@ -410,7 +410,7 @@ verdict: needs review
 
 ---
 
-### HIGH Finding: Silent corruption of input buffer state
+### [HIGH] Finding: Silent corruption of input buffer state
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** smallchat-client.c:166
@@ -423,7 +423,7 @@ No further findings. The file has critical issues that must be addressed before 
 
 ### chatlib.c
 
-### CRITICAL Finding: Silent crash on malloc failure in chatMalloc/chatRealloc
+### [CRITICAL] Finding: Silent crash on malloc failure in chatMalloc/chatRealloc
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** chatlib.c:170-177
@@ -431,7 +431,7 @@ No further findings. The file has critical issues that must be addressed before 
 - **Fix:** Return `NULL` on allocation failure and let callers decide how to handle it. Document the error contract clearly.
 - **Pass:** 1
 
-### CRITICAL Finding: Silent crash on socket operations failure
+### [CRITICAL] Finding: Silent crash on socket operations failure
 - **Type:** invariant-false
 - **Trigger:** Crash or panic in a path that should handle errors gracefully
 - **Location:** chatlib.c:30-45
@@ -439,7 +439,7 @@ No further findings. The file has critical issues that must be addressed before 
 - **Fix:** Propagate errors to callers. Either return error codes or use assertions if failures are truly unrecoverable.
 - **Pass:** 1
 
-### HIGH Finding: Resource leak in TCPConnect on partial failure
+### [HIGH] Finding: Resource leak in TCPConnect on partial failure
 - **Type:** invariant-false
 - **Trigger:** Silent corruption of data or state
 - **Location:** chatlib.c:80-120
@@ -447,7 +447,7 @@ No further findings. The file has critical issues that must be addressed before 
 - **Fix:** Move `freeaddrinfo(servinfo)` into a cleanup path that runs on all exit paths of the function.
 - **Pass:** 1
 
-### HIGH Finding: Unchecked error in createTCPServer
+### [HIGH] Finding: Unchecked error in createTCPServer
 - **Type:** invariant-false
 - **Trigger:** Unchecked error return in a critical path
 - **Location:** chatlib.c:50-65
@@ -455,7 +455,7 @@ No further findings. The file has critical issues that must be addressed before 
 - **Fix:** Check and propagate errors from `bind` and `listen`. Document the behavior of `setsockopt`.
 - **Pass:** 1
 
-### HIGH Finding: Missing error handling in acceptClient
+### [HIGH] Finding: Missing error handling in acceptClient
 - **Type:** invariant-false
 - **Trigger:** Crash or panic in a path that should handle errors gracefully
 - **Location:** chatlib.c:130-145
@@ -465,7 +465,7 @@ No further findings. The file has critical issues that must be addressed before 
 
 ### chatlib.h
 
-### HIGH Missing error handling for system calls
+### [HIGH] Missing error handling for system calls
 - **Type:** invariant-false
 - **Trigger:** Unchecked error return in a critical path
 - **Location:** chatlib.h:13-14
@@ -480,7 +480,7 @@ No further findings. The file has critical issues that must be addressed before 
   Callers must check the return value.
 - **Pass:** 1
 
-### HIGH Missing error handling for socket operations
+### [HIGH] Missing error handling for socket operations
 - **Type:** invariant-false
 - **Trigger:** Unchecked error return in a critical path
 - **Location:** chatlib.h:6-9
@@ -492,7 +492,7 @@ No further findings. The file has critical issues that must be addressed before 
   Callers must check the return value.
 - **Pass:** 1
 
-### HIGH Leaky interface exposing internal state
+### [HIGH] Leaky interface exposing internal state
 - **Type:** invariant-false
 - **Trigger:** Public API that exposes internal implementation details
 - **Location:** chatlib.h:13-14
@@ -505,7 +505,7 @@ No further findings. The file has critical issues that must be addressed before 
 
 ### Makefile
 
-### HIGH Missing CFLAGS for hardening and diagnostics
+### [HIGH] Missing CFLAGS for hardening and diagnostics
 - **Type:** guideline
 - **Trigger:** Missing compiler flags for security and diagnostics
 - **Location:** Makefile:3
@@ -516,7 +516,7 @@ No further findings. The file has critical issues that must be addressed before 
   ```
 - **Pass:** 2
 
-### MEDIUM Missing `.PHONY` declarations for non-file targets
+### [MEDIUM] Missing `.PHONY` declarations for non-file targets
 - **Type:** guideline
 - **Trigger:** Missing `.PHONY` declarations for non-file targets
 - **Location:** Makefile:10

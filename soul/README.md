@@ -41,12 +41,12 @@ encodes the **severity signal**: when this reviewer swears, the issue is serious
 ## Generation
 
 ```bash
-PYTHONPATH=src python -m torvalds_skill soul
+python -m torvalds_skill soul
 
 # Use a different model
-PYTHONPATH=src python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
-PYTHONPATH=src python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
-PYTHONPATH=src python -m torvalds_skill soul --model qwen3.8-27b --out soul/soul-qwen.md
+python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
+python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
+python -m torvalds_skill soul --model qwen3.8-27b --out soul/soul-qwen.md
 ```
 
 The soul generator uses `data/patterns.json` (350 stratified samples across 13

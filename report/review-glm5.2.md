@@ -18,7 +18,7 @@ verdict: needs review
 
 ### smallchat-server.c
 
-### CRITICAL Unchecked `acceptClient` return value causes out-of-bounds array write
+### [CRITICAL] Unchecked `acceptClient` return value causes out-of-bounds array write
 - **Type:** invariant-false
 - **Trigger:** Code provides false or misleading information through any user-visible interface / memory safety — reference to invalid index
 - **Location:** smallchat-server.c:~155 (`int fd = acceptClient(Chat->serversock);` followed by `createClient(fd)`)
@@ -26,7 +26,7 @@ verdict: needs review
 - **Fix:** Check the return value of `acceptClient` before calling `createClient`. If it returns -1, log the error and continue the event loop. Do not create a client for an invalid fd.
 - **Pass:** 1
 
-### CRITICAL No bounds check on file descriptor before indexing `clients[]` array or calling `FD_SET`
+### [CRITICAL] No bounds check on file descriptor before indexing `clients[]` array or calling `FD_SET`
 - **Type:** invariant-false
 - **Trigger:** Memory safety — out-of-bounds access; large stack allocations / buffer overflow
 - **Location:** smallchat-server.c:~113 (`Chat->clients[c->fd] = c;`), smallchat-server.c:~170 (`FD_SET(j, &readfds);`)
@@ -34,7 +34,7 @@ verdict: needs review
 - **Fix:** In `createClient`, reject fds >= `MAX_CLIENTS` (and >= `FD_SETSIZE`) with an error. Close the socket and do not insert into the array. The `MAX_CLIENTS` constant must be enforced as a hard limit, not just an array size.
 - **Pass:** 1
 
-### HIGH `snprintf` return value used as `memcpy` length without truncation check — potential stack buffer over-read
+### [HIGH] `snprintf` return value used as `memcpy` length without truncation check — potential stack buffer over-read
 - **Type:** invariant-false
 - **Trigger:** Memory safety — out-of-bounds read from stack buffer
 - **Location:** smallchat-server.c:~100-104 (`int nicklen = snprintf(nick,sizeof(nick),"user:%d",fd);` ... `memcpy(c->nick,nick,nicklen);`)
@@ -42,7 +42,7 @@ verdict: needs review
 - **Fix:** Clamp `nicklen` to `sizeof(nick) - 1` after the `snprintf` call, or check the return value for truncation: `if (nicklen >= (int)sizeof(nick)) nicklen = sizeof(nick) - 1;`
 - **Pass:** 1
 
-### HIGH `write()` return values unchecked — messages silently truncated or lost
+### [HIGH] `write()` return values unchecked — messages silently truncated or lost
 - **Type:** invariant-false
 - **Trigger:** Correctness — error handling that masks the underlying bug; unchecked errors
 - **Location:** smallchat-server.c:~157 (welcome message), ~213 (error message), ~143 (`sendMsgToAllClientsBut`), ~225 (broadcast message)
@@ -56,7 +56,7 @@ No findings.
 
 ### chatlib.c
 
-### HIGH Memory leak in TCPConnect on EINPROGRESS return path
+### [HIGH] Memory leak in TCPConnect on EINPROGRESS return path
 - **Type:** invariant-false
 - **Trigger:** Resource leak — function returns without releasing allocated resource
 - **Location:** chatlib.c:TCPConnect (the `if (errno == EINPROGRESS && nonblock) return s;` line)
@@ -72,7 +72,7 @@ No findings.
 
 ---
 
-### HIGH Fatal exit on out-of-memory in chatMalloc and chatRealloc
+### [HIGH] Fatal exit on out-of-memory in chatMalloc and chatRealloc
 - **Type:** invariant-false
 - **Trigger:** Fatal abort used for resource exhaustion or allocation failure
 - **Location:** chatlib.c:chatMalloc, chatlib.c:chatRealloc

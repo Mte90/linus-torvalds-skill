@@ -10,22 +10,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import signal
 import sys
-
-# Import config from the project package (adds .env loading + env var aliases)
-import sys as _sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from pathlib import Path as _Path
 
 # Import unified cache
-_SRC = _Path(__file__).resolve().parent.parent / "src"
-if str(_SRC) not in _sys.path:
-    _sys.path.insert(0, str(_SRC))
+_SRC = Path(__file__).resolve().parent.parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 from torvalds_skill import cache as llm_cache  # noqa: E402
 from torvalds_skill import (  # noqa: E402  # import not at top due to sys.path manipulation
     config as project_config,
@@ -34,18 +29,60 @@ from torvalds_skill import (  # noqa: E402  # import not at top due to sys.path 
 CHAT_URL = project_config.CHAT_URL
 
 
-def _validate_review_format(response: str) -> bool:
-    """Check that review response is not contaminated with chain-of-thought.
+def _validate_review_format(response: str) -> None:
+    """Validate review format with strict checks.
 
-    Only applies when the response looks like a review (starts with frontmatter).
-    Short non-review responses (e.g. test mocks) pass without scrutiny.
+    Raises ValueError on any format violation:
+    - Finding headings must be bracketed: ### [SEVERITY]
+    - Severity must be one of: CRITICAL, HIGH, MEDIUM, LOW
+    - No duplicate finding titles
+    - CoT markers must not exceed threshold (3)
     """
+    import re
+
     if not response.strip():
-        return False
+        raise ValueError("review_format_invalid: empty response")
+
     # Only validate responses that look like reviews (frontmatter present)
     if not response.startswith("---"):
-        return True
+        return  # Non-review content passes without scrutiny
+
     lines = response.splitlines()
+
+    # 1. Check finding format: all ### headings must be bracketed severity
+    finding_heading_re = re.compile(r"^###\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s+(.+)$")
+    non_bracketed_finding_re = re.compile(
+        r"^###\s+[A-Z]+\s+"
+    )  # Matches ### SEVERITY without brackets
+    all_severity_re = re.compile(
+        r"^###\s+\[([A-Z]+)\]\s+"
+    )  # Matches ### [SEVERITY] to check valid set
+
+    finding_titles = []
+    for line in lines:
+        # Check for unbracketed severity headings (### CRITICAL instead of ### [CRITICAL])
+        if non_bracketed_finding_re.match(line):
+            raise ValueError("review_format_invalid: finding heading not bracketed severity")
+
+        # Check for bracketed headings with invalid severity
+        bracket_match = all_severity_re.match(line)
+        if bracket_match:
+            severity = bracket_match.group(1)
+            if severity not in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+                raise ValueError(f"review_format_invalid: unknown severity '{severity}'")
+            # Extract title for duplicate check
+            title_match = finding_heading_re.match(line)
+            if title_match:
+                finding_titles.append(title_match.group(2).strip())
+
+    # 2. Check for duplicate finding titles
+    seen_titles = set()
+    for title in finding_titles:
+        if title in seen_titles:
+            raise ValueError(f"review_format_invalid: duplicate finding title '{title}'")
+        seen_titles.add(title)
+
+    # 3. Check CoT markers (threshold: 3)
     cot_markers = (
         "Need ",
         "Let's ",
@@ -56,7 +93,8 @@ def _validate_review_format(response: str) -> bool:
         "Actually",
     )
     cot_count = sum(1 for line in lines if line.strip().startswith(cot_markers))
-    return cot_count <= 3
+    if cot_count > 3:
+        raise ValueError(f"review_format_invalid: too many CoT markers ({cot_count} > 3)")
 
 
 def headers() -> dict:
@@ -104,7 +142,7 @@ def call_llm(
     Cache bypass: set CACHE_ENABLED=0 env var.
 
     When disable_thinking=True, sends chat_template_kwargs={"enable_thinking": false}
-    to suppress the reasoning phase. Used as fallback when a reasoning model exhausts
+    to suppress the thinking phase. Used as fallback when a reasoning model exhausts
     its token budget on internal deliberation (reasoning_only_response).
     """
     from torvalds_skill.profiles import get_profile
@@ -119,7 +157,6 @@ def call_llm(
     params = {
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "timeout": timeout,
         "disable_thinking": disable_thinking,
     }
     cache_key = llm_cache._compute_key("review", model, prompt, params)
@@ -128,10 +165,10 @@ def call_llm(
     if llm_cache._get_cache_enabled():
         cached = llm_cache.get_cache().get(cache_key)
         if cached is not None:
-            print(f"cache hit (review): {cache_key[:8]}...", file=_sys.stderr)
+            print(f"cache hit (review): {cache_key[:8]}...", file=sys.stderr)
             return cached
 
-    print("streaming...", file=_sys.stderr)
+    print("streaming...", file=sys.stderr)
 
     payload = {
         "model": model,
@@ -172,20 +209,21 @@ def call_llm(
         print(
             "warning: reasoning-only response detected (no content produced). "
             "Do not use chain-of-thought as review output.",
-            file=_sys.stderr,
+            file=sys.stderr,
         )
         raise RuntimeError("reasoning_only_response")
 
-    if not _validate_review_format(result):
+    try:
+        _validate_review_format(result)
+    except ValueError as e:
         print(
-            "warning: review format validation failed (possible CoT contamination). "
-            "Response not cached.",
-            file=_sys.stderr,
+            f"warning: review format validation failed: {e}. Response not cached.",
+            file=sys.stderr,
         )
-        raise RuntimeError("review_format_invalid")
+        raise RuntimeError("review_format_invalid") from e
 
     word_count = len(result.split())
-    print(f"done: {word_count} words", file=_sys.stderr)
+    print(f"done: {word_count} words", file=sys.stderr)
 
     # Cache successful non-empty responses
     if result.strip() and llm_cache._get_cache_enabled():
@@ -224,11 +262,9 @@ def main():
     disable_thinking = False
     for attempt in range(2):
         try:
-            response = call_llm(
-                args.model, prompt, timeout, disable_thinking=disable_thinking
-            )
+            response = call_llm(args.model, prompt, timeout, disable_thinking=disable_thinking)
             if not response.strip():
-                print(f"warning: empty response (attempt {attempt + 1})", file=_sys.stderr)
+                print(f"warning: empty response (attempt {attempt + 1})", file=sys.stderr)
                 if attempt == 0:
                     time.sleep(2)
                     continue
@@ -239,17 +275,17 @@ def main():
             if str(e) == "reasoning_only_response" and attempt == 0:
                 print(
                     "retrying with reasoning disabled (enable_thinking=false)",
-                    file=_sys.stderr,
+                    file=sys.stderr,
                 )
                 disable_thinking = True
                 continue
-            print(f"error: API call failed (attempt {attempt + 1}): {e}", file=_sys.stderr)
+            print(f"error: API call failed (attempt {attempt + 1}): {e}", file=sys.stderr)
             if attempt == 0:
                 time.sleep(2)
                 continue
             sys.exit(1)
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
-            print(f"error: API call failed (attempt {attempt + 1}): {e}", file=_sys.stderr)
+            print(f"error: API call failed (attempt {attempt + 1}): {e}", file=sys.stderr)
             if attempt == 0:
                 time.sleep(2)
                 continue

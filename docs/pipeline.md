@@ -332,9 +332,9 @@ focused on identity, decision hierarchy, and communication style.
 Three variants generated from the same `patterns.json`. See [docs/models.md](models.md) for the canonical soul variant table and word counts.
 
 ```bash
-PYTHONPATH=src python -m torvalds_skill soul
-PYTHONPATH=src python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
-PYTHONPATH=src python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
+python -m torvalds_skill soul
+python -m torvalds_skill soul --model glm5.2 --out soul/soul-glm.md
+python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistral.md
 ```
 
 Output: `soul/soul.md` — includes Identity, Operating Principles, Decision Patterns, Review Workflow, Communication Style, Emergent Hierarchy, Interlocutor Model, Escalation Rules, Error Gravity, Anti-Soul, Voices, and Insult Vocabulary sections.

@@ -110,7 +110,7 @@ All skills and souls were generated with [regolo.ai](https://regolo.ai) using gp
 
 ## Review-phase costs
 
-The review pipeline (`report/run_review.py`) performs 6 LLM calls per model (3 baseline + 3 with-skill). Based on recent metrics.jsonl data:
+The review pipeline (`report/run_review.py`) performs 8 LLM calls per full comparison (4 models × 2 arms: with-skill + baseline). Each review processes the codebase in chunks, typically 3-5 chunks depending on file size. Based on recent metrics.jsonl data:
 
 | Model | Avg duration (s) | Est. cost per review |
 |---|---|---|

@@ -267,12 +267,19 @@ def stage_run(sample_size: int, workers: int):
     stage_classify()
     stage_extract(sample_size, workers, resume=False)
     stage_cluster()
-    # Calibrate before distill - graceful skip with warning if calibration data absent
-    try:
-        stage_calibrate_interviews()
-    except SystemExit as e:
-        # calibrate_interviews raises SystemExit if email moves file not found
-        print(f"Warning: Calibration skipped ({e}). Distilling without calibration data.")
+    # Calibrate from email moves before distill
+    from scripts.calibrate import build_calibration
+
+    moves_path = Path("data/moves.jsonl")
+    calib_path = Path("data/calibration.json")
+    if moves_path.exists():
+        calibration = build_calibration(moves_path)
+        calib_path.write_text(
+            json.dumps(calibration, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"Wrote calibration to {calib_path}")
+    else:
+        print(f"Warning: {moves_path} not found. Skipping calibration.")
     stage_distill(top_n=40)
 
 

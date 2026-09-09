@@ -185,7 +185,9 @@ def detect_style(content: str) -> str:
         return "glm"  # 3-hash colon themes (GLM two-stage output)
     if re.search(r"^####\s+Theme:", text, re.MULTILINE):
         return "gpt-oss"  # 4-hash colon themes (gpt-oss output)
-    if re.search(r"^###\s*\*{0,2}\s*Level", text, re.MULTILINE) and re.search(r"^-\s*\*\*", text, re.MULTILINE):
+    if re.search(r"^###\s*\*{0,2}\s*Level", text, re.MULTILINE) and re.search(
+        r"^-\s*\*\*", text, re.MULTILINE
+    ):
         return "mistral"  # Level sections (plain or bold-wrapped) + column-0 bullets
     return "gpt-oss"  # Default
 

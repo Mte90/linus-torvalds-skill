@@ -18,7 +18,7 @@ verdict: needs review
 
 ### smallchat-server.c
 
-### CRITICAL Buffer overflow in nickname construction
+### [CRITICAL] Buffer overflow in nickname construction
 - **Type:** invariant-false
 - **Trigger:** Performing an unchecked pointer arithmetic that can walk off the end of a buffer
 - **Location:** smallchat-server.c:71
@@ -26,7 +26,7 @@ verdict: needs review
 - **Fix:** Verify the return value of `snprintf` and ensure the formatted nickname fits, or allocate the nickname buffer dynamically based on the needed size before formatting.
 - **Pass:** 1
 
-### CRITICAL Missing NUL‑terminator for client nickname
+### [CRITICAL] Missing NUL‑terminator for client nickname
 - **Type:** invariant-false
 - **Trigger:** Performing an unchecked pointer arithmetic that can walk off the end of a buffer
 - **Location:** smallchat-server.c:76
@@ -34,7 +34,7 @@ verdict: needs review
 - **Fix:** Copy `nicklen+1` bytes or use `strcpy`/`strdup` to include the terminating NUL.
 - **Pass:** 1
 
-### CRITICAL Out‑of‑bounds access of `Chat->clients` array
+### [CRITICAL] Out‑of‑bounds access of `Chat->clients` array
 - **Type:** invariant-false
 - **Trigger:** Performing an unchecked pointer arithmetic that can walk off the end of a buffer
 - **Location:** smallchat-server.c:71, 84, 95, 115, 124, 138, 151, 166, 176, 191, 203
@@ -42,7 +42,7 @@ verdict: needs review
 - **Fix:** Add a bounds check (`if (fd >= MAX_CLIENTS) { /* reject or enlarge array */ }`) before indexing, and adjust loops that rely on `Chat->maxclient` accordingly.
 - **Pass:** 1
 
-### HIGH Reliance on `assert` for runtime invariant
+### [HIGH] Reliance on `assert` for runtime invariant
 - **Type:** invariant-false
 - **Trigger:** Fatal assertion (panic/fatal assertion) for a recoverable condition
 - **Location:** smallchat-server.c:73
@@ -50,7 +50,7 @@ verdict: needs review
 - **Fix:** Replace the assert with an explicit runtime check that returns an error or aborts gracefully if the slot is already occupied.
 - **Pass:** 1
 
-### HIGH Ignoring possible failure of `socketSetNonBlockNoDelay`
+### [HIGH] Ignoring possible failure of `socketSetNonBlockNoDelay`
 - **Type:** invariant-false
 - **Trigger:** Silently swallowing an error and continuing execution
 - **Location:** smallchat-server.c:72
@@ -58,7 +58,7 @@ verdict: needs review
 - **Fix:** Check the return value and handle errors (e.g., close the socket and abort client creation).
 - **Pass:** 1
 
-### HIGH Ignoring write errors in `sendMsgToAllClientsBut`
+### [HIGH] Ignoring write errors in `sendMsgToAllClientsBut`
 - **Type:** invariant-false
 - **Trigger:** Silently swallowing an error and continuing execution
 - **Location:** smallchat-server.c:106
@@ -66,7 +66,7 @@ verdict: needs review
 - **Fix:** Check the return value of `write`; on error, handle it (e.g., close the client and clean up).
 - **Pass:** 1
 
-### HIGH Treating any `read` error as client disconnect
+### [HIGH] Treating any `read` error as client disconnect
 - **Type:** invariant-false
 - **Trigger:** Silently swallowing an error and continuing execution
 - **Location:** smallchat-server.c:138
@@ -78,7 +78,7 @@ verdict: needs review
 
 ### smallchat-client.c
 
-### CRITICAL Buffer overflow when appending newline to full input buffer
+### [CRITICAL] Buffer overflow when appending newline to full input buffer
 - **Type:** invariant-false
 - **Trigger:** Performing an unchecked pointer arithmetic that can walk off the end of a buffer
 - **Location:** smallchat-client.c:245
@@ -86,7 +86,7 @@ verdict: needs review
 - **Fix:** Check the return value of `inputBufferAppend` before using the buffer and handle the overflow case (e.g., reject the line, clear the buffer, or enlarge the buffer). Do not write to the buffer when full.
 - **Pass:** 1
 
-### HIGH Ignored return value from setRawMode
+### [HIGH] Ignored return value from setRawMode
 - **Type:** invariant-false
 - **Trigger:** Silently swallowing an error and continuing execution
 - **Location:** smallchat-client.c:205
@@ -122,7 +122,7 @@ if (setRawMode(fileno(stdin),1) == -1) {
 
 ### chatlib.h
 
-### MEDIUM Missing size_t definition
+### [MEDIUM] Missing size_t definition
 - **Type:** guideline
 - **Trigger:** (unmatched)
 - **Location:** chatlib.h:11
@@ -130,7 +130,7 @@ if (setRawMode(fileno(stdin),1) == -1) {
 - **Fix:** Add `#include <stddef.h>` (or `<stdlib.h>`) before the function prototypes that use `size_t`.
 - **Pass:** 2
 
-### LOW Inconsistent naming convention
+### [LOW] Inconsistent naming convention
 - **Type:** guideline
 - **Trigger:** Identifier that does not convey its purpose (Naming & Comment Accuracy)
 - **Location:** chatlib.h:5
@@ -140,7 +140,7 @@ if (setRawMode(fileno(stdin),1) == -1) {
 
 ### Makefile
 
-### MEDIUM Missing .PHONY declarations
+### [MEDIUM] Missing .PHONY declarations
 - **Type:** guideline
 - **Trigger:** (unmatched)
 - **Location:** Makefile:1
@@ -151,7 +151,7 @@ if (setRawMode(fileno(stdin),1) == -1) {
   ```
 - **Pass:** 2
 
-### LOW CFLAGS placed after output file
+### [LOW] CFLAGS placed after output file
 - **Type:** guideline
 - **Trigger:** (unmatched)
 - **Location:** Makefile:5,8

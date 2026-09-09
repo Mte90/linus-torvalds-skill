@@ -27,9 +27,7 @@ def run_stage(name: str, cmd: list[str], dry_run: bool = False) -> bool:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Torvalds Skill Pipeline Orchestrator"
-    )
+    parser = argparse.ArgumentParser(description="Torvalds Skill Pipeline Orchestrator")
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -55,11 +53,45 @@ def main():
     root = Path(__file__).parent.parent
     os.chdir(root)
 
+    # Model variants and their output paths
+    MODEL_VARIANTS = [
+        ("gpt-oss-120b", "linus-torvalds-skill/SKILL.md", "soul/soul.md"),
+        ("glm5.2", "linus-torvalds-skill/SKILL-GLM.md", "soul/soul-glm.md"),
+        ("mistral-small-4-119b", "linus-torvalds-skill/SKILL-Mistral.md", "soul/soul-mistral.md"),
+        ("qwen3.8-27b", "linus-torvalds-skill/SKILL-Qwen.md", "soul/soul-qwen.md"),
+    ]
+
+    def build_distill_commands():
+        """Build distill commands for all 4 models."""
+        cmds = []
+        for model, skill_out, _ in MODEL_VARIANTS:
+            cmds.append(
+                ["python3", "-m", "torvalds_skill", "distill", "--model", model, "--out", skill_out]
+            )
+        return cmds
+
+    def build_soul_commands():
+        """Build soul commands for all 4 models."""
+        cmds = []
+        for model, _, soul_out in MODEL_VARIANTS:
+            cmds.append(
+                ["python3", "-m", "torvalds_skill", "soul", "--model", model, "--out", soul_out]
+            )
+        return cmds
+
+    def build_verify_commands():
+        """Build verify commands for all 4 skill and soul files."""
+        cmds = []
+        for _model, skill_out, soul_out in MODEL_VARIANTS:
+            cmds.append(["python3", "scripts/verify_skill.py", skill_out])
+            cmds.append(["python3", "scripts/verify_skill.py", soul_out])
+        return cmds
+
     stages = [
         ("calibrate", ["python3", "scripts/calibrate.py"]),
-        ("distill", ["python3", "-m", "torvalds_skill", "distill", "--out", "linus-torvalds-skill/SKILL.md"]),
-        ("verify", ["python3", "scripts/verify_skill.py", "linus-torvalds-skill/SKILL.md"]),
-        ("soul", ["python3", "-m", "torvalds_skill", "soul", "--out", "soul/soul.md"]),
+        *(("distill", cmd) for cmd in build_distill_commands()),
+        *(("soul", cmd) for cmd in build_soul_commands()),
+        *(("verify", cmd) for cmd in build_verify_commands()),
         ("review", ["python3", "report/run_review.py"]),
         ("comparison", ["python3", "report/build_comparison.py"]),
         ("stats", ["python3", "scripts/generate_variant_table.py"]),

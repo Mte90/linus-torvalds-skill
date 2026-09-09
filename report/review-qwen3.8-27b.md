@@ -18,7 +18,7 @@ verdict: needs review
 
 ### smallchat-server.c
 
-### CRITICAL Initial nick is not NUL-terminated
+### [CRITICAL] Initial nick is not NUL-terminated
 - **Type:** invariant-false
 - **Trigger:** Theme 11 – Memory-Safety and Ownership
 - **Location:** smallchat-server.c:84
@@ -26,7 +26,7 @@ verdict: needs review
 - **Fix:** Copy `nicklen + 1` bytes, or explicitly set `c->nick[nicklen] = '\0'` after allocation, or use a bounded string-copy helper that preserves termination.
 - **Pass:** 1
 
-### CRITICAL createClient indexes the clients array with an unvalidated fd
+### [CRITICAL] createClient indexes the clients array with an unvalidated fd
 - **Type:** invariant-false
 - **Trigger:** Theme 11 – Memory-Safety and Ownership
 - **Location:** smallchat-server.c:85-86
@@ -34,7 +34,7 @@ verdict: needs review
 - **Fix:** Validate `fd >= 0 && fd < MAX_CLIENTS` before touching `Chat->clients`. Reject or close invalid fds and return an error instead of creating a client.
 - **Pass:** 1
 
-### CRITICAL acceptClient result is not checked before createClient
+### [CRITICAL] acceptClient result is not checked before createClient
 - **Type:** invariant-false
 - **Trigger:** (unmatched)
 - **Location:** smallchat-server.c:188-189
@@ -42,7 +42,7 @@ verdict: needs review
 - **Fix:** Check the returned fd: `if (fd == -1) { perror("acceptClient"); continue; }` before calling `createClient()`.
 - **Pass:** 1
 
-### CRITICAL select/fd_set usage lacks FD_SETSIZE and MAX_CLIENTS bounds
+### [CRITICAL] select/fd_set usage lacks FD_SETSIZE and MAX_CLIENTS bounds
 - **Type:** invariant-false
 - **Trigger:** Theme 11 – Memory-Safety and Ownership
 - **Location:** smallchat-server.c:163,166,177-179
@@ -50,7 +50,7 @@ verdict: needs review
 - **Fix:** Enforce `fd < MAX_CLIENTS` and `fd < FD_SETSIZE` for every accepted socket, or replace `select()` with `poll()`/`epoll()` and index clients by a separate slot id rather than raw fd.
 - **Pass:** 1
 
-### CRITICAL write() can terminate the server via SIGPIPE and errors are ignored
+### [CRITICAL] write() can terminate the server via SIGPIPE and errors are ignored
 - **Type:** invariant-false
 - **Trigger:** Theme 2 – Fatal Assertions for Recoverable Errors
 - **Location:** smallchat-server.c:143,194,248
@@ -58,7 +58,7 @@ verdict: needs review
 - **Fix:** Ignore `SIGPIPE` or use `MSG_NOSIGNAL`, and check `write()` return values. Handle `EAGAIN` explicitly and close clients on fatal socket errors.
 - **Pass:** 1
 
-### HIGH select() EINTR causes process exit
+### [HIGH] select() EINTR causes process exit
 - **Type:** invariant-false
 - **Trigger:** Theme 2 – Fatal Assertions for Recoverable Errors
 - **Location:** smallchat-server.c:179-182
@@ -66,7 +66,7 @@ verdict: needs review
 - **Fix:** Check `errno`; retry on `EINTR` and only exit on genuinely fatal errors.
 - **Pass:** 1
 
-### HIGH read() error path disconnects clients on transient errors
+### [HIGH] read() error path disconnects clients on transient errors
 - **Type:** invariant-false
 - **Trigger:** (unmatched)
 - **Location:** smallchat-server.c:209-216
@@ -74,7 +74,7 @@ verdict: needs review
 - **Fix:** Inspect `errno`; only close on `nread == 0` or fatal socket errors, and retry on `EINTR`/`EAGAIN`.
 - **Pass:** 1
 
-### HIGH snprintf() negative return becomes a huge size_t length
+### [HIGH] snprintf() negative return becomes a huge size_t length
 - **Type:** invariant-false
 - **Trigger:** Theme 4 – Security-Critical Checks Must Not Be Bypassed
 - **Location:** smallchat-server.c:255-266
@@ -84,7 +84,7 @@ verdict: needs review
 
 ### smallchat-client.c
 
-### CRITICAL FD_SET used without FD_SETSIZE bounds check
+### [CRITICAL] FD_SET used without FD_SETSIZE bounds check
 - **Type:** invariant-false
 - **Trigger:** Theme 11 – Memory-Safety and Ownership (OOB access)
 - **Location:** smallchat-client.c:216-218
@@ -92,7 +92,7 @@ verdict: needs review
 - **Fix:** Validate `stdin_fd >= 0`, `s >= 0`, and both are `< FD_SETSIZE`; exit with a clear error if not. Better, replace `select()` with `poll()` to avoid the fixed `fd_set` limit.
 - **Pass:** 1
 
-### HIGH setRawMode() failure is ignored
+### [HIGH] setRawMode() failure is ignored
 - **Type:** invariant-false
 - **Trigger:** Theme 2 – Fatal Assertions for Recoverable Errors (suppressing an error return)
 - **Location:** smallchat-client.c:204
@@ -100,7 +100,7 @@ verdict: needs review
 - **Fix:** Check the return value. On failure, print a diagnostic with `perror()` and exit.
 - **Pass:** 1
 
-### HIGH read() from stdin error and EOF are ignored
+### [HIGH] read() from stdin error and EOF are ignored
 - **Type:** invariant-false
 - **Trigger:** Theme 2 – Fatal Assertions for Recoverable Errors (suppressing an error return)
 - **Location:** smallchat-client.c:239-240
@@ -108,7 +108,7 @@ verdict: needs review
 - **Fix:** Handle `count < 0` explicitly: retry on `EINTR`, exit or disable stdin on other errors. Handle `count == 0` as EOF and exit or stop selecting on stdin.
 - **Pass:** 1
 
-### HIGH inputBufferAppend() failure is ignored when sending a line
+### [HIGH] inputBufferAppend() failure is ignored when sending a line
 - **Type:** invariant-false
 - **Trigger:** Theme 5 – Consistent Error-Code Conventions (error code ignored / silent failure)
 - **Location:** smallchat-client.c:244
@@ -116,7 +116,7 @@ verdict: needs review
 - **Fix:** Check the return value. If `IB_ERR`, handle the condition explicitly, for example by rejecting the line, flushing an error, or failing the send path.
 - **Pass:** 1
 
-### HIGH inputBufferFeedChar() hides append failure
+### [HIGH] inputBufferFeedChar() hides append failure
 - **Type:** invariant-false
 - **Trigger:** Theme 5 – Consistent Error-Code Conventions (error code ignored / silent failure)
 - **Location:** smallchat-client.c:159-163
@@ -124,7 +124,7 @@ verdict: needs review
 - **Fix:** Return `IB_ERR` when append fails, and handle that error in `main()` instead of treating it as success.
 - **Pass:** 1
 
-### HIGH write() to the server socket is unchecked
+### [HIGH] write() to the server socket is unchecked
 - **Type:** invariant-false
 - **Trigger:** Theme 2 – Fatal Assertions for Recoverable Errors (suppressing an error return)
 - **Location:** smallchat-client.c:248
@@ -134,7 +134,7 @@ verdict: needs review
 
 ### chatlib.c
 
-### HIGH TCPConnect leaks getaddrinfo list on nonblocking EINPROGRESS return
+### [HIGH] TCPConnect leaks getaddrinfo list on nonblocking EINPROGRESS return
 - **Type:** invariant-false
 - **Trigger:** Theme 11 – Memory-Safety and Ownership: allocated object lacks a single, well-defined release point
 - **Location:** chatlib.c:94
@@ -144,7 +144,7 @@ verdict: needs review
 
 ### chatlib.h
 
-### MEDIUM Missing `<stddef.h>` include for `size_t`
+### [MEDIUM] Missing `<stddef.h>` include for `size_t`
 - **Type:** guideline
 - **Trigger:** (unmatched)
 - **Location:** chatlib.h:11
@@ -152,7 +152,7 @@ verdict: needs review
 - **Fix:** Add `#include <stddef.h>` after the header guard and before the declarations.
 - **Pass:** 2
 
-### LOW `TCPConnect` should take `const char*` address
+### [LOW] `TCPConnect` should take `const char*` address
 - **Type:** guideline
 - **Trigger:** (unmatched)
 - **Location:** chatlib.h:8
@@ -162,7 +162,7 @@ verdict: needs review
 
 ### Makefile
 
-### MEDIUM Missing header dependencies can produce stale binaries
+### [MEDIUM] Missing header dependencies can produce stale binaries
 - **Type:** guideline
 - **Trigger:** (unmatched)
 - **Location:** Makefile:4

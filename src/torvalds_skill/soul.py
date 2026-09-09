@@ -600,8 +600,7 @@ def _merge_frontmatter(response: str, prompt_hash: str, model: str, date_utc: st
             f"model: {model}\n"
             f"date: {date_utc}\n"
             f"pipeline_version: {SOUL_PIPELINE_VERSION}\n"
-            "---\n\n"
-            + response
+            "---\n\n" + response
         )
 
     # Find the closing --- line
@@ -620,8 +619,7 @@ def _merge_frontmatter(response: str, prompt_hash: str, model: str, date_utc: st
             f"model: {model}\n"
             f"date: {date_utc}\n"
             f"pipeline_version: {SOUL_PIPELINE_VERSION}\n"
-            "---\n\n"
-            + response
+            "---\n\n" + response
         )
 
     # Insert writer fields before the closing ---
@@ -738,8 +736,7 @@ def generate_soul(
     actual_words = len(response.split())
     if actual_words < min_words and not profile.reasoning:
         print(
-            f"soul short ({actual_words}w < {min_words}w min); "
-            f"retrying with 48000 token budget",
+            f"soul short ({actual_words}w < {min_words}w min); retrying with 48000 token budget",
             file=sys.stderr,
         )
         retry_response = _call_llm(

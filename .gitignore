@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# === Local profile overrides (legitimate local config, not committable) ===
+profiles.toml
+
 # === Re-downloadable data (regenerable via pipeline) ===
 # data/lkml.mbox      — 192MB, from NNTP (scripts/fetch_torvalds_mbox.py)
 # data/corpus.jsonl   — 59MB,  from mbox (scripts/mbox_to_jsonl.py)

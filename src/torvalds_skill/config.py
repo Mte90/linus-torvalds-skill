@@ -67,14 +67,12 @@ def get_model_timeout(model: str | None = None) -> int:
 # Wall-clock timeouts now come from profiles.get_profile(model).review_timeout
 # These are kept for backward compatibility but should use profiles going forward
 READ_TIMEOUT = int(os.environ.get("LLM_READ_TIMEOUT", "120"))  # per-read socket timeout
-WALL_CLOCK_GLM = 1800  # legacy alias: reasoning-profile review timeout, 30 min
 WALL_CLOCK_LONG = 900  # other models, long prompts: 15 min
 WALL_CLOCK_DEFAULT = 300  # other models: 5 min
 WALL_CLOCK_CATEGORY = 300  # per-category distill: 5 min
 
 # Max tokens now comes from profiles.get_profile(model).max_tokens
 # This is kept for backward compatibility
-GLM_MAX_TOKENS = 16000  # legacy alias: reasoning-profile max tokens
 
 
 def headers() -> dict:
@@ -87,8 +85,3 @@ def headers() -> dict:
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json",
     }
-
-
-# LLM cache configuration
-LLM_CACHE_PATH = os.environ.get("LLM_CACHE_PATH", "data/llm_cache.jsonl")
-LLM_CACHE_TTL_HOURS = float(os.environ.get("LLM_CACHE_TTL_HOURS", "24"))

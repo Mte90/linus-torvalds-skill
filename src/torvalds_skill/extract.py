@@ -128,7 +128,7 @@ Rules:
 - If the email has no review content (e.g. it's a merge confirmation, a scheduling note, or pure discussion with no reviewing principle), return an empty moves array.
 - The principle MUST be abstracted away from C/kernel specifics. "Don't change a public struct without updating callers" becomes "Don't change a public interface without updating all callers".
 - Keep the response field in Torvalds' own words — do not paraphrase the tone away.
-- Be conservative: only extract a move if there is a clear, identifiable reviewing principle.
+- Extract all review moves the email contains, including critical or rejecting feedback. Capture what the reviewer actually said.
 
 Return ONLY valid JSON, no markdown fences, in this exact format:
 {"moves": [{"trigger": "...", "principle": "...", "response": "...", "severity": "...", "category": "..."}]}"""
@@ -154,7 +154,7 @@ Rules:
 - If an email has no review content (e.g. it's a merge confirmation, a scheduling note, or pure discussion with no reviewing principle), return an empty moves array for that email.
 - The principle MUST be abstracted away from C/kernel specifics.
 - Keep the response field in Torvalds' own words — do not paraphrase the tone away.
-- Be conservative: only extract a move if there is a clear, identifiable reviewing principle.
+- Extract all review moves the email contains, including critical or rejecting feedback. Capture what the reviewer actually said.
 
 Return ONLY valid JSON, no markdown fences, in this exact format:
 [{{"moves": [...]}}, {{"moves": [...]}}, ...]  // one object per email, in order"""
