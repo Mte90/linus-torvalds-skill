@@ -184,6 +184,7 @@ OK. This is minor.
 
 def test_reasoning_only_response_triggers_retry(monkeypatch):
     """call_llm must retry with disable_thinking when reasoning-only response detected."""
+    monkeypatch.setattr(llm_review.project_config, "API_KEY", "sk-test")
     call_count = 0
 
     def fake_urlopen_first(req, timeout=None):
@@ -209,6 +210,7 @@ def test_reasoning_only_response_triggers_retry(monkeypatch):
 
 def test_disable_thinking_retry_succeeds(monkeypatch):
     """call_llm must succeed on retry with disable_thinking=true."""
+    monkeypatch.setattr(llm_review.project_config, "API_KEY", "sk-test")
     call_count = 0
     seen_payloads = []
 
