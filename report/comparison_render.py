@@ -129,7 +129,7 @@ def generate_markdown(
     # Generate stakeholder scorecard
     scorecard = generate_scorecard(skill_vs_baseline)
 
-    lines = []
+    lines: list[str] = []
 
     # Default model names for backward compatibility
     if model_names is None:
@@ -158,14 +158,14 @@ def generate_markdown(
     lines.append("## Skill Generation Per Model")
     lines.append("")
     lines.append(
-        "Skills are NOT identical — each variant is distilled from the same 350 patterns but with model-specific prompt calibration, token budgets, and execution mode."
+        "Each variant is distilled from the same 350 patterns. Distill settings (mode, token budget, timeout) are identical across models; what differs is the review-time token budget and severity calibration."
     )
     lines.append("")
     lines.append(
-        "| Model | Skill file | Distill mode | Token budget | Wall-clock timeout | Severity calibration |"
+        "| Model | Skill file | Distill mode | Review token budget | Severity calibration |"
     )
     lines.append(
-        "|-------|------------|--------------|--------------|-------------------|---------------------|"
+        "|-------|------------|--------------|---------------------|---------------------|"
     )
 
     # Generate table from runtime profiles
@@ -190,15 +190,12 @@ def generate_markdown(
         profile = get_profile(profile_name_map.get(model, model))
         skill_file = skill_files.get(model, "unknown")
         distill_mode = profile.distill_mode
-        token_budget = profile.max_tokens
-        timeout = profile.timeout
+        review_budget = profile.review_max_tokens or f"{profile.max_tokens} (default)"
         sev_calib = severity_calib.get(model, "—")
-        lines.append(
-            f"| {model} | {skill_file} | {distill_mode} | {token_budget} | {timeout}s | {sev_calib} |"
-        )
+        lines.append(f"| {model} | {skill_file} | {distill_mode} | {review_budget} | {sev_calib} |")
     lines.append("")
     lines.append(
-        "**Source:** `src/torvalds_skill/profiles.py` for per-model `max_tokens`, `timeout`, and `distill_mode` settings. Regenerate per `docs/CONTRIBUTING.md`."
+        "**Source:** `src/torvalds_skill/profiles.py`. Regenerate per `docs/CONTRIBUTING.md`."
     )
     lines.append("")
 
@@ -247,9 +244,9 @@ def generate_markdown(
     lines.append("")
 
     # Group by file
-    files_in_matrix = set(g["file"] for g in matched_groups if g["file"] != "unspecified")
-    if "unspecified" in set(g["file"] for g in matched_groups):
-        files_in_matrix = list(files_in_matrix) + ["unspecified"]
+    files_in_matrix = sorted(set(g["file"] for g in matched_groups if g["file"] != "unspecified"))
+    if any(g["file"] == "unspecified" for g in matched_groups):
+        files_in_matrix.append("unspecified")
 
     row_num = 1
     for file in sorted(files_in_matrix):
@@ -488,54 +485,6 @@ def generate_markdown(
             lines.append("*None.*")
         lines.append("")
 
-    # Focus metrics section (new)
-    lines.append("---")
-    lines.append("")
-    lines.append("## Focus Metrics")
-    lines.append("")
-    lines.append(
-        "Core-vs-trivia breakdown: % of findings that are CORE (correctness/memory-safety/error-handling) vs TRIVIA (style/build/docs)."
-    )
-    lines.append("")
-    lines.append("| Model | With-Skill CORE% | Baseline-Only CORE% | Focus Status |")
-    lines.append("|-------|:----------------:|:-------------------:|:-------------|")
-
-    for comparison in skill_vs_baseline:
-        model = comparison["model"]
-        skill_core_pct = comparison.get("skill_core_pct", "N/A")
-        baseline_core_pct = comparison.get("baseline_core_pct", "N/A")
-        focus_drift = comparison.get("focus_drift_warning", False)
-        critical_failure = comparison.get("critical_focus_failure", False)
-
-        if skill_core_pct == "N/A":
-            status = "baseline pending"
-        elif critical_failure:
-            status = "⚠️ CRITICAL FOCUS FAILURE"
-        elif focus_drift:
-            status = "⚠️ FOCUS DRIFT"
-        elif skill_core_pct >= 70:
-            status = "✅ focused"
-        else:
-            status = "acceptable"
-
-        skill_core_display = (
-            f"{skill_core_pct:.1f}%" if isinstance(skill_core_pct, (int, float)) else skill_core_pct
-        )
-        baseline_core_display = (
-            f"{baseline_core_pct:.1f}%"
-            if isinstance(baseline_core_pct, (int, float))
-            else baseline_core_pct
-        )
-
-        lines.append(f"| {model} | {skill_core_display} | {baseline_core_display} | {status} |")
-
-    lines.append("")
-    lines.append(
-        "**Gate rules:** `FOCUS DRIFT` when with-skill CORE% < 50%; `CRITICAL FOCUS FAILURE` when baseline-only contains any CRITICAL while skill-only is majority trivia. "
-        "**Note:** `unmatched` means no trigger-text overlap, not 'outside the skill's domain'."
-    )
-    lines.append("")
-
     lines.append("---")
     lines.append("")
     lines.append("## Qualitative Analysis")
@@ -715,18 +664,19 @@ def generate_markdown(
             lines.append(f"- **{model}:** Baseline not available for comparison.")
             continue
         net = soc - boc
+        finding_delta: int | None
         if isinstance(bt, int) and isinstance(st, int):
-            delta = st - bt
+            finding_delta = st - bt
         else:
-            delta = None
+            finding_delta = None
         if bt == 0 and net > 0:
             lines.append(
                 f"- **{model}:** Clear win. Baseline found nothing; skill added {net} critical bug(s). The skill unlocked review capability this model didn't have without it."
             )
         elif net > 0:
             cut = (
-                f"cut {abs(delta)} findings"
-                if delta is not None and delta < 0
+                f"cut {abs(finding_delta)} findings"
+                if finding_delta is not None and finding_delta < 0
                 else "added findings"
             )
             lines.append(
@@ -734,17 +684,17 @@ def generate_markdown(
             )
         elif net < 0:
             cut = (
-                f"cut {abs(delta)} findings"
-                if delta is not None and delta < 0
+                f"cut {abs(finding_delta)} findings"
+                if finding_delta is not None and finding_delta < 0
                 else "changed finding count"
             )
             lines.append(
                 f"- **{model}:** Net negative on critical coverage. The skill {cut} and suppressed {boc} critical(s) the baseline caught, while only adding {soc} new critical. The skill narrowed focus too aggressively — the {boc} lost critical(s) are a real coverage gap worth investigating."
             )
         else:
-            if delta is not None and delta < 0:
+            if finding_delta is not None and finding_delta < 0:
                 lines.append(
-                    f"- **{model}:** Neutral on criticals. The skill filtered noise (cut {abs(delta)} findings) without losing critical coverage."
+                    f"- **{model}:** Neutral on criticals. The skill filtered noise (cut {abs(finding_delta)} findings) without losing critical coverage."
                 )
             else:
                 lines.append(f"- **{model}:** Neutral. No net change in critical coverage.")
@@ -798,7 +748,6 @@ def generate_markdown(
         # Use confirmed_critical to match units with soc/boc (all CRITICAL-only)
         scores[mk] = confirmed_critical + soc_score - boc_score - model_disagreements[mk]
 
-    max(scores, key=scores.get)
     lines.append(
         "Based on consensus-confirmed CRITICAL findings, net critical impact (skill-only minus baseline-only), and severity calibration:"
     )

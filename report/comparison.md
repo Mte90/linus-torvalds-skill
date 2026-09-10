@@ -1,6 +1,6 @@
 ---
 title: Model Comparison — SmallChat Review
-date: 2026-09-09
+date: 2026-09-10
 codebase: antirez/smallchat
 models: gpt-oss-120b, glm5.2, mistral, qwen3.8-27b
 skill: linus-torvalds-skill (language-agnostic)
@@ -24,16 +24,16 @@ The skill adds the most value for mistral, which gained 9 critical finding(s) ex
 
 ## Skill Generation Per Model
 
-Skills are NOT identical — each variant is distilled from the same 350 patterns but with model-specific prompt calibration, token budgets, and execution mode.
+Each variant is distilled from the same 350 patterns. Distill settings (mode, token budget, timeout) are identical across models; what differs is the review-time token budget and severity calibration.
 
-| Model | Skill file | Distill mode | Token budget | Wall-clock timeout | Severity calibration |
-|-------|------------|--------------|--------------|-------------------|---------------------|
-| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | single | 16000 | 600s | balanced |
-| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single | 16000 | 600s | downgrade ONLY style/docs borderline, never correctness/error-handling |
-| mistral | `linus-torvalds-skill/SKILL-Mistral.md` | single | 16000 | 600s | under-rates → upgrade borderline |
-| qwen3.8-27b | `linus-torvalds-skill/SKILL-Qwen.md` | single | 16000 | 600s | none measured |
+| Model | Skill file | Distill mode | Review token budget | Severity calibration |
+|-------|------------|--------------|---------------------|---------------------|
+| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | single | 16000 (default) | balanced |
+| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single | 32000 | downgrade ONLY style/docs borderline, never correctness/error-handling |
+| mistral | `linus-torvalds-skill/SKILL-Mistral.md` | single | 32000 | under-rates → upgrade borderline |
+| qwen3.8-27b | `linus-torvalds-skill/SKILL-Qwen.md` | single | 131072 | none measured |
 
-**Source:** `src/torvalds_skill/profiles.py` for per-model `max_tokens`, `timeout`, and `distill_mode` settings. Regenerate per `docs/CONTRIBUTING.md`.
+**Source:** `src/torvalds_skill/profiles.py`. Regenerate per `docs/CONTRIBUTING.md`.
 
 4 models reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.
 
@@ -351,21 +351,6 @@ Bug-by-bug comparison for each model: which bugs were found by both, only baseli
 | inputBufferFeedChar() hides append failure | smallchat-client.c | HIGH | Theme 5 – Consistent Error-Code... |
 | write() to the server socket is unchecked | smallchat-client.c | HIGH | Theme 2 – Fatal Assertions for... |
 | TCPConnect leaks getaddrinfo list on nonblocking... | chatlib.c | HIGH | Theme 11 – Memory-Safety and Ownership:... |
-
----
-
-## Focus Metrics
-
-Core-vs-trivia breakdown: % of findings that are CORE (correctness/memory-safety/error-handling) vs TRIVIA (style/build/docs).
-
-| Model | With-Skill CORE% | Baseline-Only CORE% | Focus Status |
-|-------|:----------------:|:-------------------:|:-------------|
-| gpt-oss-120b | 100.0% | 100.0% | ✅ focused |
-| glm5.2 | 100.0% | 100.0% | ✅ focused |
-| mistral | 100.0% | 100.0% | ✅ focused |
-| qwen3.8-27b | 100.0% | 100.0% | ✅ focused |
-
-**Gate rules:** `FOCUS DRIFT` when with-skill CORE% < 50%; `CRITICAL FOCUS FAILURE` when baseline-only contains any CRITICAL while skill-only is majority trivia. **Note:** `unmatched` means no trigger-text overlap, not 'outside the skill's domain'.
 
 ---
 
