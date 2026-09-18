@@ -8,6 +8,8 @@ Built from **38,293 real review moves** extracted from 31,397 of his emails (200
 
 The skill was validated on [antirez/smallchat](https://github.com/antirez/smallchat) (706 LOC, C). Each model reviewed the codebase twice — once with the skill, once without (baseline). Full results are in [`report/comparison.md`](report/comparison.md); methodology in [`docs/validation.md`](docs/validation.md).
 
+Generalization is measured separately on 45 held-out diffs with ground-truth bugs, including a full cross-evaluation (every model with every skill variant) rendered as a 4×4 matrix in [`report/cross_matrix.md`](report/cross_matrix.md). See [`docs/pipeline.md`](docs/pipeline.md) ("Evaluation") for the workflow.
+
 ## Quick Start
 
 ### Model Divergence Showcase

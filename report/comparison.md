@@ -1,6 +1,6 @@
 ---
 title: Model Comparison — SmallChat Review
-date: 2026-09-10
+date: 2026-09-18
 codebase: antirez/smallchat
 models: gpt-oss-120b, glm5.2, mistral, qwen3.8-27b
 skill: linus-torvalds-skill (language-agnostic)
@@ -482,4 +482,35 @@ Metrics computed by matching model findings to benchmark records by file and lin
 | qwen3.8-27b | 22.2% | 9.3% | 13.1% | 4 | 39 | 50.0% |
 
 > **Note:** The benchmark is derived entirely from model consensus (no external tool or human verification). Precision and recall are therefore relative measures of cross-model agreement, not absolute correctness.
+
+
+---
+
+## Generalization (Diff-Based)
+
+Evaluation against ground-truth diffs (4 models with benchmark data).
+
+Metrics computed by matching model findings to benchmark bugs by file and line number (±5 lines tolerance). Only records with expected='findings' count for precision/recall/F1.
+
+| Model | Precision | Recall | F1 | Accuracy | Prioritization | Justification | Actionability | Overall |
+|-------|-----------|--------|------|----------|----------------|---------------|---------------|---------|
+| gpt-oss-120b | 64.3% | 40.0% | 49.3% | 64.0% | 43.7% | 86.0% | 90.7% | 71.1% |
+| glm5.2 | 32.4% | 24.4% | 27.8% | 68.9% | 50.6% | 96.0% | 97.0% | 78.1% |
+| mistral | 88.0% | 48.9% | 62.9% | 66.0% | 44.0% | 78.0% | 86.0% | 68.5% |
+| qwen3.8-27b | 89.3% | 55.6% | 68.5% | 61.3% | 44.0% | 87.3% | 90.0% | 70.7% |
+
+---
+
+## Calibration (Refusal)
+
+Assessment of model refusal behavior on clean and ambiguous cases.
+
+| Model | Clean FP Rate | Ambiguous Confidence Error | Refusal Accuracy |
+|-------|:-------------:|:--------------------------:|:----------------:|
+| gpt-oss-120b | 100.0% | 100.0% | 0.0% |
+| glm5.2 | 100.0% | 100.0% | 0.0% |
+| mistral | 100.0% | 100.0% | 0.0% |
+| qwen3.8-27b | 100.0% | 100.0% | 0.0% |
+
+> **Note:** Clean FP Rate measures false positives on records expected to have no findings. Ambiguous Confidence Error measures incorrect high-confidence conclusions on ambiguous cases. Refusal Accuracy = 1 - Ambiguous Confidence Error.
 

@@ -7,6 +7,7 @@ NameError. These tests pin the request body shape and the cache-hit path.
 
 import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -331,3 +332,19 @@ title: Review
 """
     with pytest.raises(ValueError, match="review_format_invalid: unknown severity"):
         llm_review._validate_review_format(unknown_severity_review)
+
+
+def test_wall_clock_timeout_is_noop_in_worker_thread():
+    errors: list[Exception] = []
+
+    def _run() -> None:
+        try:
+            with llm_review._WallClockTimeout(60):
+                pass
+        except Exception as exc:  # pragma: no cover - captured below
+            errors.append(exc)
+
+    t = threading.Thread(target=_run)
+    t.start()
+    t.join()
+    assert errors == []

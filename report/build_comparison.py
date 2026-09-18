@@ -1241,6 +1241,223 @@ def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[d
     }
 
 
+def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]) -> dict:
+    """Compute diff-based evaluation metrics (precision/recall/F1) for model findings.
+
+    Matches findings to benchmark bugs by line ±5 tolerance.
+    Only records with expected=="findings" count for P/R/F1 calculation.
+
+    Args:
+        eval_results: List of eval result records with structure:
+            {diff_id, model, expected, findings:[{file,line,severity,title}],
+             scores:{accuracy,prioritization,justification,actionability}}
+        diff_records: List of benchmark diff records (same as benchmark_records)
+
+    Returns:
+        Dict with keys:
+        - precision, recall, f1: standard metrics
+        - hits, misses: matched/unmatched benchmark IDs
+        - avg_accuracy, avg_prioritization, avg_justification, avg_actionability
+        - overall_score: weighted average of all score dimensions
+        - total_findings: total findings across all models
+        - total_benchmark: total benchmark records
+    """
+    if not eval_results or not diff_records:
+        return {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "hits": [],
+            "misses": [r["id"] for r in diff_records],
+            "avg_accuracy": 0.0,
+            "avg_prioritization": 0.0,
+            "avg_justification": 0.0,
+            "avg_actionability": 0.0,
+            "overall_score": 0.0,
+            "total_findings": 0,
+            "total_benchmark": len(diff_records),
+        }
+
+    # Filter to only expected=="findings" records (for P/R/F1)
+    findings_results = [r for r in eval_results if r.get("expected") == "findings"]
+
+    matched_benchmark_ids = set()
+    total_findings = 0
+    score_sums = {
+        "accuracy": 0.0,
+        "prioritization": 0.0,
+        "justification": 0.0,
+        "actionability": 0.0,
+    }
+    score_counts = {"accuracy": 0, "prioritization": 0, "justification": 0, "actionability": 0}
+
+    for result in findings_results:
+        findings = result.get("findings", [])
+        total_findings += len(findings)
+
+        # Aggregate scores
+        scores = result.get("scores", {})
+        for key in score_sums:
+            if key in scores and scores[key] is not None:
+                score_sums[key] += scores[key]
+                score_counts[key] += 1
+
+        # Match findings to benchmark bugs by file and line ±5.
+        # Bugs inherit their file from the parent diff record (no per-bug file).
+        for finding in findings:
+            finding_file = finding.get("file")
+            finding_line = finding.get("line")
+
+            if not finding_file or finding_line is None:
+                continue
+
+            normalized_file = normalize_filename(finding_file)
+
+            for record in diff_records:
+                rec_file = normalize_filename(record.get("file", ""))
+
+                if not rec_file or normalized_file != rec_file:
+                    continue
+
+                for bug in record.get("bugs", []):
+                    rec_line = bug.get("line")
+
+                    if rec_line is None:
+                        continue
+
+                    # Same file AND line within ±5
+                    if abs(finding_line - rec_line) <= 5:
+                        bid = record.get("id")
+                        if bid and bid not in matched_benchmark_ids:
+                            matched_benchmark_ids.add(bid)
+                        break
+                else:
+                    continue
+                break
+
+    hits = sorted(matched_benchmark_ids)
+    misses = sorted([r["id"] for r in diff_records if r.get("id") not in matched_benchmark_ids])
+
+    # Precision: hits / total findings (only from expected=="findings" records)
+    precision = len(hits) / total_findings if total_findings > 0 else 0.0
+
+    # Recall: hits / total benchmark
+    recall = len(hits) / len(diff_records) if diff_records else 0.0
+
+    # F1
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+    # Average scores
+    avg_accuracy = (
+        score_sums["accuracy"] / score_counts["accuracy"] if score_counts["accuracy"] > 0 else 0.0
+    )
+    avg_prioritization = (
+        score_sums["prioritization"] / score_counts["prioritization"]
+        if score_counts["prioritization"] > 0
+        else 0.0
+    )
+    avg_justification = (
+        score_sums["justification"] / score_counts["justification"]
+        if score_counts["justification"] > 0
+        else 0.0
+    )
+    avg_actionability = (
+        score_sums["actionability"] / score_counts["actionability"]
+        if score_counts["actionability"] > 0
+        else 0.0
+    )
+
+    # Overall score: average of all dimensions
+    overall_score = (
+        avg_accuracy + avg_prioritization + avg_justification + avg_actionability
+    ) / 4.0
+
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "hits": hits,
+        "misses": misses,
+        "avg_accuracy": avg_accuracy,
+        "avg_prioritization": avg_prioritization,
+        "avg_justification": avg_justification,
+        "avg_actionability": avg_actionability,
+        "overall_score": overall_score,
+        "total_findings": total_findings,
+        "total_benchmark": len(diff_records),
+    }
+
+
+def compute_refusal_metrics(eval_results: list[dict], diff_records: list[dict]) -> dict:
+    """Compute calibration metrics for model refusal behavior.
+
+    Uses expected=="no-findings" subset (any finding = FP) and
+    expected=="refuse-to-conclude" (refused flag or empty findings = correct).
+
+    Args:
+        eval_results: List of eval result records
+        diff_records: List of benchmark diff records (unused but kept for signature symmetry)
+
+    Returns:
+        Dict with keys:
+        - clean_fp_rate: false positive rate on clean (no-findings) records
+        - ambiguous_confidence_error: % of ambiguous cases with wrong confidence
+        - refusal_accuracy: accuracy on refuse-to-conclude cases
+        - clean_total: total clean records evaluated
+        - ambiguous_total: total ambiguous records evaluated
+    """
+    if not eval_results:
+        return {
+            "clean_fp_rate": 0.0,
+            "ambiguous_confidence_error": 0.0,
+            "refusal_accuracy": 0.0,
+            "clean_total": 0,
+            "ambiguous_total": 0,
+        }
+
+    # Filter by expected type
+    clean_results = [r for r in eval_results if r.get("expected") == "no-findings"]
+    ambiguous_results = [r for r in eval_results if r.get("expected") == "refuse-to-conclude"]
+
+    # Clean FP rate: any finding on a clean record = false positive
+    clean_fps = 0
+    for result in clean_results:
+        findings = result.get("findings", [])
+        if findings:  # Any finding on clean = FP
+            clean_fps += 1
+
+    clean_fp_rate = clean_fps / len(clean_results) if clean_results else 0.0
+
+    # Ambiguous confidence error: check if model correctly refused or gave low confidence
+    ambiguous_errors = 0
+    for result in ambiguous_results:
+        # Check if model refused (empty findings or refused flag)
+        findings = result.get("findings", [])
+        refused = result.get("refused", False)
+        scores = result.get("scores", {})
+        confidence = scores.get("confidence", 1.0)
+
+        # Correct if: refused=True OR empty findings OR low confidence (<0.5)
+        if not refused and findings and confidence >= 0.5:
+            ambiguous_errors += 1
+
+    ambiguous_confidence_error = (
+        ambiguous_errors / len(ambiguous_results) if ambiguous_results else 0.0
+    )
+
+    # Refusal accuracy: for refuse-to-conclude, did model correctly refuse?
+    # This is essentially 1 - ambiguous_confidence_error
+    refusal_accuracy = 1.0 - ambiguous_confidence_error
+
+    return {
+        "clean_fp_rate": clean_fp_rate,
+        "ambiguous_confidence_error": ambiguous_confidence_error,
+        "refusal_accuracy": refusal_accuracy,
+        "clean_total": len(clean_results),
+        "ambiguous_total": len(ambiguous_results),
+    }
+
+
 def main():
     """Main entry point."""
     # Determine paths
@@ -1358,6 +1575,55 @@ def main():
             model_name = key.replace("_skill", "").replace("_baseline", "")
             benchmark_metrics[key] = compute_benchmark_metrics(findings or [], benchmark_records)
 
+    # Load eval results for diff-based metrics (graceful skip if files missing)
+    eval_diffs_path = repo_root / "data" / "eval_diffs.jsonl"
+    eval_results_path = repo_root / "data" / "eval_results.jsonl"
+    diff_eval_metrics = {}
+    refusal_metrics = {}
+
+    if eval_diffs_path.exists() and eval_results_path.exists():
+        # Load eval diffs (benchmark records)
+        eval_diffs = []
+        with open(eval_diffs_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    eval_diffs.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+        # Load eval results
+        eval_results = []
+        with open(eval_results_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    eval_results.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+        # Group eval results by model
+        results_by_model = {}
+        for result in eval_results:
+            model = result.get("model", "unknown")
+            if model not in results_by_model:
+                results_by_model[model] = []
+            results_by_model[model].append(result)
+
+        # Compute diff-based metrics per model
+        for model, results in results_by_model.items():
+            diff_eval_metrics[f"{model}_skill"] = compute_diff_eval_metrics(results, eval_diffs)
+            refusal_metrics[f"{model}_skill"] = compute_refusal_metrics(results, eval_diffs)
+    else:
+        if not eval_diffs_path.exists():
+            print("Note: eval_diffs.jsonl not found, skipping diff-based metrics")
+        if not eval_results_path.exists():
+            print("Note: eval_results.jsonl not found, skipping diff-based metrics")
+
     # Generate markdown
     model_names = [m[0] for m in MODELS]
     markdown = generate_markdown(
@@ -1372,6 +1638,8 @@ def main():
         trigger_effectiveness=trigger_effectiveness,
         benchmark_records=benchmark_records,
         benchmark_metrics=benchmark_metrics,
+        diff_eval_metrics=diff_eval_metrics or None,
+        refusal_metrics=refusal_metrics or None,
     )
 
     # Write output

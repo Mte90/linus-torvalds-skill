@@ -12,6 +12,7 @@ import argparse
 import json
 import signal
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -114,11 +115,18 @@ class _WallClockTimeout:
         self._old_handler = None
 
     def __enter__(self):
+        # SIGALRM is main-thread-only; worker threads (e.g. run_eval.py
+        # --parallel) fall back to urlopen's per-read timeout instead.
+        if threading.current_thread() is not threading.main_thread():
+            self._old_handler = None
+            return self
         self._old_handler = signal.signal(signal.SIGALRM, self._handler)
         signal.alarm(self._seconds)
         return self
 
     def __exit__(self, *exc):
+        if self._old_handler is None:
+            return False
         signal.alarm(0)
         signal.signal(signal.SIGALRM, self._old_handler)
         return False

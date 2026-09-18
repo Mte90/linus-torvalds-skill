@@ -36,7 +36,7 @@ Install pre-commit hooks once: `pre-commit install`. The `.pre-commit-config.yam
 | Stage/Script | Location |
 |---|---|
 | CLI stages (classify, extract, cluster, distill, soul) | `src/torvalds_skill/` |
-| Utility scripts (calibrate, verify_skill, generate_variant_table) | `scripts/` |
+| Utility scripts (calibrate, verify_skill, generate_variant_table, run_eval, render_cross) | `scripts/` |
 | Review pipeline, comparison generation | `report/` |
 | Pipeline outputs (skill/soul files) | `linus-torvalds-skill/`, `soul/` |
 | Pipeline artifacts (mbox, moves, patterns, calibration) | `data/` |

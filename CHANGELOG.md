@@ -2,6 +2,25 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-09-18
+
+- **Cross eval (`run_eval.py`):** Added `--skills` flag (filter skill-source models in `--cross` mode, symmetric to `--models`; enables ordered stage runs, e.g. finishing with a chosen pair last). Full 12-cell cross matrix reached 540/540; cross file deduped 543→540 (duplicate keys kept last); 7 missing diagonal records filled (glm5.2×4, qwen×3).
+- **Fix (`run_eval.py` `_rescore_zeros`):** Three bugs — (1) write-back was a no-op (rewrote the original file text, discarding re-judged scores); now serializes the updated records atomically. (2) Default judge was hardcoded `gpt-oss-120b` while runs use self-judge; now defaults to the record's own model (explicit `--judge-model` still wins). (3) Record-level score averages were left stale at zero after re-judging; now recomputed from finding scores (the level `render_cross.py` reads). Regression tests added (51 passed in `test_eval.py`).
+- **Fix (`run_eval.py` resume/status):** Result keys now normalize skill-less diagonal records to `(diff, model, model)` in both the resume loader and `--status` (previously diagonal cells always showed MISSING and resume would redo them); status counting compares against the normalized key. Rescore of ~300 zero-score findings (judge JSON failures) running in background, then `render_cross.py` + `comparison.md` rebuild + final verdict.
+- **Fix (eval matchers):** All finding→bug matchers read a top-level `line` that doesn't exist in `eval_diffs.jsonl` (lines live per-bug in `bugs[]`, files at diff level) — F1/recall rendered 0.00 everywhere and `match_finding_to_diff_bug` never matched. `run_eval.py` matcher now takes `diff_file` (bugs inherit the diff's file); `render_cross.py` delegates to it; `build_comparison.py` traverses `bugs[]`. Also fixed: judge note (self-judge, not gpt-oss-120b), `/5` scale → `/2`, stale `mistral-small-3.2-24b` name, `mistral` short-key lookup in Generalization/Calibration tables (row was all zeros), judge percentages >100% (0–2 scale now normalized), `R` header (refusal, not recall). Test fixtures migrated to the real `bugs[]` schema. Final: 1111 passed, ruff clean (7 mypy errors in `scripts/calibrate.py` pre-existing, untouched).
+
+## 2026-09-17
+
+- **Cross eval (`run_eval.py`):** Added `--models` (filter models only, fixing a bug where cross mode also filtered skills), `--status` completion table, `--rescore-zeros`, and `--parallel` (two `(model, skill)` pairs concurrently via `ThreadPoolExecutor(max_workers=2)`, mirroring `run_review.py`; lock-guarded JSONL appends; `_run_pair` extracted from `main()`).
+- **Fix (`llm_review.py`):** `_WallClockTimeout` is now a no-op in non-main threads (SIGALRM is main-thread-only; worker threads fall back to `urlopen`'s per-read timeout). Regression test added.
+- **Timeout hardening:** `run_eval.py` now delegates all LLM calls to `report.llm_review.call_llm`, inheriting its wall-clock timeout, streaming, reasoning-content handling, and single retry. Judge calls get the same guard; failed calls print `status=error` instead of a misleading `findings=0`. Eval logs moved to `/tmp/`.
+- **Tests:** Suite at 1106 passed; hermetic tests for parallel mode (same record set as sequential; no interleaved JSONL lines) and the SIGALRM thread guard.
+
+## 2026-09-10
+
+- **Diff-based evaluation layer:** Added `data/eval_diffs.jsonl` (45 held-out diffs with ground-truth bugs), `data/eval_diffs.schema.json`, `scripts/validate_eval.py`, `scripts/run_eval.py` (judge-scored, resume-safe, append-only), and wiring into `report/build_comparison.py` (generalization and refusal-calibration sections render when `data/eval_results.jsonl` exists).
+- **Comparison rendering:** Removed the degenerate Focus Metrics section (all models 100% focused); replaced the misleading token-budget column with "Review token budget" (`review_max_tokens`); fixed mypy errors in `comparison_render.py` (annotations, set→list, renamed `delta`, dead expression).
+
 ## 2026-09-09
 
 - **Cleanup (config):** Removed dead cache vars (`LLM_CACHE_PATH`, `LLM_CACHE_TTL_HOURS`) and legacy timeout aliases (`WALL_CLOCK_GLM`, `GLM_MAX_TOKENS`) from `config.py`. Unified cache (`CACHE_ENABLED`/`CACHE_PATH`/`CACHE_TTL_HOURS`) is the active path.

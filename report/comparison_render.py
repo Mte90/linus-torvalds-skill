@@ -116,6 +116,8 @@ def generate_markdown(
     trigger_effectiveness: dict | None = None,
     benchmark_records: list[dict] | None = None,
     benchmark_metrics: dict | None = None,
+    diff_eval_metrics: dict | None = None,
+    refusal_metrics: dict | None = None,
 ) -> str:
     """Generate the complete comparison.md content.
 
@@ -897,6 +899,82 @@ def generate_markdown(
 
     lines.append("")
 
-    return "\n".join(lines)
+    # Diff-Based Evaluation Metrics Section
+    if diff_eval_metrics:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Generalization (Diff-Based)")
+        lines.append("")
+        lines.append(
+            f"Evaluation against ground-truth diffs ({len([r for r in diff_eval_metrics.values() if r.get('total_benchmark', 0) > 0])} models with benchmark data)."
+        )
+        lines.append("")
+        lines.append(
+            "Metrics computed by matching model findings to benchmark bugs by file and line number (±5 lines tolerance). "
+            "Only records with expected='findings' count for precision/recall/F1."
+        )
+        lines.append("")
+        lines.append(
+            "| Model | Precision | Recall | F1 | Accuracy | Prioritization | Justification | Actionability | Overall |"
+        )
+        lines.append(
+            "|-------|-----------|--------|------|----------|----------------|---------------|---------------|---------|"
+        )
+
+        for model_name in model_names:
+            # Eval data uses full profile keys (e.g. mistral-small-4-119b)
+            eval_name = profile_name_map.get(model_name, model_name)
+            skill_key = f"{eval_name}_skill"
+            metrics = diff_eval_metrics.get(skill_key, {})
+
+            precision = metrics.get("precision", 0.0)
+            recall = metrics.get("recall", 0.0)
+            f1 = metrics.get("f1", 0.0)
+            # Judge axes use a 0-2 scale; normalize to 0-1 for percent display
+            accuracy = metrics.get("avg_accuracy", 0.0) / 2.0
+            prioritization = metrics.get("avg_prioritization", 0.0) / 2.0
+            justification = metrics.get("avg_justification", 0.0) / 2.0
+            actionability = metrics.get("avg_actionability", 0.0) / 2.0
+            overall = metrics.get("overall_score", 0.0) / 2.0
+
+            lines.append(
+                f"| {model_name} | {precision:.1%} | {recall:.1%} | {f1:.1%} | {accuracy:.1%} | {prioritization:.1%} | {justification:.1%} | {actionability:.1%} | {overall:.1%} |"
+            )
+
+        lines.append("")
+
+    # Calibration (Refusal) Section
+    if refusal_metrics:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Calibration (Refusal)")
+        lines.append("")
+        lines.append("Assessment of model refusal behavior on clean and ambiguous cases.")
+        lines.append("")
+        lines.append("| Model | Clean FP Rate | Ambiguous Confidence Error | Refusal Accuracy |")
+        lines.append("|-------|:-------------:|:--------------------------:|:----------------:|")
+
+        for model_name in model_names:
+            eval_name = profile_name_map.get(model_name, model_name)
+            skill_key = f"{eval_name}_skill"
+            metrics = refusal_metrics.get(skill_key, {})
+
+            clean_fp_rate = metrics.get("clean_fp_rate", 0.0)
+            ambiguous_error = metrics.get("ambiguous_confidence_error", 0.0)
+            refusal_acc = metrics.get("refusal_accuracy", 0.0)
+
+            lines.append(
+                f"| {model_name} | {clean_fp_rate:.1%} | {ambiguous_error:.1%} | {refusal_acc:.1%} |"
+            )
+
+        lines.append("")
+        lines.append(
+            "> **Note:** Clean FP Rate measures false positives on records expected to have no findings. "
+            "Ambiguous Confidence Error measures incorrect high-confidence conclusions on ambiguous cases. "
+            "Refusal Accuracy = 1 - Ambiguous Confidence Error."
+        )
+        lines.append("")
+
+    lines.append("")
 
     return "\n".join(lines)

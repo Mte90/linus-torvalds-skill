@@ -370,6 +370,63 @@ Checks:
 - `calibration.json` — category statistics present
 - `skip_list.json` — format validity
 
+## Evaluation (`scripts/run_eval.py`)
+
+Measures whether a skill improves a model's bug-finding ability on held-out diffs. This is pure measurement: no training, no fine-tuning.
+
+**Inputs**
+
+- `data/eval_diffs.jsonl` — 45 diffs with ground-truth bugs (schema: `data/eval_diffs.schema.json`, validated by `scripts/validate_eval.py`)
+- Model profiles from `src/torvalds_skill/profiles.py`; API credentials from the environment (same contract as the review pipeline)
+
+**Per-record flow**
+
+1. `build_diff_prompt` injects the skill text into the review prompt
+2. Model call via `report.llm_review.call_llm` (cache-aware; SIGALRM wall-clock timeout in the main thread, per-read socket timeout in worker threads)
+3. `parse_findings_from_review` extracts structured findings; `check_refused` detects refusals
+4. Findings are matched to ground-truth bugs; unmatched findings become new-bug candidates
+5. `score_finding_with_judge` scores each finding (robust JSON extraction with retry; failures are recorded as `judge_error` and rescored on the next run)
+6. The record is appended to the output file
+
+**Resume safety**
+
+Each launch loads existing `(diff_id, model, skill)` keys and skips completed pairs. Failed calls return `None` and are not written, so the next run retries them. Records scored zero by a malformed judge response are re-judged with `--rescore-zeros`.
+
+**Flags**
+
+```bash
+# Diagonal (model with its own skill) — writes data/eval_results.jsonl
+python3 scripts/run_eval.py
+
+# Cross mode (off-diagonal model×skill pairs) — writes data/eval_results_cross.jsonl
+python3 scripts/run_eval.py --cross
+
+# Read-only completion table (no API calls)
+python3 scripts/run_eval.py --cross --status
+
+# Limit to specific models; re-judge zeroed records; parallel execution
+python3 scripts/run_eval.py --cross --models glm5.2 --rescore-zeros --parallel
+```
+
+| Flag | Effect |
+|---|---|
+| `--cross` | Evaluate off-diagonal model×skill pairs |
+| `--out <path>` | Output JSONL path |
+| `--status` | Print completion table, make no API calls |
+| `--models <m1,m2>` | Restrict to a subset of models |
+| `--rescore-zeros` | Re-judge records that previously scored zero (malformed judge JSON) |
+| `--force` | Re-evaluate all pairs, ignoring the resume index |
+| `--parallel` | Run two (model, skill) pairs concurrently (`ThreadPoolExecutor`, lock-guarded appends) |
+
+**Rendering**
+
+```bash
+# 4×4 model×skill matrix (marginals: best model, best skill, novel-bug coverage)
+python3 scripts/render_cross.py
+```
+
+Outputs: `report/cross_matrix.md` (matrix), plus two diff-based sections in `report/comparison.md` once `data/eval_results.jsonl` exists (generalization and refusal-calibration). Long-running eval logs go to `/tmp/` (for example `/tmp/eval_cross_run3.log`), not `report/`.
+
 ## Data flow
 
 ```mermaid
