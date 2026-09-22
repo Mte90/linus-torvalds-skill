@@ -2,26 +2,69 @@
 
 Diagonal data from `data/eval_results.jsonl`, cross-data from `data/eval_results_cross.jsonl`.
 
-*Note: Each model judges its own reviews (self-judge).*
+*Judge model: GLM5.2 (fixed external judge, applied via `--rescore-all`).*
+
+## Verdict
+
+**Best pairing**: `qwen3.8-27b` reviewing with `qwen3.8-27b` skill found **25 bugs** out of 45 ground-truth bugs.
+
+**Best Detection Score**: `qwen3.8-27b` on `gpt-oss-120b` (DS=0.55).
+
+**Best Judge Score**: `glm5.2` on `gpt-oss-120b` (J=1.6/2).
+
+**Best critical-bug pairing**: `gpt-oss-120b` on `glm5.2` found **4** `reject`-severity bugs.
+
+**Best reviewer model**: `gpt-oss-120b` found **25** bugs (56% coverage) across all skills.
+
+**Best skill**: `gpt-oss-120b` found **25** bugs (56% coverage) across all models.
+
+**Consensus**: 17 bug(s) found by every model (across all skill pairings), 0 by only one model, 20 missed by all. This measures inter-model agreement, not skill-on vs skill-off.
+
+**Native pairing advantage**: glm5.2: no difference; gpt-oss-120b: native helps; mistral-small-4-119b: no difference; qwen3.8-27b: no difference.
+
+**Best skill per model**: 1 model(s) perform best with their native skill, 3 with a cross-skill. See the *Best Skill per Model* table below for specifics.
+
+See `report/comparison.md` for the baseline-vs-skill analysis (whether adding any skill helps or hurts each model).
+
+
+
+## Metrics Glossary
+
+- **Detection Score (DS)**: Harmonic mean of precision and recall. Measures how well findings balance correctness (precision) against completeness (recall). Range 0–1; higher is better.
+
+- **Precision**: Of all findings reported, the fraction that matched a ground-truth bug. Low precision means many false positives.
+
+- **Recall**: Of all ground-truth bugs, the fraction that were found. Low recall means missed bugs.
+
+- **Refusal Rate (R)**: Fraction of diffs where the model refused to review. In this dataset R=0 for all pairings, so it is omitted from the tables.
+
+- **Judge Score (J)**: Mean of four sub-scores (accuracy, prioritization, justification, actionability) on a 0–2 scale. Reflects review quality as scored by the judge model.
+
+- **Native**: Diagonal pairing where the model reviews a diff using its own skill (model == skill).
+
+- **Exclusive**: Bugs found by this model/skill and no other model/skill. A high exclusive count means the pairing contributes unique value.
+
+
+---
 
 ## Overview Matrix
 
-Each cell shows: F1 score, Refusal rate, and mean Judge score (0–2 scale).
+Each cell shows: Detection Score (DS), and mean Judge score (0–2 scale).
 
 *(native)* indicates diagonal pairing (model == skill).
 
 | Skill \\ Model | glm5.2 | gpt-oss-120b | mistral-small-4-119b | qwen3.8-27b |
-|---|---|---|---|
-| **glm5.2** | F1=0.22 R=0% J=1.0/2 *(native)* | F1=0.36 R=0% J=1.0/2 | F1=0.49 R=0% J=1.1/2 | F1=0.55 R=0% J=0.9/2 |
-| **gpt-oss-120b** | F1=0.24 R=0% J=1.5/2 | F1=0.41 R=0% J=1.1/2 *(native)* | F1=0.49 R=0% J=1.4/2 | F1=0.55 R=0% J=0.9/2 |
-| **mistral-small-4-119b** | F1=0.24 R=0% J=1.1/2 | F1=0.35 R=0% J=1.1/2 | F1=0.49 R=0% J=1.0/2 *(native)* | F1=0.52 R=0% J=0.9/2 |
-| **qwen3.8-27b** | F1=0.19 R=0% J=1.2/2 | F1=0.38 R=0% J=1.0/2 | F1=0.47 R=0% J=1.2/2 | F1=0.54 R=0% J=0.8/2 *(native)* |
+|---|---|---|---|---|
+| **glm5.2** | DS=0.22 J=1.2/2 *(native)* | DS=0.36 J=1.1/2 | DS=0.49 J=0.9/2 | DS=0.55 J=1.1/2 |
+| **gpt-oss-120b** | DS=0.24 J=1.6/2 | DS=0.41 J=1.2/2 *(native)* | DS=0.49 J=1.0/2 | DS=0.55 J=1.0/2 |
+| **mistral-small-4-119b** | DS=0.24 J=1.1/2 | DS=0.35 J=1.2/2 | DS=0.49 J=1.1/2 *(native)* | DS=0.52 J=1.1/2 |
+| **qwen3.8-27b** | DS=0.19 J=1.2/2 | DS=0.38 J=1.1/2 | DS=0.47 J=1.1/2 | DS=0.54 J=1.0/2 *(native)* |
 
 
 ## Precision Matrix
 
 | Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|
+|---|---|---|---|---|
 | glm5.2 | 0.20 | 0.31 | 0.49 | 0.54 |
 | gpt-oss-120b | 0.24 | 0.40 | 0.49 | 0.54 |
 | mistral-small-4-119b | 0.24 | 0.33 | 0.49 | 0.49 |
@@ -31,70 +74,69 @@ Each cell shows: F1 score, Refusal rate, and mean Judge score (0–2 scale).
 ## Recall Matrix
 
 | Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|
+|---|---|---|---|---|
 | glm5.2 | 0.24 | 0.42 | 0.49 | 0.56 |
 | gpt-oss-120b | 0.24 | 0.42 | 0.49 | 0.56 |
 | mistral-small-4-119b | 0.24 | 0.38 | 0.49 | 0.56 |
 | qwen3.8-27b | 0.20 | 0.40 | 0.47 | 0.56 |
 
 
-## Refusal Rate Matrix
-
-| Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|
-| glm5.2 | 0% | 0% | 0% | 0% |
-| gpt-oss-120b | 0% | 0% | 0% | 0% |
-| mistral-small-4-119b | 0% | 0% | 0% | 0% |
-| qwen3.8-27b | 0% | 0% | 0% | 0% |
-
-
 ## Judge Accuracy Matrix
 
 | Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|
-| glm5.2 | 0.9 | 0.9 | 1.2 | 0.9 |
-| gpt-oss-120b | 1.6 | 1.0 | 1.5 | 0.9 |
-| mistral-small-4-119b | 1.3 | 1.1 | 1.0 | 0.9 |
-| qwen3.8-27b | 1.4 | 1.1 | 1.3 | 0.7 |
+|---|---|---|---|---|
+| glm5.2 | 1.3 | 1.1 | 1.0 | 1.2 |
+| gpt-oss-120b | 1.7 | 1.3 | 1.2 | 1.2 |
+| mistral-small-4-119b | 1.3 | 1.3 | 1.2 | 1.2 |
+| qwen3.8-27b | 1.3 | 1.2 | 1.2 | 1.2 |
 
 
 ## Judge Prioritization Matrix
 
 | Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|
-| glm5.2 | 0.6 | 0.5 | 0.9 | 0.6 |
-| gpt-oss-120b | 1.1 | 0.6 | 1.2 | 0.6 |
-| mistral-small-4-119b | 0.8 | 0.6 | 0.6 | 0.6 |
-| qwen3.8-27b | 0.9 | 0.6 | 1.1 | 0.5 |
+|---|---|---|---|---|
+| glm5.2 | 1.1 | 1.0 | 0.9 | 1.0 |
+| gpt-oss-120b | 1.2 | 1.0 | 0.9 | 0.9 |
+| mistral-small-4-119b | 1.0 | 1.1 | 1.0 | 0.9 |
+| qwen3.8-27b | 1.0 | 1.0 | 1.0 | 1.0 |
 
 
 ## Judge Justification Matrix
 
 | Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|
-| glm5.2 | 1.2 | 1.2 | 1.2 | 1.0 |
-| gpt-oss-120b | 1.6 | 1.3 | 1.5 | 1.0 |
-| mistral-small-4-119b | 1.1 | 1.3 | 1.1 | 1.0 |
-| qwen3.8-27b | 1.3 | 1.2 | 1.3 | 1.0 |
+|---|---|---|---|---|
+| glm5.2 | 1.2 | 1.2 | 0.9 | 1.1 |
+| gpt-oss-120b | 1.7 | 1.3 | 1.1 | 1.1 |
+| mistral-small-4-119b | 1.2 | 1.3 | 1.2 | 1.1 |
+| qwen3.8-27b | 1.3 | 1.2 | 1.1 | 1.0 |
 
 
 ## Judge Actionability Matrix
 
 | Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|
-| glm5.2 | 1.2 | 1.3 | 1.2 | 1.0 |
-| gpt-oss-120b | 1.6 | 1.3 | 1.5 | 1.0 |
-| mistral-small-4-119b | 1.1 | 1.4 | 1.3 | 1.0 |
-| qwen3.8-27b | 1.3 | 1.3 | 1.3 | 1.0 |
+|---|---|---|---|---|
+| glm5.2 | 1.1 | 1.2 | 0.9 | 1.0 |
+| gpt-oss-120b | 1.6 | 1.2 | 1.0 | 1.0 |
+| mistral-small-4-119b | 1.1 | 1.2 | 1.1 | 1.1 |
+| qwen3.8-27b | 1.3 | 1.1 | 1.0 | 1.0 |
 
+
+## Native Pairing Ranking (model == skill)
+
+Diagonal cells only — each model using its own skill.
+
+| Model | Detection Score | Bugs Found | Judge Score |
+|-------|-----------------|------------|-------------|
+| qwen3.8-27b | 0.54 | 25/45 | 1.0/2 |
+| mistral-small-4-119b | 0.49 | 22/45 | 1.1/2 |
+| gpt-oss-120b | 0.41 | 19/45 | 1.2/2 |
+| glm5.2 | 0.22 | 11/45 | 1.2/2 |
 
 ## Best Pairing by Metric
 
-- **Best F1**: qwen3.8-27b on gpt-oss-120b (F1=0.55)
+- **Best Detection Score**: qwen3.8-27b on gpt-oss-120b (DS=0.55)
 
-- **Best Refusal Rate**: gpt-oss-120b on gpt-oss-120b *(native)* (R=0%)
-
-- **Best Judge Score**: glm5.2 on gpt-oss-120b (J=1.5/2)
+- **Best Judge Score**: glm5.2 on gpt-oss-120b (J=1.6/2)
 
 
 ---
@@ -103,28 +145,161 @@ Each cell shows: F1 score, Refusal rate, and mean Judge score (0–2 scale).
 
 Row means (per reviewing model across skills) and column means (per skill across models).
 
-**Best Model**: qwen3.8-27b (row-mean F1=0.54, judge=0.9, refusal=0%)
+**Best Model**: qwen3.8-27b (row-mean DS=0.54, judge=1.1)
 
-**Best Skill**: gpt-oss-120b (column-mean F1=0.42, judge=1.2, refusal=0%)
+**Best Skill**: gpt-oss-120b (column-mean DS=0.42, judge=1.2)
 
 
-### Model Rankings (by row-mean F1)
+### Model Rankings (by row-mean Detection Score)
 
-| Rank | Model | F1 | Judge Mean | Refusal Rate |
-|------|-------|----|------------|-------------|
-| 1 | qwen3.8-27b | 0.54 | 0.9 | 0% |
-| 2 | mistral-small-4-119b | 0.48 | 1.2 | 0% |
-| 3 | gpt-oss-120b | 0.37 | 1.1 | 0% |
-| 4 | glm5.2 | 0.23 | 1.2 | 0% |
+| Rank | Model | Detection Score | Judge Mean | Rarity Score |
+|------|-------|-----------------|------------|--------------|
+| 1 | qwen3.8-27b | 0.54 | 1.1 | 0.15 |
+| 2 | mistral-small-4-119b | 0.48 | 1.0 | 0.15 |
+| 3 | gpt-oss-120b | 0.37 | 1.1 | 0.15 |
+| 4 | glm5.2 | 0.23 | 1.3 | 0.09 |
 
-### Skill Rankings (by column-mean F1)
+### Skill Rankings (by column-mean Detection Score)
 
-| Rank | Skill | F1 | Judge Mean | Refusal Rate |
-|------|-------|----|------------|-------------|
-| 1 | gpt-oss-120b | 0.42 | 1.2 | 0% |
-| 2 | glm5.2 | 0.40 | 1.0 | 0% |
-| 3 | mistral-small-4-119b | 0.40 | 1.0 | 0% |
-| 4 | qwen3.8-27b | 0.39 | 1.1 | 0% |
+| Rank | Skill | Detection Score | Judge Mean | Rarity Score |
+|------|-------|-----------------|------------|--------------|
+| 1 | gpt-oss-120b | 0.42 | 1.2 | 0.15 |
+| 2 | glm5.2 | 0.40 | 1.1 | 0.15 |
+| 3 | mistral-small-4-119b | 0.40 | 1.1 | 0.15 |
+| 4 | qwen3.8-27b | 0.39 | 1.1 | 0.15 |
+
+---
+
+## Bug Discovery Ranking
+
+Ground-truth bugs: **45**
+
+### Bugs Found per Pairing (True Positives)
+
+| Model | Skill | Bugs Found (TP) | False Positives | Total Findings |
+|-------|-------|-----------------|-----------------|----------------|
+| qwen3.8-27b | qwen3.8-27b *(native)* | 25 | 23 | 48 |
+| qwen3.8-27b | gpt-oss-120b | 25 | 21 | 46 |
+| qwen3.8-27b | glm5.2 | 25 | 21 | 46 |
+| qwen3.8-27b | mistral-small-4-119b | 25 | 26 | 51 |
+| mistral-small-4-119b | mistral-small-4-119b *(native)* | 22 | 23 | 45 |
+| mistral-small-4-119b | gpt-oss-120b | 22 | 23 | 45 |
+| mistral-small-4-119b | glm5.2 | 22 | 23 | 45 |
+| mistral-small-4-119b | qwen3.8-27b | 21 | 24 | 45 |
+| gpt-oss-120b | gpt-oss-120b *(native)* | 19 | 29 | 48 |
+| gpt-oss-120b | glm5.2 | 19 | 43 | 62 |
+| gpt-oss-120b | qwen3.8-27b | 18 | 33 | 51 |
+| gpt-oss-120b | mistral-small-4-119b | 17 | 35 | 52 |
+| glm5.2 | glm5.2 *(native)* | 11 | 43 | 54 |
+| glm5.2 | gpt-oss-120b | 11 | 34 | 45 |
+| glm5.2 | mistral-small-4-119b | 11 | 34 | 45 |
+| glm5.2 | qwen3.8-27b | 9 | 40 | 49 |
+
+### Bugs Found per Model (union across all skills)
+
+| Model | Total Found | Coverage | Exclusive |
+|-------|-------------|----------|-----------|
+| gpt-oss-120b | 25 | 56% | 0 |
+| mistral-small-4-119b | 25 | 56% | 0 |
+| qwen3.8-27b | 25 | 56% | 0 |
+| glm5.2 | 17 | 38% | 0 |
+
+### Bugs Found per Skill (union across all models)
+
+| Skill | Total Found | Coverage | Exclusive |
+|-------|-------------|----------|-----------|
+| gpt-oss-120b | 25 | 56% | 0 |
+| glm5.2 | 25 | 56% | 0 |
+| mistral-small-4-119b | 25 | 56% | 0 |
+| qwen3.8-27b | 25 | 56% | 0 |
+
+### Bugs Found by Only One Model
+
+No bugs found by only one model — every discovered bug was found by at least two models.
+
+
+### Bugs Found by Severity (union across all pairings)
+
+| Severity | Total Bugs Found |
+|----------|------------------|
+| reject | 29 |
+| request-changes | 103 |
+| nitpick | 184 |
+
+### Severity Breakdown per Model
+
+| Model |reject|request-changes|nitpick| Total |
+|-------|------|------|------|-------|
+| glm5.2 | 3 | 15 | 25 | 43 |
+| gpt-oss-120b | 9 | 25 | 48 | 82 |
+| mistral-small-4-119b | 8 | 30 | 49 | 87 |
+| qwen3.8-27b | 9 | 33 | 62 | 104 |
+
+### Severity Breakdown per Skill
+
+| Skill |reject|request-changes|nitpick| Total |
+|-------|------|------|------|-------|
+| glm5.2 | 10 | 26 | 46 | 82 |
+| gpt-oss-120b | 5 | 28 | 46 | 79 |
+| mistral-small-4-119b | 7 | 24 | 49 | 80 |
+| qwen3.8-27b | 7 | 25 | 43 | 75 |
+
+### Severity Breakdown per Pairing
+
+Critical (`reject`) bug counts for each (model, skill) cell. Higher is better for critical-bug detection.
+
+| Model | Skill | reject | total |
+|-------|-------|--------|-------|
+| gpt-oss-120b | glm5.2 | 4 | 23 |
+| qwen3.8-27b | mistral-small-4-119b | 3 | 28 |
+| qwen3.8-27b *(native)* | qwen3.8-27b | 2 | 26 |
+| qwen3.8-27b | gpt-oss-120b | 2 | 25 |
+| qwen3.8-27b | glm5.2 | 2 | 25 |
+| mistral-small-4-119b *(native)* | mistral-small-4-119b | 2 | 22 |
+| mistral-small-4-119b | gpt-oss-120b | 2 | 22 |
+| mistral-small-4-119b | glm5.2 | 2 | 22 |
+| mistral-small-4-119b | qwen3.8-27b | 2 | 21 |
+| gpt-oss-120b | mistral-small-4-119b | 2 | 19 |
+| gpt-oss-120b | qwen3.8-27b | 2 | 19 |
+| glm5.2 *(native)* | glm5.2 | 2 | 12 |
+| gpt-oss-120b *(native)* | gpt-oss-120b | 1 | 21 |
+| glm5.2 | qwen3.8-27b | 1 | 9 |
+| glm5.2 | gpt-oss-120b | 0 | 11 |
+| glm5.2 | mistral-small-4-119b | 0 | 11 |
+
+### Bugs Found by Category (union across all pairings)
+
+| Category | Total Bugs Found |
+|----------|------------------|
+| correctness | 65 |
+| style | 57 |
+| error-handling | 42 |
+| abstraction | 38 |
+| api-stability | 30 |
+| memory-safety | 23 |
+| complexity | 21 |
+| documentation | 15 |
+| process | 10 |
+| concurrency | 8 |
+| performance | 7 |
+
+### Category Breakdown per Model
+
+| Model |abstraction|api-stability|complexity|concurrency|correctness|documentation|error-handling|memory-safety|performance|process|style| Total |
+|-------|------|------|------|------|------|------|------|------|------|------|------|-------|
+| glm5.2 | 4 | 4 | 1 | 0 | 7 | 4 | 10 | 1 | 0 | 0 | 12 | 43 |
+| gpt-oss-120b | 11 | 10 | 6 | 1 | 19 | 3 | 8 | 6 | 2 | 2 | 14 | 82 |
+| mistral-small-4-119b | 11 | 8 | 6 | 2 | 16 | 4 | 12 | 8 | 1 | 4 | 15 | 87 |
+| qwen3.8-27b | 12 | 8 | 8 | 5 | 23 | 4 | 12 | 8 | 4 | 4 | 16 | 104 |
+
+### Category Breakdown per Skill
+
+| Skill |abstraction|api-stability|complexity|concurrency|correctness|documentation|error-handling|memory-safety|performance|process|style| Total |
+|-------|------|------|------|------|------|------|------|------|------|------|------|-------|
+| glm5.2 | 8 | 7 | 6 | 1 | 19 | 4 | 11 | 6 | 3 | 2 | 15 | 82 |
+| gpt-oss-120b | 10 | 7 | 5 | 3 | 17 | 3 | 10 | 6 | 1 | 3 | 14 | 79 |
+| mistral-small-4-119b | 12 | 8 | 5 | 2 | 16 | 4 | 10 | 5 | 1 | 3 | 14 | 80 |
+| qwen3.8-27b | 8 | 8 | 5 | 2 | 13 | 4 | 11 | 6 | 2 | 2 | 14 | 75 |
 
 ---
 
@@ -218,6 +393,43 @@ No cross-only discoveries.
 
 ---
 
-*Generated from `data/eval_results.jsonl` (diagonal) and `data/eval_results_cross.jsonl` (cross).*
+## Consensus Analysis
 
-*Each model judges its own reviews (self-judge).*
+For each ground-truth bug, how many of the four reviewing models found it (union across all skills). Full consensus = 4/4.
+
+| Finders | Bugs Found | % of Ground Truth |
+|---------|-------------|--------------------|
+| 4/4 models | 17 | 38% |
+| 3/4 models | 8 | 18% |
+| 2/4 models | 0 | 0% |
+| 1/4 models | 0 | 0% |
+| 0/4 models (missed) | 20 | 44% |
+
+**17 bug(s) reached full consensus** — found by all four models. These represent the easiest-to-detect defects.
+
+**20 bug(s) missed by every model** — these may require skill refinement or represent subtle defects beyond current detection capability.
+
+
+---
+
+## Native Pairing Advantage
+
+For each model, compare its native skill (model == skill) against the mean of cross-skills (model != skill). Positive delta = native skill helps; negative = cross-skill helps. This measures native-skill advantage, not skill-on vs skill-off — for that comparison see `report/comparison.md`.
+
+| Model | Native DS | Cross-Skill Mean DS | Delta | Verdict |
+|-------|----------|---------------------|-------|---------|
+| glm5.2 | 0.22 | 0.23 | -0.00 | no difference |
+| gpt-oss-120b | 0.41 | 0.36 | +0.05 | native helps |
+| mistral-small-4-119b | 0.49 | 0.48 | +0.01 | no difference |
+| qwen3.8-27b | 0.54 | 0.54 | -0.00 | no difference |
+
+## Best Skill per Model
+
+For each model, the skill that produces the highest Detection Score. Since true-positive counts are model-driven while the skill mainly affects the false-positive rate, the recommended skill is the one that maximizes DS (i.e., minimizes false positives).
+
+| Model | Best Skill | DS | Recommendation |
+|-------|-----------|----|----------------|
+| glm5.2 | gpt-oss-120b | 0.24 | cross-skill `gpt-oss-120b` |
+| gpt-oss-120b | gpt-oss-120b | 0.41 | native skill |
+| mistral-small-4-119b | glm5.2 | 0.49 | cross-skill `glm5.2` |
+| qwen3.8-27b | glm5.2 | 0.55 | cross-skill `glm5.2` |

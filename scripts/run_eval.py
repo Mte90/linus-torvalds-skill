@@ -11,8 +11,9 @@ Usage:
   python3 scripts/run_eval.py --no-judge         # offline mode, zero scores
   python3 scripts/run_eval.py --models glm5.2    # run single model
   python3 scripts/run_eval.py --force            # regenerate all results
-  python3 scripts/run_eval.py --rescore-zeros    # re-judge poisoned records
-  python3 scripts/run_eval.py --parallel         # run models in parallel (max 2 workers)
+   python3 scripts/run_eval.py --rescore-zeros    # re-judge poisoned records
+   python3 scripts/run_eval.py --rescore-all --judge-model glm5.2  # re-judge all with fixed judge
+   python3 scripts/run_eval.py --parallel         # run models in parallel (max 2 workers)
 """
 
 from __future__ import annotations
@@ -815,6 +816,126 @@ def _rescore_zeros(
     print(f"  Still failing (judge_error): {still_failing}")
 
 
+def _rescore_all(
+    results_path: Path, diffs_path: Path, no_judge: bool, judge_model: str | None
+) -> None:
+    """Re-judge every finding in every record with a fixed judge model.
+
+    Unlike ``_rescore_zeros``, this forces a full re-judgment of all records,
+    not only those with zero scores or ``judge_error``. Use this to replace
+    self-judged scores with a fixed external judge (e.g., ``glm5.2``) for
+    cross-model fairness.
+
+    Args:
+        results_path: Path to eval results JSONL file
+        diffs_path: Path to eval diffs JSONL file
+        no_judge: If True, skip judging (offline mode)
+        judge_model: Model to use for judging (required for fairness)
+    """
+    if no_judge:
+        print("error: --rescore-all cannot be combined with --no-judge", file=sys.stderr)
+        sys.exit(2)
+    if not judge_model:
+        print(
+            "error: --rescore-all requires --judge-model (e.g., --judge-model glm5.2)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    diffs_by_id = {}
+    with open(diffs_path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    record = json.loads(line)
+                    diffs_by_id[record["id"]] = record
+                except json.JSONDecodeError:
+                    continue
+
+    results = []
+    with open(results_path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    results.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+
+    if not results:
+        print("No records to rescore.")
+        return
+
+    print(f"Re-judging {len(results)} records with judge={judge_model} ...", flush=True)
+    total_findings = sum(len(r.get("findings", [])) for r in results)
+
+    progress_lock = Lock()
+    progress_counter = {"done": 0, "errors": 0}
+
+    def _rescore_one(record: dict) -> tuple[dict, int, int]:
+        diff_id = record.get("diff_id")
+        diff_record = diffs_by_id.get(diff_id, {})
+        bugs = diff_record.get("bugs", [])
+        findings = record.get("findings", [])
+        err_count = 0
+
+        for finding in findings:
+            bug = match_finding_to_diff_bug(finding, bugs, diff_record.get("file", ""))
+            finding["diff_text"] = diff_record.get("diff", "")
+            new_scores = score_finding_with_judge(
+                finding, bug, judge_model, no_judge=False
+            )
+            finding["scores"] = new_scores
+            if new_scores.get("judge_error"):
+                err_count += 1
+
+            with progress_lock:
+                progress_counter["done"] += 1
+                if progress_counter["done"] % 25 == 0:
+                    print(
+                        f"  progress: {progress_counter['done']}/{total_findings} findings",
+                        flush=True,
+                    )
+
+        rescored = [f.get("scores", {}) for f in findings]
+        if rescored:
+            record["scores"] = {
+                k: sum(s.get(k, 0) for s in rescored) / len(rescored)
+                for k in (
+                    "accuracy",
+                    "prioritization",
+                    "justification",
+                    "actionability",
+                )
+            }
+        record["judge_model"] = judge_model
+
+        return record, len(findings), err_count
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(_rescore_one, r): i for i, r in enumerate(results)}
+        for future in as_completed(futures):
+            idx = futures[future]
+            rescored_record, _, err_count = future.result()
+            results[idx] = rescored_record
+            with progress_lock:
+                progress_counter["errors"] += err_count
+
+    findings_rescored = progress_counter["done"]
+    still_failing = progress_counter["errors"]
+
+    tmp_path = results_path.with_suffix(".tmp")
+    tmp_path.write_text("\n".join(json.dumps(r) for r in results) + "\n")
+    tmp_path.replace(results_path)
+
+    print()
+    print("Rescore-all complete:")
+    print(f"  Records re-judged: {len(results)}")
+    print(f"  Findings re-judged: {findings_rescored}")
+    print(f"  Still failing (judge_error): {still_failing}")
+
+
 def _run_pair(
     model: str,
     skill_model: str,
@@ -905,8 +1026,9 @@ Examples:
   python3 scripts/run_eval.py --no-judge         # offline mode, zero scores
   python3 scripts/run_eval.py --models glm5.2    # run single model
   python3 scripts/run_eval.py --force            # regenerate all results
-  python3 scripts/run_eval.py --rescore-zeros    # re-judge poisoned records
-  python3 scripts/run_eval.py --parallel         # run models in parallel (max 2 workers)
+   python3 scripts/run_eval.py --rescore-zeros    # re-judge poisoned records
+   python3 scripts/run_eval.py --rescore-all --judge-model glm5.2  # re-judge all with fixed judge
+   python3 scripts/run_eval.py --parallel         # run models in parallel (max 2 workers)
 """,
     )
     parser.add_argument(
@@ -933,8 +1055,12 @@ Examples:
     parser.add_argument(
         "--out",
         type=str,
-        default=str(EVAL_OUTPUT),
-        help=f"Path to output results JSONL file. Default: {EVAL_OUTPUT}",
+        default=None,
+        help=(
+            "Path to output results JSONL file. Default: "
+            "data/eval_results.jsonl (diagonal) or "
+            "data/eval_results_cross.jsonl (--cross)."
+        ),
     )
     parser.add_argument(
         "--no-judge",
@@ -968,11 +1094,26 @@ Examples:
         help="Re-judge findings with all-zero scores or judge_error (no model re-run).",
     )
     parser.add_argument(
+        "--rescore-all",
+        action="store_true",
+        help=(
+            "Re-judge ALL findings with a fixed judge model (requires --judge-model). "
+            "Use to replace self-judged scores with an external judge for cross-model fairness."
+        ),
+    )
+    parser.add_argument(
         "--parallel",
         action="store_true",
         help="Run (model, skill) pairs in parallel with max 2 workers (default: sequential).",
     )
     args = parser.parse_args()
+
+    # Resolve default output path based on --cross flag
+    if args.out is None:
+        if args.cross:
+            args.out = str(ROOT / "data" / "eval_results_cross.jsonl")
+        else:
+            args.out = str(EVAL_OUTPUT)
 
     # Load eval diffs
     eval_path = Path(args.eval)
@@ -1003,6 +1144,11 @@ Examples:
     # --rescore-zeros: re-judge poisoned records
     if args.rescore_zeros:
         _rescore_zeros(Path(args.out), Path(args.eval), args.no_judge, args.judge_model)
+        sys.exit(0)
+
+    # --rescore-all: re-judge every record with a fixed external judge
+    if args.rescore_all:
+        _rescore_all(Path(args.out), Path(args.eval), args.no_judge, args.judge_model)
         sys.exit(0)
 
     # Determine pairings to run

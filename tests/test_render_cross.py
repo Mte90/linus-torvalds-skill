@@ -443,8 +443,8 @@ class TestRenderMarkdown:
         out_path = tmp_path / "test_matrix.md"
         render_markdown(cell_data, all_models, diff_records, out_path)
         content = out_path.read_text()
-        assert "F1=0.69" in content
-        assert "R=10%" in content
+        assert "DS=0.69" in content
+        assert "R=10%" not in content
         assert "J=1.6/2" in content
         assert "*(native)*" in content
 
