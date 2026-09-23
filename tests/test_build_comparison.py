@@ -247,7 +247,7 @@ def test_compute_benchmark_metrics_all_hits():
 
     assert metrics["precision"] == 1.0
     assert metrics["recall"] == 1.0
-    assert metrics["f1"] == 1.0
+    assert metrics["ds"] == 1.0
     assert len(metrics["hits"]) == 2
     assert len(metrics["misses"]) == 0
 
@@ -266,7 +266,7 @@ def test_compute_benchmark_metrics_no_hits():
 
     assert metrics["precision"] == 0.0
     assert metrics["recall"] == 0.0
-    assert metrics["f1"] == 0.0
+    assert metrics["ds"] == 0.0
     assert len(metrics["hits"]) == 0
     assert len(metrics["misses"]) == 1
     assert metrics["misses"][0] == "SC-001"
@@ -291,8 +291,8 @@ def test_compute_benchmark_metrics_partial_hits():
     assert metrics["precision"] == 0.5
     # Recall: 1 hit / 3 benchmark = 0.333...
     assert abs(metrics["recall"] - 1 / 3) < 0.01
-    # F1: 2 * 0.5 * 0.333 / (0.5 + 0.333) ≈ 0.4
-    assert abs(metrics["f1"] - 0.4) < 0.01
+    # DS: 2 * 0.5 * 0.333 / (0.5 + 0.333) ≈ 0.4
+    assert abs(metrics["ds"] - 0.4) < 0.01
     assert len(metrics["hits"]) == 1
     assert len(metrics["misses"]) == 2
 
@@ -307,7 +307,7 @@ def test_compute_benchmark_metrics_empty_findings():
 
     assert metrics["precision"] == 0.0
     assert metrics["recall"] == 0.0
-    assert metrics["f1"] == 0.0
+    assert metrics["ds"] == 0.0
     assert len(metrics["hits"]) == 0
     assert len(metrics["misses"]) == 1
 
@@ -322,7 +322,7 @@ def test_compute_benchmark_metrics_empty_benchmark():
 
     assert metrics["precision"] == 0.0
     assert metrics["recall"] == 0.0
-    assert metrics["f1"] == 0.0
+    assert metrics["ds"] == 0.0
     assert len(metrics["hits"]) == 0
     assert len(metrics["misses"]) == 0
 

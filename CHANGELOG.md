@@ -2,6 +2,20 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-09-23
+
+- **Unified evaluation metrics:** `report/build_comparison.py` now uses the shared matcher (`torvalds_skill.matching`: file basename + aliases, line ±5) instead of its four local matchers, and computes recall over all 45 diff scenarios (hits/45) instead of the 25 buggy-diff subset — findings on clean/refusal scenarios now count as false positives, matching `render_cross.py`. `misses` now lists only unmatched buggy diffs. The former ~0.15 Generalization-vs-DS gap disappears; the metric is `ds` end to end.
+- **DS rename (comparison side):** All "F1" labels, keys, docstrings, and comments in `report/build_comparison.py` and `report/comparison_render.py` renamed to "Detection Score"/`ds`, completing the codebase-wide rename. Comparison tables now reference the same matcher and denominator as `report/cross_matrix.md`, and the Generalization section cross-references it explicitly.
+- **Report layout:** SmallChat baseline section renamed to "SmallChat Benchmark" to distinguish it from the diff-based Generalization section; scorecard gained a one-line verdict-logic explanation.
+- **Cross-matrix readability:** `render_cross.py` gained a plain-language paragraph in the Verdict (model drives detection, skill moves precision), intro lines under Metrics Glossary, Precision/Recall, Best Pairing by Metric, and Bug Discovery Ranking, and the four judge sub-score matrices moved to a `## Judge Score Detail` appendix at the end. Fixed broken table-header spacing in the Precision/Recall matrices (`| Skill \\ Model |glm5.2 |` → `| Skill \\ Model | glm5.2 |`).
+- **Verdict note accuracy:** `comparison_render.py` scorecard note rewritten to describe the actual semantics (net gain of critical findings decides the verdict; ties mean no change) instead of the misleading "requires no baseline-only regression" wording.
+- **Regenerated** `report/cross_matrix.md` (via `python3 -B scripts/render_cross.py`) and `report/comparison.md` (via `PYTHONPATH=src python3 report/build_comparison.py`). Suite: 1129 passed; ruff + format clean.
+- **Cross-matrix readability:** `render_cross.py` gained a plain-language paragraph in the Verdict (model drives detection, skill moves precision), intro lines under Metrics Glossary, Precision/Recall, Best Pairing by Metric, and Bug Discovery Ranking, and the four judge sub-score matrices moved to a `## Judge Score Detail` appendix at the end. Fixed broken table-header spacing in the Precision/Recall matrices (`| Skill \\ Model |glm5.2 |` → `| Skill \\ Model | glm5.2 |`).
+- **Verdict note accuracy:** `comparison_render.py` scorecard note rewritten to describe the actual semantics (net gain of critical findings decides the verdict; ties mean no change) instead of the misleading "requires no baseline-only regression" wording.
+- **Regenerated** `report/cross_matrix.md` (via `python3 -B scripts/render_cross.py`) and `report/comparison.md` (via `PYTHONPATH=src python3 report/build_comparison.py`). Suite: 1129 passed; ruff + format clean.
+- **Tests:** Exclusion-semantics test updated to the new denominator (clean-scenario records contribute no false positives; recall counts all scenarios); assertions moved to `metrics["ds"]`. Suite: 1129 passed; ruff + format clean.
+- **Regenerated** `report/comparison.md` via `PYTHONPATH=src python3 report/build_comparison.py`.
+
 ## 2026-09-18
 
 - **Cross eval (`run_eval.py`):** Added `--skills` flag (filter skill-source models in `--cross` mode, symmetric to `--models`; enables ordered stage runs, e.g. finishing with a chosen pair last). Full 12-cell cross matrix reached 540/540; cross file deduped 543→540 (duplicate keys kept last); 7 missing diagonal records filled (glm5.2×4, qwen×3).

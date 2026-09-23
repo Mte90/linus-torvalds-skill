@@ -42,6 +42,7 @@ if str(_REPORT) not in sys.path:
 from llm_review import _WallClockTimeout, call_llm  # noqa: E402
 
 from torvalds_skill import config as project_config  # noqa: E402
+from torvalds_skill.matching import match_finding_to_bug  # noqa: E402
 from torvalds_skill.profiles import get_profile  # noqa: E402
 
 # Configuration
@@ -198,39 +199,12 @@ Write your review to stdout.
 
 
 def match_finding_to_diff_bug(finding: dict, bugs: list[dict], diff_file: str = "") -> dict | None:
-    """Match a finding to a ground-truth bug using file and line-number tolerance.
+    """Match a finding to a ground-truth bug (same basename or alias, line ±5).
 
-    Bugs inherit their file from the parent diff record (they carry only
-    line/category/severity/description), so the caller passes the diff's file.
-
-    Args:
-        finding: Finding dict with 'file' and 'line' keys
-        bugs: List of bug dicts with 'line' keys
-        diff_file: File path from the parent diff record
-
-    Returns:
-        Matching bug dict if found (same file, line ±5 tolerance), None otherwise
+    Single implementation lives in torvalds_skill.matching, shared with the
+    comparison report pipeline.
     """
-    finding_file = finding.get("file", "")
-    finding_line = finding.get("line")
-
-    if finding_line is None or not finding_file or not diff_file:
-        return None
-
-    if finding_file.split("/")[-1].lower() != diff_file.split("/")[-1].lower():
-        return None
-
-    for bug in bugs:
-        bug_line = bug.get("line")
-
-        if bug_line is None:
-            continue
-
-        # Same file (checked above) and line within tolerance
-        if abs(finding_line - bug_line) <= 5:
-            return bug
-
-    return None
+    return match_finding_to_bug(finding, bugs, diff_file)
 
 
 def _extract_json_from_content(content: str) -> dict | None:
@@ -883,9 +857,7 @@ def _rescore_all(
         for finding in findings:
             bug = match_finding_to_diff_bug(finding, bugs, diff_record.get("file", ""))
             finding["diff_text"] = diff_record.get("diff", "")
-            new_scores = score_finding_with_judge(
-                finding, bug, judge_model, no_judge=False
-            )
+            new_scores = score_finding_with_judge(finding, bug, judge_model, no_judge=False)
             finding["scores"] = new_scores
             if new_scores.get("judge_error"):
                 err_count += 1

@@ -109,12 +109,12 @@ class TestComputeCellMetrics:
         metrics = compute_cell_metrics([], diff_records)
         assert metrics["precision"] == 0.0
         assert metrics["recall"] == 0.0
-        assert metrics["f1"] == 0.0
+        assert metrics["ds"] == 0.0
         assert metrics["refusal_rate"] == 0.0
         assert metrics["judge_mean"] == 0.0
         assert metrics["total_results"] == 0
 
-    def test_perfect_findings_precision_recall_f1_one(self):
+    def test_perfect_findings_precision_recall_ds_one(self):
         diff_records = [
             {"id": "DIFF-001", "file": "server.c", "bugs": [{"line": 100}]},
             {"id": "DIFF-002", "file": "server.c", "bugs": [{"line": 200}]},
@@ -148,7 +148,7 @@ class TestComputeCellMetrics:
         metrics = compute_cell_metrics(results, diff_records)
         assert metrics["precision"] == 1.0
         assert metrics["recall"] == 1.0
-        assert metrics["f1"] == 1.0
+        assert metrics["ds"] == 1.0
         assert len(metrics["hits"]) == 2
         assert len(metrics["misses"]) == 0
 
@@ -249,33 +249,33 @@ class TestComputeMarginalMeans:
 
     def test_row_and_column_means_computed_correctly(self):
         cell_data = {
-            ("m1", "s1"): {"f1": 0.8, "judge_mean": 1.5, "refusal_rate": 0.1, "total_results": 10},
-            ("m1", "s2"): {"f1": 0.6, "judge_mean": 1.2, "refusal_rate": 0.2, "total_results": 10},
-            ("m2", "s1"): {"f1": 0.7, "judge_mean": 1.4, "refusal_rate": 0.15, "total_results": 10},
-            ("m2", "s2"): {"f1": 0.9, "judge_mean": 1.6, "refusal_rate": 0.05, "total_results": 10},
+            ("m1", "s1"): {"ds": 0.8, "judge_mean": 1.5, "refusal_rate": 0.1, "total_results": 10},
+            ("m1", "s2"): {"ds": 0.6, "judge_mean": 1.2, "refusal_rate": 0.2, "total_results": 10},
+            ("m2", "s1"): {"ds": 0.7, "judge_mean": 1.4, "refusal_rate": 0.15, "total_results": 10},
+            ("m2", "s2"): {"ds": 0.9, "judge_mean": 1.6, "refusal_rate": 0.05, "total_results": 10},
         }
         all_models = ["m1", "m2"]
 
         model_means, skill_means = compute_marginal_means(cell_data, all_models)
 
         # Model m1: (0.8 + 0.6) / 2 = 0.7
-        assert model_means["m1"]["f1"] == 0.7
+        assert model_means["m1"]["ds"] == 0.7
         # Model m2: (0.7 + 0.9) / 2 = 0.8
-        assert model_means["m2"]["f1"] == 0.8
+        assert model_means["m2"]["ds"] == 0.8
         # Skill s1: (0.8 + 0.7) / 2 = 0.75
-        assert skill_means["s1"]["f1"] == 0.75
+        assert skill_means["s1"]["ds"] == 0.75
         # Skill s2: (0.6 + 0.9) / 2 = 0.75
-        assert skill_means["s2"]["f1"] == 0.75
+        assert skill_means["s2"]["ds"] == 0.75
 
 
 class TestRankByVerdict:
     """Tests for rank_by_verdict function."""
 
-    def test_rank_by_f1_desc_then_judge_desc_then_refusal_asc(self):
+    def test_rank_by_ds_desc_then_judge_desc_then_refusal_asc(self):
         means = {
-            "m1": {"f1": 0.8, "judge_mean": 1.5, "refusal_rate": 0.1},
-            "m2": {"f1": 0.9, "judge_mean": 1.4, "refusal_rate": 0.2},
-            "m3": {"f1": 0.9, "judge_mean": 1.6, "refusal_rate": 0.15},
+            "m1": {"ds": 0.8, "judge_mean": 1.5, "refusal_rate": 0.1},
+            "m2": {"ds": 0.9, "judge_mean": 1.4, "refusal_rate": 0.2},
+            "m3": {"ds": 0.9, "judge_mean": 1.6, "refusal_rate": 0.15},
         }
         ranked = rank_by_verdict(means)
         # m3 should be first (F1=0.9, judge=1.6 is highest tiebreak)
@@ -285,10 +285,10 @@ class TestRankByVerdict:
         assert ranked[1][0] == "m2"
         assert ranked[2][0] == "m1"
 
-    def test_tiebreak_by_refusal_when_f1_and_judge_equal(self):
+    def test_tiebreak_by_refusal_when_ds_and_judge_equal(self):
         means = {
-            "m1": {"f1": 0.8, "judge_mean": 1.5, "refusal_rate": 0.2},
-            "m2": {"f1": 0.8, "judge_mean": 1.5, "refusal_rate": 0.1},
+            "m1": {"ds": 0.8, "judge_mean": 1.5, "refusal_rate": 0.2},
+            "m2": {"ds": 0.8, "judge_mean": 1.5, "refusal_rate": 0.1},
         }
         ranked = rank_by_verdict(means)
         # m2 should be first (lower refusal)
@@ -426,7 +426,7 @@ class TestRenderMarkdown:
             ("gpt-oss-120b", "gpt-oss-120b"): {
                 "precision": 0.8,
                 "recall": 0.6,
-                "f1": 0.69,
+                "ds": 0.69,
                 "refusal_rate": 0.1,
                 "judge_accuracy": 1.8,
                 "judge_prioritization": 1.5,
@@ -450,10 +450,10 @@ class TestRenderMarkdown:
 
     def test_marginal_analysis_verdict_shows_winners(self, tmp_path):
         cell_data = {
-            ("m1", "s1"): {"f1": 0.9, "refusal_rate": 0.1, "judge_mean": 1.8, "total_results": 10},
-            ("m1", "s2"): {"f1": 0.7, "refusal_rate": 0.2, "judge_mean": 1.5, "total_results": 10},
-            ("m2", "s1"): {"f1": 0.8, "refusal_rate": 0.15, "judge_mean": 1.6, "total_results": 10},
-            ("m2", "s2"): {"f1": 0.6, "refusal_rate": 0.25, "judge_mean": 1.4, "total_results": 10},
+            ("m1", "s1"): {"ds": 0.9, "refusal_rate": 0.1, "judge_mean": 1.8, "total_results": 10},
+            ("m1", "s2"): {"ds": 0.7, "refusal_rate": 0.2, "judge_mean": 1.5, "total_results": 10},
+            ("m2", "s1"): {"ds": 0.8, "refusal_rate": 0.15, "judge_mean": 1.6, "total_results": 10},
+            ("m2", "s2"): {"ds": 0.6, "refusal_rate": 0.25, "judge_mean": 1.4, "total_results": 10},
         }
         all_models = ["m1", "m2"]
         diff_records = []
@@ -486,10 +486,10 @@ class TestIntegration:
         """Test exact expected winners on a tiny 2×2 grid."""
         # Create synthetic data where m1 wins on F1, s2 wins on F1
         cell_data = {
-            ("m1", "s1"): {"f1": 0.8, "refusal_rate": 0.1, "judge_mean": 1.5, "total_results": 10},
-            ("m1", "s2"): {"f1": 0.9, "refusal_rate": 0.1, "judge_mean": 1.6, "total_results": 10},
-            ("m2", "s1"): {"f1": 0.5, "refusal_rate": 0.3, "judge_mean": 1.2, "total_results": 10},
-            ("m2", "s2"): {"f1": 0.7, "refusal_rate": 0.2, "judge_mean": 1.4, "total_results": 10},
+            ("m1", "s1"): {"ds": 0.8, "refusal_rate": 0.1, "judge_mean": 1.5, "total_results": 10},
+            ("m1", "s2"): {"ds": 0.9, "refusal_rate": 0.1, "judge_mean": 1.6, "total_results": 10},
+            ("m2", "s1"): {"ds": 0.5, "refusal_rate": 0.3, "judge_mean": 1.2, "total_results": 10},
+            ("m2", "s2"): {"ds": 0.7, "refusal_rate": 0.2, "judge_mean": 1.4, "total_results": 10},
         }
         all_models = ["m1", "m2"]
 

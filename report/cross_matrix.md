@@ -6,7 +6,7 @@ Diagonal data from `data/eval_results.jsonl`, cross-data from `data/eval_results
 
 ## Verdict
 
-**Best pairing**: `qwen3.8-27b` reviewing with `qwen3.8-27b` skill found **25 bugs** out of 45 ground-truth bugs.
+**Best pairing**: `qwen3.8-27b` reviewing with `qwen3.8-27b` skill found **25 bugs** across 45 diff scenarios.
 
 **Best Detection Score**: `qwen3.8-27b` on `gpt-oss-120b` (DS=0.55).
 
@@ -26,15 +26,19 @@ Diagonal data from `data/eval_results.jsonl`, cross-data from `data/eval_results
 
 See `report/comparison.md` for the baseline-vs-skill analysis (whether adding any skill helps or hurts each model).
 
+In plain terms: the reviewing model — not the attached skill — drives how many bugs are found. Swapping skills rarely changes a model's true-positive count; the skill mainly affects precision (false positives), which is what moves the Detection Score. Start from the Overview Matrix, then use the ranking tables for specifics.
+
 
 
 ## Metrics Glossary
+
+Definitions of every metric used in this report. Read this before the matrices.
 
 - **Detection Score (DS)**: Harmonic mean of precision and recall. Measures how well findings balance correctness (precision) against completeness (recall). Range 0–1; higher is better.
 
 - **Precision**: Of all findings reported, the fraction that matched a ground-truth bug. Low precision means many false positives.
 
-- **Recall**: Of all ground-truth bugs, the fraction that were found. Low recall means missed bugs.
+- **Recall**: Matched findings divided by the number of diff scenarios (buggy and clean). Low recall means missed bugs.
 
 - **Refusal Rate (R)**: Fraction of diffs where the model refused to review. In this dataset R=0 for all pairings, so it is omitted from the tables.
 
@@ -63,7 +67,9 @@ Each cell shows: Detection Score (DS), and mean Judge score (0–2 scale).
 
 ## Precision Matrix
 
-| Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
+Rows = skill applied, columns = reviewing model. Fraction of reported findings that matched a real bug — higher is better; low values flag noisy reviewers.
+
+| Skill \\ Model | glm5.2 | gpt-oss-120b | mistral-small-4-119b | qwen3.8-27b |
 |---|---|---|---|---|
 | glm5.2 | 0.20 | 0.31 | 0.49 | 0.54 |
 | gpt-oss-120b | 0.24 | 0.40 | 0.49 | 0.54 |
@@ -73,52 +79,14 @@ Each cell shows: Detection Score (DS), and mean Judge score (0–2 scale).
 
 ## Recall Matrix
 
-| Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
+Rows = skill applied, columns = reviewing model. Matched findings per diff scenario (buggy and clean) — higher is better.
+
+| Skill \\ Model | glm5.2 | gpt-oss-120b | mistral-small-4-119b | qwen3.8-27b |
 |---|---|---|---|---|
 | glm5.2 | 0.24 | 0.42 | 0.49 | 0.56 |
 | gpt-oss-120b | 0.24 | 0.42 | 0.49 | 0.56 |
 | mistral-small-4-119b | 0.24 | 0.38 | 0.49 | 0.56 |
 | qwen3.8-27b | 0.20 | 0.40 | 0.47 | 0.56 |
-
-
-## Judge Accuracy Matrix
-
-| Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|---|
-| glm5.2 | 1.3 | 1.1 | 1.0 | 1.2 |
-| gpt-oss-120b | 1.7 | 1.3 | 1.2 | 1.2 |
-| mistral-small-4-119b | 1.3 | 1.3 | 1.2 | 1.2 |
-| qwen3.8-27b | 1.3 | 1.2 | 1.2 | 1.2 |
-
-
-## Judge Prioritization Matrix
-
-| Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|---|
-| glm5.2 | 1.1 | 1.0 | 0.9 | 1.0 |
-| gpt-oss-120b | 1.2 | 1.0 | 0.9 | 0.9 |
-| mistral-small-4-119b | 1.0 | 1.1 | 1.0 | 0.9 |
-| qwen3.8-27b | 1.0 | 1.0 | 1.0 | 1.0 |
-
-
-## Judge Justification Matrix
-
-| Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|---|
-| glm5.2 | 1.2 | 1.2 | 0.9 | 1.1 |
-| gpt-oss-120b | 1.7 | 1.3 | 1.1 | 1.1 |
-| mistral-small-4-119b | 1.2 | 1.3 | 1.2 | 1.1 |
-| qwen3.8-27b | 1.3 | 1.2 | 1.1 | 1.0 |
-
-
-## Judge Actionability Matrix
-
-| Skill \\ Model |glm5.2 |gpt-oss-120b |mistral-small-4-119b |qwen3.8-27b |
-|---|---|---|---|---|
-| glm5.2 | 1.1 | 1.2 | 0.9 | 1.0 |
-| gpt-oss-120b | 1.6 | 1.2 | 1.0 | 1.0 |
-| mistral-small-4-119b | 1.1 | 1.2 | 1.1 | 1.1 |
-| qwen3.8-27b | 1.3 | 1.1 | 1.0 | 1.0 |
 
 
 ## Native Pairing Ranking (model == skill)
@@ -133,6 +101,8 @@ Diagonal cells only — each model using its own skill.
 | glm5.2 | 0.22 | 11/45 | 1.2/2 |
 
 ## Best Pairing by Metric
+
+The single best pairing for each headline metric.
 
 - **Best Detection Score**: qwen3.8-27b on gpt-oss-120b (DS=0.55)
 
@@ -171,6 +141,8 @@ Row means (per reviewing model across skills) and column means (per skill across
 ---
 
 ## Bug Discovery Ranking
+
+How many ground-truth bugs each pairing, model, and skill actually found, broken down by severity and category. Raw counts — no precision penalty.
 
 Ground-truth bugs: **45**
 
@@ -433,3 +405,50 @@ For each model, the skill that produces the highest Detection Score. Since true-
 | gpt-oss-120b | gpt-oss-120b | 0.41 | native skill |
 | mistral-small-4-119b | glm5.2 | 0.49 | cross-skill `glm5.2` |
 | qwen3.8-27b | glm5.2 | 0.55 | cross-skill `glm5.2` |
+
+
+---
+
+## Judge Score Detail
+
+The four sub-scores below feed the Judge Score (J) shown in the matrices above. Each is the mean over evaluated diffs on a 0–2 scale, scored by the judge model; values vary little across pairings, so they are shown as appendix detail.
+
+### Judge Accuracy Matrix
+
+| Skill \\ Model | glm5.2 | gpt-oss-120b | mistral-small-4-119b | qwen3.8-27b |
+|---|---|---|---|---|
+| glm5.2 | 1.3 | 1.1 | 1.0 | 1.2 |
+| gpt-oss-120b | 1.7 | 1.3 | 1.2 | 1.2 |
+| mistral-small-4-119b | 1.3 | 1.3 | 1.2 | 1.2 |
+| qwen3.8-27b | 1.3 | 1.2 | 1.2 | 1.2 |
+
+
+### Judge Prioritization Matrix
+
+| Skill \\ Model | glm5.2 | gpt-oss-120b | mistral-small-4-119b | qwen3.8-27b |
+|---|---|---|---|---|
+| glm5.2 | 1.1 | 1.0 | 0.9 | 1.0 |
+| gpt-oss-120b | 1.2 | 1.0 | 0.9 | 0.9 |
+| mistral-small-4-119b | 1.0 | 1.1 | 1.0 | 0.9 |
+| qwen3.8-27b | 1.0 | 1.0 | 1.0 | 1.0 |
+
+
+### Judge Justification Matrix
+
+| Skill \\ Model | glm5.2 | gpt-oss-120b | mistral-small-4-119b | qwen3.8-27b |
+|---|---|---|---|---|
+| glm5.2 | 1.2 | 1.2 | 0.9 | 1.1 |
+| gpt-oss-120b | 1.7 | 1.3 | 1.1 | 1.1 |
+| mistral-small-4-119b | 1.2 | 1.3 | 1.2 | 1.1 |
+| qwen3.8-27b | 1.3 | 1.2 | 1.1 | 1.0 |
+
+
+### Judge Actionability Matrix
+
+| Skill \\ Model | glm5.2 | gpt-oss-120b | mistral-small-4-119b | qwen3.8-27b |
+|---|---|---|---|---|
+| glm5.2 | 1.1 | 1.2 | 0.9 | 1.0 |
+| gpt-oss-120b | 1.6 | 1.2 | 1.0 | 1.0 |
+| mistral-small-4-119b | 1.1 | 1.2 | 1.1 | 1.1 |
+| qwen3.8-27b | 1.3 | 1.1 | 1.0 | 1.0 |
+

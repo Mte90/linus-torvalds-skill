@@ -80,6 +80,14 @@ def generate_scorecard(models_data: list[dict]) -> str:
         lines.append(f"| {model} | {total} | {critical} | {skill_only} | {verdict} |")
 
     lines.append("")
+    lines.append(
+        "How to read the Verdict column: 'Skill-Only Critical' counts critical bugs a model "
+        "found only when using the skill; 'Baseline-Only Critical' counts critical bugs found "
+        "only without it. 'Skill adds value' means a net gain of critical findings with the "
+        "skill; 'Skill reduces coverage' means a net loss; 'No change' means the model finds "
+        "the same criticals either way."
+    )
+    lines.append("")
 
     # Generate summary sentence
     # Find model with most skill-only criticals
@@ -857,10 +865,11 @@ def generate_markdown(
     if benchmark_records is not None and benchmark_metrics:
         lines.append("---")
         lines.append("")
-        lines.append("## Ground-Truth Benchmark")
+        lines.append("## SmallChat Benchmark")
         lines.append("")
         lines.append(
-            f"Comparison against the ground-truth benchmark dataset ({len(benchmark_records)} records in `data/benchmark.jsonl`)."
+            f"Skill impact on the curated SmallChat dataset ({len(benchmark_records)} records in `data/benchmark.jsonl`) — "
+            "separate ground truth from the 45-scenario generalization set below."
         )
         lines.append("")
         lines.append(
@@ -871,7 +880,7 @@ def generate_markdown(
         # Per-model benchmark metrics table
         lines.append("### Per-Model Benchmark Metrics")
         lines.append("")
-        lines.append("| Model | Precision | Recall | F1 | Hits | Misses | Severity Match Rate |")
+        lines.append("| Model | Precision | Recall | DS | Hits | Misses | Severity Match Rate |")
         lines.append("|-------|-----------|--------|------|------|--------|---------------------|")
 
         for model_name in model_names:
@@ -881,13 +890,13 @@ def generate_markdown(
 
             precision = metrics.get("precision", 0.0)
             recall = metrics.get("recall", 0.0)
-            f1 = metrics.get("f1", 0.0)
+            ds = metrics.get("ds", 0.0)
             hits = len(metrics.get("hits", []))
             misses = len(metrics.get("misses", []))
             severity_match = metrics.get("severity_match_rate", 0.0)
 
             lines.append(
-                f"| {model_name} | {precision:.1%} | {recall:.1%} | {f1:.1%} | {hits} | {misses} | {severity_match:.1%} |"
+                f"| {model_name} | {precision:.1%} | {recall:.1%} | {ds:.1%} | {hits} | {misses} | {severity_match:.1%} |"
             )
 
         lines.append("")
@@ -906,16 +915,18 @@ def generate_markdown(
         lines.append("## Generalization (Diff-Based)")
         lines.append("")
         lines.append(
-            f"Evaluation against ground-truth diffs ({len([r for r in diff_eval_metrics.values() if r.get('total_benchmark', 0) > 0])} models with benchmark data)."
+            f"Evaluation against ground-truth diffs ({len([r for r in diff_eval_metrics.values() if r.get('total_benchmark', 0) > 0])} models with benchmark data). "
+            "Same 45-scenario dataset and matching as `report/cross_matrix.md`."
         )
         lines.append("")
         lines.append(
-            "Metrics computed by matching model findings to benchmark bugs by file and line number (±5 lines tolerance). "
-            "Only records with expected='findings' count for precision/recall/F1."
+            "Metrics computed by matching model findings to benchmark bugs (file basename + line ±5). "
+            "All scenarios count: recall = hits / total scenarios; findings on clean or refusal "
+            "scenarios count as false positives. DS = harmonic mean of precision and recall."
         )
         lines.append("")
         lines.append(
-            "| Model | Precision | Recall | F1 | Accuracy | Prioritization | Justification | Actionability | Overall |"
+            "| Model | Precision | Recall | DS | Accuracy | Prioritization | Justification | Actionability | Overall |"
         )
         lines.append(
             "|-------|-----------|--------|------|----------|----------------|---------------|---------------|---------|"
@@ -929,7 +940,7 @@ def generate_markdown(
 
             precision = metrics.get("precision", 0.0)
             recall = metrics.get("recall", 0.0)
-            f1 = metrics.get("f1", 0.0)
+            ds = metrics.get("ds", 0.0)
             # Judge axes use a 0-2 scale; normalize to 0-1 for percent display
             accuracy = metrics.get("avg_accuracy", 0.0) / 2.0
             prioritization = metrics.get("avg_prioritization", 0.0) / 2.0
@@ -938,7 +949,7 @@ def generate_markdown(
             overall = metrics.get("overall_score", 0.0) / 2.0
 
             lines.append(
-                f"| {model_name} | {precision:.1%} | {recall:.1%} | {f1:.1%} | {accuracy:.1%} | {prioritization:.1%} | {justification:.1%} | {actionability:.1%} | {overall:.1%} |"
+                f"| {model_name} | {precision:.1%} | {recall:.1%} | {ds:.1%} | {accuracy:.1%} | {prioritization:.1%} | {justification:.1%} | {actionability:.1%} | {overall:.1%} |"
             )
 
         lines.append("")

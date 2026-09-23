@@ -21,11 +21,12 @@ MODELS = ["gpt-oss-120b", "mistral-small-4-119b", "glm5.2", "qwen3.8-27b"]
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Import match function from run_eval (sibling script)
-_RUN_EVAL = Path(__file__).resolve().parent
-if str(_RUN_EVAL) not in sys.path:
-    sys.path.insert(0, str(_RUN_EVAL))
-from run_eval import match_finding_to_diff_bug as run_eval_match_finding_to_diff_bug  # noqa: E402
+# Import shared matcher + severity vocabulary from the src/ package
+_SRC = Path(__file__).resolve().parent.parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+from torvalds_skill.matching import match_finding_to_bug  # noqa: E402
+from torvalds_skill.severity import GROUND_TRUTH_SEVERITIES as SEVERITY_ORDER  # noqa: E402
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -59,39 +60,13 @@ def group_results_by_pairing(results: list[dict]) -> dict[tuple[str, str], list[
     return dict(grouped)
 
 
-def normalize_filename(name: str) -> str:
-    """Normalize file names for comparison."""
-    name = name.strip().lower()
-    name = name.split("/")[-1]
-    aliases = {
-        "server.c": "smallchat-server.c",
-        "client.c": "smallchat-client.c",
-    }
-    return aliases.get(name, name)
+def match_finding_to_diff_bug(finding: dict, diff_record: dict) -> dict | None:
+    """Return the matched ground-truth bug dict for a diff record, or None.
 
-
-def match_finding_to_diff_bug(
-    finding: dict, diff_record: dict, line_tolerance: int = 5
-) -> dict | None:
-    """Return the matched ground-truth bug dict, or None.
-
-    Bugs inherit their file from the parent diff record, so matching traverses
-    the record's bugs list (same file, any bug line within tolerance).
+    Bugs inherit their file from the parent diff record; the shared matcher
+    enforces the ±5 line tolerance.
     """
-    matched = run_eval_match_finding_to_diff_bug(
-        finding, diff_record.get("bugs", []), diff_record.get("file", "")
-    )
-    if matched is None:
-        return None
-    finding_line = finding.get("line")
-    if finding_line is None:
-        return None
-    if abs(finding_line - matched.get("line", finding_line)) > line_tolerance:
-        return None
-    return matched
-
-
-SEVERITY_ORDER = ["reject", "request-changes", "nitpick"]
+    return match_finding_to_bug(finding, diff_record.get("bugs", []), diff_record.get("file", ""))
 
 
 def compute_cell_metrics(results: list[dict], diff_records: list[dict]) -> dict[str, Any]:
@@ -103,7 +78,7 @@ def compute_cell_metrics(results: list[dict], diff_records: list[dict]) -> dict[
     empty = {
         "precision": 0.0,
         "recall": 0.0,
-        "f1": 0.0,
+        "ds": 0.0,
         "refusal_rate": 0.0,
         "judge_accuracy": 0.0,
         "judge_prioritization": 0.0,
@@ -173,7 +148,7 @@ def compute_cell_metrics(results: list[dict], diff_records: list[dict]) -> dict[
 
     precision = len(hits) / total_findings if total_findings > 0 else 0.0
     recall = len(hits) / len(diff_records) if diff_records else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    ds = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
     refusal_rate = refusal_count / len(results) if results else 0.0
 
     judge_accuracy = (
@@ -201,7 +176,7 @@ def compute_cell_metrics(results: list[dict], diff_records: list[dict]) -> dict[
     return {
         "precision": precision,
         "recall": recall,
-        "f1": f1,
+        "ds": ds,
         "refusal_rate": refusal_rate,
         "judge_accuracy": judge_accuracy,
         "judge_prioritization": judge_prioritization,
@@ -228,33 +203,33 @@ def compute_marginal_means(
         all_models: List of all model/skill names (models and skills share the same set)
 
     Returns:
-        (model_means, skill_means) where each maps name -> {f1, judge_mean, refusal_rate}
+        (model_means, skill_means) where each maps name -> {ds, judge_mean, refusal_rate}
     """
     # Derive all unique skills from cell_data (they may differ from all_models in test fixtures)
     all_skills = sorted(set(s for (m, s) in cell_data.keys()))
 
     model_sums: dict[str, dict[str, float]] = {
-        m: {"f1": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0} for m in all_models
+        m: {"ds": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0} for m in all_models
     }
     model_counts: dict[str, int] = {m: 0 for m in all_models}
     skill_sums: dict[str, dict[str, float]] = {
-        s: {"f1": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0} for s in all_skills
+        s: {"ds": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0} for s in all_skills
     }
     skill_counts: dict[str, int] = {s: 0 for s in all_skills}
 
     for (model, skill), metrics in cell_data.items():
         if metrics.get("total_results", 0) == 0:
             continue
-        f1 = metrics.get("f1", 0.0)
+        ds = metrics.get("ds", 0.0)
         judge = metrics.get("judge_mean", 0.0)
         refusal = metrics.get("refusal_rate", 0.0)
 
-        model_sums[model]["f1"] += f1
+        model_sums[model]["ds"] += ds
         model_sums[model]["judge_mean"] += judge
         model_sums[model]["refusal_rate"] += refusal
         model_counts[model] += 1
 
-        skill_sums[skill]["f1"] += f1
+        skill_sums[skill]["ds"] += ds
         skill_sums[skill]["judge_mean"] += judge
         skill_sums[skill]["refusal_rate"] += refusal
         skill_counts[skill] += 1
@@ -264,32 +239,32 @@ def compute_marginal_means(
         count = model_counts[model]
         if count > 0:
             model_means[model] = {
-                "f1": model_sums[model]["f1"] / count,
+                "ds": model_sums[model]["ds"] / count,
                 "judge_mean": model_sums[model]["judge_mean"] / count,
                 "refusal_rate": model_sums[model]["refusal_rate"] / count,
             }
         else:
-            model_means[model] = {"f1": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0}
+            model_means[model] = {"ds": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0}
 
     skill_means = {}
     for skill in all_skills:
         count = skill_counts[skill]
         if count > 0:
             skill_means[skill] = {
-                "f1": skill_sums[skill]["f1"] / count,
+                "ds": skill_sums[skill]["ds"] / count,
                 "judge_mean": skill_sums[skill]["judge_mean"] / count,
                 "refusal_rate": skill_sums[skill]["refusal_rate"] / count,
             }
         else:
-            skill_means[skill] = {"f1": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0}
+            skill_means[skill] = {"ds": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0}
 
     # Add missing models/skills with zero values
     for model in all_models:
         if model not in model_means:
-            model_means[model] = {"f1": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0}
+            model_means[model] = {"ds": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0}
     for skill in all_models:
         if skill not in skill_means:
-            skill_means[skill] = {"f1": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0}
+            skill_means[skill] = {"ds": 0.0, "judge_mean": 0.0, "refusal_rate": 0.0}
 
     return model_means, skill_means
 
@@ -297,7 +272,7 @@ def compute_marginal_means(
 def rank_by_verdict(means: dict[str, dict[str, float]]) -> list[tuple[str, float, float, float]]:
     """Rank items by Detection Score (desc), tiebreak by judge mean (desc), then refusal (asc)."""
     items = [
-        (name, data["f1"], data["judge_mean"], data["refusal_rate"]) for name, data in means.items()
+        (name, data["ds"], data["judge_mean"], data["refusal_rate"]) for name, data in means.items()
     ]
     items.sort(key=lambda x: (-x[1], -x[2], x[3]))
     return items
@@ -321,7 +296,7 @@ def collect_unmatched_findings(
         bugs = diff_record.get("bugs", [])
 
         for finding in findings:
-            matched = run_eval_match_finding_to_diff_bug(finding, bugs, diff_record.get("file", ""))
+            matched = match_finding_to_bug(finding, bugs, diff_record.get("file", ""))
             if matched is None:
                 file_path = finding.get("file", "unknown")
                 line = finding.get("line")
@@ -362,7 +337,7 @@ def collect_cross_only_discoveries(
         bugs = diff_record.get("bugs", [])
 
         for finding in findings:
-            matched = run_eval_match_finding_to_diff_bug(finding, bugs, diff_record.get("file", ""))
+            matched = match_finding_to_bug(finding, bugs, diff_record.get("file", ""))
             if matched:
                 bug_desc = matched.get("description", "unknown")
                 matched_bugs_by_cell[(diff_id, model, skill)].add(bug_desc)
@@ -437,7 +412,7 @@ def render_markdown(
         tp = len(hits)
         if best_pair is None or tp > best_pair[2]:
             best_pair = (model, skill, tp)
-        ds = metrics.get("f1", 0.0)
+        ds = metrics.get("ds", 0.0)
         if best_ds_pair is None or ds > best_ds_pair[2]:
             best_ds_pair = (model, skill, ds)
         jm = metrics.get("judge_mean", 0.0)
@@ -453,7 +428,7 @@ def render_markdown(
             cell = cell_data.get((model, skill))
             if not cell or cell.get("total_results", 0) == 0:
                 continue
-            ds = cell.get("f1", 0.0)
+            ds = cell.get("ds", 0.0)
             if ds > best_ds:
                 best_ds = ds
                 best_skill = skill
@@ -502,16 +477,14 @@ def render_markdown(
     skill_impact_lines: list[str] = []
     for model in all_models:
         native = cell_data.get((model, model))
-        native_ds = (
-            native.get("f1", 0.0) if native and native.get("total_results", 0) > 0 else None
-        )
+        native_ds = native.get("ds", 0.0) if native and native.get("total_results", 0) > 0 else None
         cross_dss = []
         for skill in all_models:
             if skill == model:
                 continue
             cell = cell_data.get((model, skill))
             if cell and cell.get("total_results", 0) > 0:
-                cross_dss.append(cell.get("f1", 0.0))
+                cross_dss.append(cell.get("ds", 0.0))
         cross_mean = sum(cross_dss) / len(cross_dss) if cross_dss else None
         if native_ds is None and cross_mean is None:
             skill_impact_lines.append(f"{model}: no data")
@@ -534,7 +507,7 @@ def render_markdown(
         lines.append("## Verdict\n")
         lines.append(
             f"**Best pairing**: `{best_pair[0]}` reviewing with `{best_pair[1]}` skill found "
-            f"**{best_pair[2]} bugs** out of {total_bugs_ground_truth} ground-truth bugs.\n"
+            f"**{best_pair[2]} bugs** across {total_bugs_ground_truth} diff scenarios.\n"
         )
         if best_ds_pair:
             native = " *(native)*" if best_ds_pair[0] == best_ds_pair[1] else ""
@@ -564,9 +537,7 @@ def render_markdown(
                 )
         if m_name and m_bugs:
             coverage_pct = (
-                len(m_bugs) / total_bugs_ground_truth * 100
-                if total_bugs_ground_truth > 0
-                else 0
+                len(m_bugs) / total_bugs_ground_truth * 100 if total_bugs_ground_truth > 0 else 0
             )
             lines.append(
                 f"**Best reviewer model**: `{m_name}` found **{len(m_bugs)}** bugs "
@@ -574,9 +545,7 @@ def render_markdown(
             )
         if s_name and s_bugs:
             coverage_pct = (
-                len(s_bugs) / total_bugs_ground_truth * 100
-                if total_bugs_ground_truth > 0
-                else 0
+                len(s_bugs) / total_bugs_ground_truth * 100 if total_bugs_ground_truth > 0 else 0
             )
             lines.append(
                 f"**Best skill**: `{s_name}` found **{len(s_bugs)}** bugs "
@@ -591,11 +560,7 @@ def render_markdown(
         impact_str = "; ".join(skill_impact_lines)
         lines.append(f"**Native pairing advantage**: {impact_str}.\n")
         # Best skill per model recommendation
-        native_best = sum(
-            1
-            for model, (skill, _) in best_skill_per_model.items()
-            if skill == model
-        )
+        native_best = sum(1 for model, (skill, _) in best_skill_per_model.items() if skill == model)
         cross_best = len(best_skill_per_model) - native_best
         lines.append(
             f"**Best skill per model**: {native_best} model(s) perform best with their native skill, "
@@ -606,10 +571,20 @@ def render_markdown(
             "See `report/comparison.md` for the baseline-vs-skill analysis "
             "(whether adding any skill helps or hurts each model).\n"
         )
+        lines.append(
+            "In plain terms: the reviewing model — not the attached skill — drives how many "
+            "bugs are found. Swapping skills rarely changes a model's true-positive count; "
+            "the skill mainly affects precision (false positives), which is what moves the "
+            "Detection Score. Start from the Overview Matrix, then use the ranking tables "
+            "for specifics.\n"
+        )
         lines.append("\n")
 
     # Metrics Glossary (at top for visibility)
     lines.append("## Metrics Glossary\n")
+    lines.append(
+        "Definitions of every metric used in this report. Read this before the matrices.\n"
+    )
     lines.append(
         "- **Detection Score (DS)**: Harmonic mean of precision and recall. "
         "Measures how well findings balance correctness (precision) against completeness (recall). "
@@ -620,8 +595,8 @@ def render_markdown(
         "Low precision means many false positives.\n"
     )
     lines.append(
-        "- **Recall**: Of all ground-truth bugs, the fraction that were found. "
-        "Low recall means missed bugs.\n"
+        "- **Recall**: Matched findings divided by the number of diff scenarios "
+        "(buggy and clean). Low recall means missed bugs.\n"
     )
     lines.append(
         "- **Refusal Rate (R)**: Fraction of diffs where the model refused to review. "
@@ -659,10 +634,10 @@ def render_markdown(
         for model in all_models:
             metrics = cell_data.get((model, skill))
             if metrics and metrics["total_results"] > 0:
-                f1_str = f"DS={metrics.get('f1', 0):.2f}"
+                ds_str = f"DS={metrics.get('ds', 0):.2f}"
                 j_str = f"J={metrics.get('judge_mean', 0):.1f}/2"
                 native_marker = " *(native)*" if model == skill else ""
-                row += f" {f1_str} {j_str}{native_marker} |"
+                row += f" {ds_str} {j_str}{native_marker} |"
             else:
                 row += " — |"
         lines.append(row)
@@ -671,7 +646,11 @@ def render_markdown(
 
     # Per-metric matrices
     lines.append("## Precision Matrix\n")
-    lines.append("| Skill \\\\ Model |" + " |".join(all_models) + " |")
+    lines.append(
+        "Rows = skill applied, columns = reviewing model. Fraction of reported findings "
+        "that matched a real bug — higher is better; low values flag noisy reviewers.\n"
+    )
+    lines.append("| Skill \\\\ Model | " + " | ".join(all_models) + " |")
     lines.append("|" + "---|" * (len(all_models) + 1))
     for skill in all_models:
         row = f"| {skill} |"
@@ -685,7 +664,11 @@ def render_markdown(
     lines.append("\n")
 
     lines.append("## Recall Matrix\n")
-    lines.append("| Skill \\\\ Model |" + " |".join(all_models) + " |")
+    lines.append(
+        "Rows = skill applied, columns = reviewing model. Matched findings per diff "
+        "scenario (buggy and clean) — higher is better.\n"
+    )
+    lines.append("| Skill \\\\ Model | " + " | ".join(all_models) + " |")
     lines.append("|" + "---|" * (len(all_models) + 1))
     for skill in all_models:
         row = f"| {skill} |"
@@ -698,69 +681,58 @@ def render_markdown(
         lines.append(row)
     lines.append("\n")
 
-    # Judge score matrices
-    for axis in ["accuracy", "prioritization", "justification", "actionability"]:
-        lines.append(f"## Judge {axis.title()} Matrix\n")
-        lines.append("| Skill \\\\ Model |" + " |".join(all_models) + " |")
-        lines.append("|" + "---|" * (len(all_models) + 1))
-        for skill in all_models:
-            row = f"| {skill} |"
-            for model in all_models:
-                metrics = cell_data.get((model, skill))
-                key = f"judge_{axis}"
-                if metrics and metrics["total_results"] > 0 and key in metrics:
-                    row += f" {metrics[key]:.1f} |"
-                else:
-                    row += " — |"
-            lines.append(row)
-        lines.append("\n")
+    # Judge score matrices — moved to Judge Score Detail appendix at end of report
 
     # Native Pairing Ranking (model == skill, diagonal cells only)
     native_rows: list[tuple[str, float, int, float, float]] = []
     for model in all_models:
         metrics = cell_data.get((model, model))
         if metrics and metrics.get("total_results", 0) > 0:
-            native_rows.append((
-                model,
-                metrics.get("f1", 0.0),
-                len(metrics.get("hits", [])),
-                metrics.get("refusal_rate", 0.0),
-                metrics.get("judge_mean", 0.0),
-            ))
+            native_rows.append(
+                (
+                    model,
+                    metrics.get("ds", 0.0),
+                    len(metrics.get("hits", [])),
+                    metrics.get("refusal_rate", 0.0),
+                    metrics.get("judge_mean", 0.0),
+                )
+            )
     if native_rows:
         native_rows.sort(key=lambda x: x[1], reverse=True)
         lines.append("## Native Pairing Ranking (model == skill)\n")
         lines.append("Diagonal cells only — each model using its own skill.\n")
         lines.append("| Model | Detection Score | Bugs Found | Judge Score |")
         lines.append("|-------|-----------------|------------|-------------|")
-        for model, f1, bugs, _ref, judge in native_rows:
+        for model, ds, bugs, _ref, judge in native_rows:
             lines.append(
-                f"| {model} | {f1:.2f} | {bugs}/{total_bugs_ground_truth} "
-                f"| {judge:.1f}/2 |"
+                f"| {model} | {ds:.2f} | {bugs}/{total_bugs_ground_truth} | {judge:.1f}/2 |"
             )
         lines.append("")
 
     # Best pairing section
     lines.append("## Best Pairing by Metric\n")
-    best_f1 = None
-    best_f1_val = -1
+    lines.append("The single best pairing for each headline metric.\n")
+    best_pair_by_metric = None
+    best_pair_by_metric_val = -1
     best_judge = None
     best_judge_val = -1
 
     for (model, skill), metrics in cell_data.items():
         if metrics["total_results"] == 0:
             continue
-        if metrics["f1"] > best_f1_val:
-            best_f1_val = metrics["f1"]
-            best_f1 = (model, skill)
+        if metrics["ds"] > best_pair_by_metric_val:
+            best_pair_by_metric_val = metrics["ds"]
+            best_pair_by_metric = (model, skill)
         if metrics["judge_mean"] > best_judge_val:
             best_judge_val = metrics["judge_mean"]
             best_judge = (model, skill)
 
-    if best_f1:
-        model, skill = best_f1
+    if best_pair_by_metric:
+        model, skill = best_pair_by_metric
         native = " *(native)*" if model == skill else ""
-        lines.append(f"- **Best Detection Score**: {model} on {skill}{native} (DS={best_f1_val:.2f})\n")
+        lines.append(
+            f"- **Best Detection Score**: {model} on {skill}{native} (DS={best_pair_by_metric_val:.2f})\n"
+        )
     if best_judge:
         model, skill = best_judge
         native = " *(native)*" if model == skill else ""
@@ -776,34 +748,38 @@ def render_markdown(
     )
 
     if model_ranked:
-        best_model, best_f1, best_judge, _ = model_ranked[0]
+        best_model, best_model_ds, best_judge, _ = model_ranked[0]
         lines.append(
-            f"**Best Model**: {best_model} (row-mean DS={best_f1:.2f}, judge={best_judge:.1f})\n"
+            f"**Best Model**: {best_model} (row-mean DS={best_model_ds:.2f}, judge={best_judge:.1f})\n"
         )
 
     if skill_ranked:
-        best_skill, best_f1, best_judge, _ = skill_ranked[0]
+        best_skill, best_skill_ds, best_judge, _ = skill_ranked[0]
         lines.append(
-            f"**Best Skill**: {best_skill} (column-mean DS={best_f1:.2f}, judge={best_judge:.1f})\n"
+            f"**Best Skill**: {best_skill} (column-mean DS={best_skill_ds:.2f}, judge={best_judge:.1f})\n"
         )
 
     lines.append("\n### Model Rankings (by row-mean Detection Score)\n")
     lines.append("| Rank | Model | Detection Score | Judge Mean | Rarity Score |")
     lines.append("|------|-------|-----------------|------------|--------------|")
-    for rank, (model, f1, judge, _refusal) in enumerate(model_ranked or [], 1):
+    for rank, (model, ds, judge, _refusal) in enumerate(model_ranked or [], 1):
         rarity = model_rarity.get(model, 0.0)
-        lines.append(f"| {rank} | {model} | {f1:.2f} | {judge:.1f} | {rarity:.2f} |")
+        lines.append(f"| {rank} | {model} | {ds:.2f} | {judge:.1f} | {rarity:.2f} |")
 
     lines.append("\n### Skill Rankings (by column-mean Detection Score)\n")
     lines.append("| Rank | Skill | Detection Score | Judge Mean | Rarity Score |")
     lines.append("|------|-------|-----------------|------------|--------------|")
-    for rank, (skill, f1, judge, _refusal) in enumerate(skill_ranked or [], 1):
+    for rank, (skill, ds, judge, _refusal) in enumerate(skill_ranked or [], 1):
         rarity = skill_rarity.get(skill, 0.0)
-        lines.append(f"| {rank} | {skill} | {f1:.2f} | {judge:.1f} | {rarity:.2f} |")
+        lines.append(f"| {rank} | {skill} | {ds:.2f} | {judge:.1f} | {rarity:.2f} |")
 
     # Bug Discovery Ranking
     lines.append("\n---\n")
     lines.append("## Bug Discovery Ranking\n")
+    lines.append(
+        "How many ground-truth bugs each pairing, model, and skill actually found, "
+        "broken down by severity and category. Raw counts — no precision penalty.\n"
+    )
     total_bugs = len(diff_records)
     lines.append(f"Ground-truth bugs: **{total_bugs}**\n")
 
@@ -877,9 +853,7 @@ def render_markdown(
         ordered_sev = sorted(
             severity_totals.items(),
             key=lambda x: (
-                SEVERITY_ORDER.index(x[0])
-                if x[0] in SEVERITY_ORDER
-                else len(SEVERITY_ORDER),
+                SEVERITY_ORDER.index(x[0]) if x[0] in SEVERITY_ORDER else len(SEVERITY_ORDER),
                 -x[1],
             ),
         )
@@ -954,9 +928,7 @@ def render_markdown(
         )
         for (model, skill), crit in ranked:
             native = " *(native)*" if model == skill else ""
-            lines.append(
-                f"| {model}{native} | {skill} | {crit} | {pair_total[(model, skill)]} |"
-            )
+            lines.append(f"| {model}{native} | {skill} | {crit} | {pair_total[(model, skill)]} |")
     else:
         lines.append("No per-pairing severity data available.\n")
 
@@ -1120,14 +1092,14 @@ def render_markdown(
     lines.append("|-------|----------|---------------------|-------|---------|")
     for model in all_models:
         native = cell_data.get((model, model))
-        native_ds = native.get("f1", 0.0) if native and native.get("total_results", 0) > 0 else None
+        native_ds = native.get("ds", 0.0) if native and native.get("total_results", 0) > 0 else None
         cross_dss = []
         for skill in all_models:
             if skill == model:
                 continue
             cell = cell_data.get((model, skill))
             if cell and cell.get("total_results", 0) > 0:
-                cross_dss.append(cell.get("f1", 0.0))
+                cross_dss.append(cell.get("ds", 0.0))
         cross_mean = sum(cross_dss) / len(cross_dss) if cross_dss else None
         if native_ds is None and cross_mean is None:
             lines.append(f"| {model} | — | — | — | no data |")
@@ -1165,10 +1137,35 @@ def render_markdown(
             rec = "native skill"
         else:
             rec = f"cross-skill `{best_skill}`"
-        lines.append(
-            f"| {model} | {best_skill} | {best_ds:.2f} | {rec} |"
-        )
+        lines.append(f"| {model} | {best_skill} | {best_ds:.2f} | {rec} |")
     lines.append("")
+
+    # Judge sub-score detail (appendix)
+    lines.append("\n---\n")
+    lines.append("## Judge Score Detail\n")
+    lines.append(
+        "The four sub-scores below feed the Judge Score (J) shown in the matrices above. "
+        "Each is the mean over evaluated diffs on a 0–2 scale, scored by the judge model; "
+        "values vary little across pairings, so they are shown as appendix detail.\n"
+    )
+    for axis in ["accuracy", "prioritization", "justification", "actionability"]:
+        lines.append(f"### Judge {axis.title()} Matrix\n")
+        header = "| Skill \\\\ Model |"
+        for model in all_models:
+            header += f" {model} |"
+        lines.append(header)
+        lines.append("|" + "---|" * (len(all_models) + 1))
+        for skill in all_models:
+            row = f"| {skill} |"
+            for model in all_models:
+                metrics = cell_data.get((model, skill))
+                key = f"judge_{axis}"
+                if metrics and metrics["total_results"] > 0 and key in metrics:
+                    row += f" {metrics[key]:.1f} |"
+                else:
+                    row += " — |"
+            lines.append(row)
+        lines.append("\n")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(lines), encoding="utf-8")

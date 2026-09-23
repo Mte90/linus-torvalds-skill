@@ -8,13 +8,14 @@ Parses review files in different formats, extracts findings, and generates:
 - Severity disagreement table
 - Trigger coverage table
 - With-skill vs baseline comparison
-- Ground-truth benchmark metrics (precision/recall/F1)
+- Ground-truth benchmark metrics (precision/recall/Detection Score DS)
 
 Run from repository root: python3 report/build_comparison.py
 """
 
 import json
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -24,6 +25,10 @@ try:
 except ImportError:
     from comparison_render import generate_markdown  # noqa: F401
 
+_SRC = Path(__file__).resolve().parent.parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+from torvalds_skill.matching import match_finding_to_bug  # noqa: E402
 
 # Models and their review files
 MODELS = [
@@ -1173,12 +1178,12 @@ def match_finding_to_benchmark(
 
 
 def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[dict]) -> dict:
-    """Compute precision, recall, F1 against benchmark ground truth.
+    """Compute precision, recall, Detection Score (DS) against benchmark ground truth.
 
     Returns dict with:
     - precision: benchmark hits / total findings
     - recall: benchmark hits / total benchmark records
-    - f1: harmonic mean of precision and recall
+    - ds: harmonic mean of precision and recall (Detection Score)
     - hits: list of matched benchmark IDs
     - misses: list of unmatched benchmark IDs
     - severity_match_rate: % of hits where severity matches
@@ -1187,7 +1192,7 @@ def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[d
         return {
             "precision": 0.0,
             "recall": 0.0,
-            "f1": 0.0,
+            "ds": 0.0,
             "hits": [],
             "misses": [r["id"] for r in benchmark_records],
             "severity_match_rate": 0.0,
@@ -1223,8 +1228,8 @@ def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[d
     # Recall: how many benchmark records we found
     recall = len(hits) / len(benchmark_records) if benchmark_records else 0.0
 
-    # F1
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    # Detection Score (DS)
+    ds = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
     # Severity match rate
     severity_match_rate = len(matched_severities) / len(hits) if hits else 0.0
@@ -1232,7 +1237,7 @@ def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[d
     return {
         "precision": precision,
         "recall": recall,
-        "f1": f1,
+        "ds": ds,
         "hits": hits,
         "misses": misses,
         "severity_match_rate": severity_match_rate,
@@ -1242,10 +1247,13 @@ def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[d
 
 
 def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]) -> dict:
-    """Compute diff-based evaluation metrics (precision/recall/F1) for model findings.
+    """Compute diff-based evaluation metrics (precision/recall/DS) for model findings.
 
-    Matches findings to benchmark bugs by line ±5 tolerance.
-    Only records with expected=="findings" count for P/R/F1 calculation.
+    Matches findings to benchmark bugs with the shared matcher
+    (torvalds_skill.matching: basename + aliases, line ±5). All diff scenarios
+    count: recall is hits/total scenarios, and findings on clean or refusal
+    scenarios count as false positives — identical semantics to the
+    cross-evaluation matrix (report/cross_matrix.md).
 
     Args:
         eval_results: List of eval result records with structure:
@@ -1255,7 +1263,7 @@ def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]
 
     Returns:
         Dict with keys:
-        - precision, recall, f1: standard metrics
+        - precision, recall, ds: standard metrics
         - hits, misses: matched/unmatched benchmark IDs
         - avg_accuracy, avg_prioritization, avg_justification, avg_actionability
         - overall_score: weighted average of all score dimensions
@@ -1266,7 +1274,7 @@ def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]
         return {
             "precision": 0.0,
             "recall": 0.0,
-            "f1": 0.0,
+            "ds": 0.0,
             "hits": [],
             "misses": [r["id"] for r in diff_records],
             "avg_accuracy": 0.0,
@@ -1278,11 +1286,6 @@ def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]
             "total_benchmark": len(diff_records),
         }
 
-    # Filter to only expected=="findings" records (for P/R/F1)
-    findings_results = [r for r in eval_results if r.get("expected") == "findings"]
-
-    matched_benchmark_ids = set()
-    total_findings = 0
     score_sums = {
         "accuracy": 0.0,
         "prioritization": 0.0,
@@ -1291,7 +1294,10 @@ def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]
     }
     score_counts = {"accuracy": 0, "prioritization": 0, "justification": 0, "actionability": 0}
 
-    for result in findings_results:
+    matched_benchmark_ids = set()
+    total_findings = 0
+
+    for result in eval_results:
         findings = result.get("findings", [])
         total_findings += len(findings)
 
@@ -1302,50 +1308,32 @@ def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]
                 score_sums[key] += scores[key]
                 score_counts[key] += 1
 
-        # Match findings to benchmark bugs by file and line ±5.
-        # Bugs inherit their file from the parent diff record (no per-bug file).
+        # Shared matcher: basename + aliases, line ±5 (same as cross_matrix.md)
         for finding in findings:
-            finding_file = finding.get("file")
-            finding_line = finding.get("line")
-
-            if not finding_file or finding_line is None:
-                continue
-
-            normalized_file = normalize_filename(finding_file)
-
             for record in diff_records:
-                rec_file = normalize_filename(record.get("file", ""))
-
-                if not rec_file or normalized_file != rec_file:
-                    continue
-
-                for bug in record.get("bugs", []):
-                    rec_line = bug.get("line")
-
-                    if rec_line is None:
-                        continue
-
-                    # Same file AND line within ±5
-                    if abs(finding_line - rec_line) <= 5:
-                        bid = record.get("id")
-                        if bid and bid not in matched_benchmark_ids:
-                            matched_benchmark_ids.add(bid)
-                        break
-                else:
-                    continue
-                break
+                if match_finding_to_bug(finding, record.get("bugs", []), record.get("file", "")):
+                    bid = record.get("id")
+                    if bid:
+                        matched_benchmark_ids.add(bid)
+                    break
 
     hits = sorted(matched_benchmark_ids)
-    misses = sorted([r["id"] for r in diff_records if r.get("id") not in matched_benchmark_ids])
+    misses = sorted(
+        [
+            r["id"]
+            for r in diff_records
+            if r.get("expected") == "findings" and r.get("id") not in matched_benchmark_ids
+        ]
+    )
 
-    # Precision: hits / total findings (only from expected=="findings" records)
+    # Precision: hits / all findings across every scenario (clean-diff findings = FP)
     precision = len(hits) / total_findings if total_findings > 0 else 0.0
 
-    # Recall: hits / total benchmark
+    # Recall: hits / total diff scenarios (buggy + clean)
     recall = len(hits) / len(diff_records) if diff_records else 0.0
 
-    # F1
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    # Detection Score (DS)
+    ds = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
     # Average scores
     avg_accuracy = (
@@ -1375,7 +1363,7 @@ def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]
     return {
         "precision": precision,
         "recall": recall,
-        "f1": f1,
+        "ds": ds,
         "hits": hits,
         "misses": misses,
         "avg_accuracy": avg_accuracy,

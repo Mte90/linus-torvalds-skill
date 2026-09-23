@@ -1,6 +1,6 @@
 ---
 title: Model Comparison — SmallChat Review
-date: 2026-09-18
+date: 2026-09-23
 codebase: antirez/smallchat
 models: gpt-oss-120b, glm5.2, mistral, qwen3.8-27b
 skill: linus-torvalds-skill (language-agnostic)
@@ -19,6 +19,8 @@ Quick summary for non-technical readers:
 | glm5.2 | 7 | 2 | 0 | Skill reduces coverage |
 | mistral | 22 | 9 | 9 | Skill adds value |
 | qwen3.8-27b | 18 | 6 | 4 | Skill adds value |
+
+How to read the Verdict column: 'Skill-Only Critical' counts critical bugs a model found only when using the skill; 'Baseline-Only Critical' counts critical bugs found only without it. 'Skill adds value' means a net gain of critical findings with the skill; 'Skill reduces coverage' means a net loss; 'No change' means the model finds the same criticals either way.
 
 The skill adds the most value for mistral, which gained 9 critical finding(s) exclusive to the with-skill review.
 
@@ -466,15 +468,15 @@ qwen3.8-27b follows at 2.
 
 ---
 
-## Ground-Truth Benchmark
+## SmallChat Benchmark
 
-Comparison against the ground-truth benchmark dataset (43 records in `data/benchmark.jsonl`).
+Skill impact on the curated SmallChat dataset (43 records in `data/benchmark.jsonl`) — separate ground truth from the 45-scenario generalization set below.
 
 Metrics computed by matching model findings to benchmark records by file and line number (±10 lines tolerance).
 
 ### Per-Model Benchmark Metrics
 
-| Model | Precision | Recall | F1 | Hits | Misses | Severity Match Rate |
+| Model | Precision | Recall | DS | Hits | Misses | Severity Match Rate |
 |-------|-----------|--------|------|------|--------|---------------------|
 | gpt-oss-120b | 40.0% | 14.0% | 20.7% | 6 | 37 | 33.3% |
 | glm5.2 | 42.9% | 7.0% | 12.0% | 3 | 40 | 0.0% |
@@ -488,16 +490,16 @@ Metrics computed by matching model findings to benchmark records by file and lin
 
 ## Generalization (Diff-Based)
 
-Evaluation against ground-truth diffs (4 models with benchmark data).
+Evaluation against ground-truth diffs (4 models with benchmark data). Same 45-scenario dataset and matching as `report/cross_matrix.md`.
 
-Metrics computed by matching model findings to benchmark bugs by file and line number (±5 lines tolerance). Only records with expected='findings' count for precision/recall/F1.
+Metrics computed by matching model findings to benchmark bugs (file basename + line ±5). All scenarios count: recall = hits / total scenarios; findings on clean or refusal scenarios count as false positives. DS = harmonic mean of precision and recall.
 
-| Model | Precision | Recall | F1 | Accuracy | Prioritization | Justification | Actionability | Overall |
+| Model | Precision | Recall | DS | Accuracy | Prioritization | Justification | Actionability | Overall |
 |-------|-----------|--------|------|----------|----------------|---------------|---------------|---------|
-| gpt-oss-120b | 64.3% | 40.0% | 49.3% | 64.0% | 43.7% | 86.0% | 90.7% | 71.1% |
-| glm5.2 | 32.4% | 24.4% | 27.8% | 68.9% | 50.6% | 96.0% | 97.0% | 78.1% |
-| mistral | 88.0% | 48.9% | 62.9% | 66.0% | 44.0% | 78.0% | 86.0% | 68.5% |
-| qwen3.8-27b | 89.3% | 55.6% | 68.5% | 61.3% | 44.0% | 87.3% | 90.0% | 70.7% |
+| gpt-oss-120b | 39.6% | 42.2% | 40.9% | 63.3% | 49.4% | 64.4% | 59.3% | 59.1% |
+| glm5.2 | 20.4% | 24.4% | 22.2% | 65.5% | 52.7% | 57.6% | 55.0% | 57.7% |
+| mistral | 48.9% | 48.9% | 48.9% | 58.9% | 51.1% | 58.9% | 54.4% | 55.8% |
+| qwen3.8-27b | 52.1% | 55.6% | 53.8% | 60.0% | 48.0% | 52.2% | 49.4% | 52.4% |
 
 ---
 

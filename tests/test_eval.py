@@ -33,7 +33,7 @@ class TestComputeDiffEvalMetrics:
 
         assert result["precision"] == 0.0
         assert result["recall"] == 0.0
-        assert result["f1"] == 0.0
+        assert result["ds"] == 0.0
         assert result["hits"] == []
         assert result["misses"] == []
         assert result["avg_accuracy"] == 0.0
@@ -52,7 +52,7 @@ class TestComputeDiffEvalMetrics:
 
         assert result["precision"] == 0.0
         assert result["recall"] == 0.0
-        assert result["f1"] == 0.0
+        assert result["ds"] == 0.0
         assert result["hits"] == []
         assert result["misses"] == ["DIFF-001"]
 
@@ -77,12 +77,12 @@ class TestComputeDiffEvalMetrics:
 
         assert result["precision"] == 0.0
         assert result["recall"] == 0.0
-        assert result["f1"] == 0.0
+        assert result["ds"] == 0.0
         assert result["hits"] == []
         assert result["misses"] == []
 
-    def test_perfect_match_precision_recall_f1_one(self):
-        """Test perfect match: all bugs found → precision/recall/f1 == 1.0."""
+    def test_perfect_match_precision_recall_ds_one(self):
+        """Test perfect match: all bugs found → precision/recall/ds == 1.0."""
         diff_records = [
             {"id": "DIFF-001", "file": "server.c", "bugs": [{"line": 100}], "expected": "findings"},
             {"id": "DIFF-002", "file": "server.c", "bugs": [{"line": 200}], "expected": "findings"},
@@ -132,7 +132,7 @@ class TestComputeDiffEvalMetrics:
 
         assert result["precision"] == 1.0
         assert result["recall"] == 1.0
-        assert result["f1"] == 1.0
+        assert result["ds"] == 1.0
         assert len(result["hits"]) == 3
         assert len(result["misses"]) == 0
 
@@ -234,8 +234,8 @@ class TestComputeDiffEvalMetrics:
         assert len(result["misses"]) == 1
         assert "DIFF-002" in result["misses"]
 
-    def test_excludes_no_findings_records_from_metrics(self):
-        """Test that expected='no-findings' records are excluded from P/R/F1."""
+    def test_no_findings_records_contribute_no_false_positives(self):
+        """Test that empty-finding clean records add no FPs; recall counts all scenarios."""
         diff_records = [
             {"id": "DIFF-001", "file": "server.c", "bugs": [{"line": 100}], "expected": "findings"},
             {
