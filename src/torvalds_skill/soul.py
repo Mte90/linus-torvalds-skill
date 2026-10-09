@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config
-from .distill import _format_calibration_for_prompt
+from .distill import _format_calibration_for_prompt, _write_gated_document
 from .distill_llm import _call_llm
 from .distill_sanitize import sanitize_skill
 
@@ -767,8 +767,7 @@ def generate_soul(
     date_utc = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     response = _merge_frontmatter(response, prompt_hash, model, date_utc)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(response, encoding="utf-8")
+    _write_gated_document(response, output_path)
 
     word_count = len(response.split())
     print(f"soul written: {output_path} ({word_count} words)")
@@ -785,7 +784,7 @@ def main() -> int:
     parser.add_argument(
         "--out",
         default=None,
-        help="Override output path (default: soul/soul.md)",
+        help="Override output path (default: soul/<profile soul_variant>.md)",
     )
     args = parser.parse_args()
 
@@ -796,7 +795,13 @@ def main() -> int:
         print(f"ERROR: {patterns_path} not found. Run clustering first.")
         return 1
 
-    output_path = Path(args.out) if args.out else SOUL_OUTPUT_DIR / "soul.md"
+    # Fetch profile to determine soul_variant for default output path
+    from .profiles import get_profile
+
+    model = args.model or config.MODEL
+    profile = get_profile(model)
+
+    output_path = Path(args.out) if args.out else SOUL_OUTPUT_DIR / f"{profile.soul_variant}.md"
 
     generate_soul(patterns_path, output_path, model=args.model, project_root=project_root)
     return 0

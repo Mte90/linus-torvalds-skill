@@ -4,6 +4,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from torvalds_skill.profiles import get_profile
+from torvalds_skill.provenance import (
+    EvalProvenance,
+)
+from torvalds_skill.provenance import (
+    banner as provenance_banner,
+)
+from torvalds_skill.provenance import (
+    limitation as provenance_limitation,
+)
 
 
 def safe_truncate(text: str, limit: int = 40) -> str:
@@ -46,15 +55,11 @@ def generate_scorecard(models_data: list[dict]) -> str:
                     skill_only_critical, baseline_only_critical (from skill_vs_baseline comparisons)
 
     Returns:
-        Markdown string with scorecard table and 1-2 sentence summary
+        Markdown string with scorecard table (no heading - for embedding in Q&A)
     """
     lines = []
 
-    # Scorecard table
-    lines.append("## Stakeholder Scorecard")
-    lines.append("")
-    lines.append("Quick summary for non-technical readers:")
-    lines.append("")
+    # Scorecard table (no heading - embedded in Q&A section)
     lines.append("| Model | Total Findings | Critical Findings | Skill-Only Critical | Verdict |")
     lines.append("|-------|---------------|-------------------|---------------------|---------|")
 
@@ -126,6 +131,8 @@ def generate_markdown(
     benchmark_metrics: dict | None = None,
     diff_eval_metrics: dict | None = None,
     refusal_metrics: dict | None = None,
+    repetitions: int = 1,
+    eval_provenance: EvalProvenance = "decontaminated",
 ) -> str:
     """Generate the complete comparison.md content.
 
@@ -161,10 +168,89 @@ def generate_markdown(
     lines.append("# Model Comparison — SmallChat Review")
     lines.append("")
 
-    # Insert scorecard after title
-    lines.append(scorecard)
+    lines.append(provenance_banner(eval_provenance))
+    lines.append("")
+    lines.append("")
 
-    # Skill Generation Per Model section
+    # Dataset composition line
+    lines.append(
+        "Dataset: SmallChat codebase (~706 LOC), 4 models reviewed with and without the Linus Torvalds skill."
+    )
+    lines.append("")
+
+    # Judge COI note
+    lines.append(
+        "> **Note:** The judge (GLM5.2) also participates as a reviewer: judge scores may reflect self-preference."
+    )
+    lines.append("")
+
+    # Phase 4: Add Question & Answer section (skeleton part 2)
+    lines.append("## Question & Answer")
+    lines.append("")
+    lines.append(
+        "**Question this answers:** Does adding the skill help or hurt each model? "
+        "(Baseline vs. skill comparison on the SmallChat codebase.)"
+    )
+    lines.append("")
+    lines.append("**Headline answer:** The verdict varies by model. The decisive table follows:")
+    lines.append("")
+    lines.append("**Condensed scorecard:**")
+    lines.append("")
+    # Insert scorecard table directly (not as separate section)
+    lines.append(scorecard)
+    lines.append("")
+    lines.append(
+        "> **Anti-contradiction note:** This report answers a different question than `report/cross_matrix.md`. The cross matrix asks 'Which model+skill combination detects bugs best?' on a dataset of 45 synthetic diffs. This report asks 'Does adding the skill help or hurt each model?' on the real SmallChat codebase. Apparent disagreement between the two reports is expected — they measure different things on different data (synthetic held-out diffs vs a real codebase), and the metric that decides a winner is Detection Score in both. For the per-pairing view of the synthetic dataset see `cross_matrix.md`; this report's cross-reference is only there to prevent misreading the two as contradictory."
+    )
+    lines.append("")
+    # Orphaned intro paragraph moved here (scope sentence for Q&A)
+    model_count = len(model_names)
+    ordinal = {
+        1: "first",
+        2: "second",
+        3: "third",
+        4: "fourth",
+        5: "fifth",
+        6: "sixth",
+    }.get(model_count, f"{model_count}th")
+    lines.append(
+        f"{model_count} models ({ordinal} being {model_names[-1]}) reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration."
+    )
+    lines.append("")
+
+    # Metrics Summary table
+    lines.append("## Evidence")
+    lines.append("")
+    lines.append("## Metrics Summary")
+    lines.append("")
+    header = "| Metric | " + " | ".join(model_names) + " |"
+    lines.append(header)
+    lines.append("|" + "|".join(["--------"] + [":---:"] * len(model_names)) + "|")
+
+    # Findings (raw) row - before deduplication
+    lines.append(
+        "| Findings (raw) |"
+        + " | ".join(
+            str(metrics.get(model_key, {}).get("skill", {}).get("unique_findings_raw", "N/A"))
+            for model_key in model_names
+        )
+        + "|"
+    )
+
+    # Findings (dedup) row - after deduplication
+    lines.append(
+        "| Findings (dedup) |"
+        + " | ".join(
+            str(metrics.get(model_key, {}).get("skill", {}).get("unique_findings", "N/A"))
+            for model_key in model_names
+        )
+        + "|"
+    )
+
+    # Skill Generation Per Model section moved under Evidence (after Metrics Summary)
+    lines.append("")
+    lines.append("---")
+    lines.append("")
     lines.append("## Skill Generation Per Model")
     lines.append("")
     lines.append(
@@ -209,19 +295,13 @@ def generate_markdown(
     )
     lines.append("")
 
-    lines.append(
-        f"{len(model_names)} models reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration."
-    )
-    lines.append("")
+    # Populate "findings" key for backward compatibility (Change 4)
+    for model_key in model_names:
+        if model_key in metrics and "skill" in metrics[model_key]:
+            raw_count = metrics[model_key]["skill"].get("unique_findings_raw", "N/A")
+            metrics[model_key]["skill"]["findings"] = raw_count
 
-    # Metrics Summary table
-    lines.append("## Metrics Summary")
-    lines.append("")
-    header = "| Metric | " + " | ".join(model_names) + " |"
-    lines.append(header)
-    lines.append("|" + "|".join(["--------"] + [":---:"] * len(model_names)) + "|")
-
-    for metric_name in ["findings", "CRITICAL", "HIGH", "MEDIUM", "LOW", "words"]:
+    for metric_name in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "words", "findings"]:
         row = [metric_name.replace("_", " ").title()]
         for model_key in model_names:
             m = metrics.get(model_key, {})
@@ -249,7 +329,7 @@ def generate_markdown(
     lines.append("## Finding Consensus Matrix")
     lines.append("")
     lines.append(
-        "Every finding from all three reviews, mapped to the underlying issue. ✓ = found, ✗ = missed. Severity shown in parentheses."
+        f"Every finding from {' and '.join(model_names[:-1])} and {model_names[-1]} reviews, mapped to the underlying issue. ✓ = found, ✗ = missed. Severity shown in parentheses."
     )
     lines.append("")
 
@@ -259,6 +339,9 @@ def generate_markdown(
         files_in_matrix.append("unspecified")
 
     row_num = 1
+    # Change 2: Track which findings have been assigned to exactly one row (single-mapping)
+    # Key: (file, finding.title, finding.location) - each finding assigned to first matching row
+    assigned_findings = set()
     for file in sorted(files_in_matrix):
         lines.append(f"### {file}")
         lines.append("")
@@ -272,24 +355,31 @@ def generate_markdown(
         for group in file_groups:
             # Build dynamic marks based on model names
             marks = []
+            found_here: list[str] = []
             for model_name in model_names:
                 finding = group.get(model_name)
                 if finding:
-                    marks.append(f"✓ ({finding.severity})")
+                    # Create a unique key for this finding (file-independent for cross-file matching)
+                    finding_key = (finding.title, finding.location)
+                    # Only show finding if it hasn't been assigned to another row
+                    if finding_key not in assigned_findings:
+                        marks.append(f"✓ ({finding.severity})")
+                        assigned_findings.add(finding_key)
+                        found_here.append(model_name)
+                    else:
+                        marks.append("✗")  # Already assigned elsewhere
                 else:
                     marks.append("✗")
 
-            # Determine consensus
-            found_count = sum(1 for model_name in model_names if group.get(model_name))
+            # Consensus counts the ✓ marks, not group membership: a model whose
+            # finding is already shown on an earlier row must not inflate it.
+            found_count = len(found_here)
             if found_count == len(model_names):
                 consensus = f"{len(model_names)}/{len(model_names)}"
             elif found_count == len(model_names) - 1:
                 consensus = f"{len(model_names) - 1}/{len(model_names)}"
             elif found_count == 1:
-                for model_name in model_names:
-                    if group.get(model_name):
-                        consensus = f"{model_name} only"
-                        break
+                consensus = f"{found_here[0]} only"
             else:
                 consensus = "—"
 
@@ -330,10 +420,14 @@ def generate_markdown(
     lines.append("Which skill triggers fired in each review:")
     lines.append("")
 
-    # Get all unique triggers
+    # Get all unique triggers (exclude "unmatched" and "(unmatched)" - Change 9)
     all_triggers = set()
     for model_data in trigger_coverage.values():
-        all_triggers.update(model_data.keys())
+        all_triggers.update(
+            k
+            for k in model_data.keys()
+            if k not in ("unmatched", "(unmatched)") and not k.startswith("(unmatched")
+        )
 
     if all_triggers:
         header_cols = ["Trigger theme"] + model_names
@@ -351,6 +445,25 @@ def generate_markdown(
     else:
         lines.append("*No trigger data available.*")
     lines.append("")
+
+    # Change 9: Add note line with unmatched counts per model
+    unmatched_counts = {}
+    for model_name in model_names:
+        # Check both "unmatched" and "(unmatched)" keys
+        unmatched_counts[model_name] = max(
+            trigger_coverage.get(model_name, {}).get("unmatched", 0),
+            trigger_coverage.get(model_name, {}).get("(unmatched)", 0),
+        )
+    if any(unmatched_counts.values()):
+        total_unmatched = sum(unmatched_counts.values())
+        lines.append(
+            f"**Note:** {total_unmatched} finding(s) fired no skill trigger and are excluded from "
+            "the table above (they carry no trigger theme): "
+            + ", ".join(f"{m}={c}" for m, c in unmatched_counts.items() if c > 0)
+            + ". They are still counted as findings in the metrics tables, so precision here "
+            "reflects trigger coverage while overall precision reflects all findings."
+        )
+        lines.append("")
 
     # With-Skill vs Baseline Comparison
     lines.append("---")
@@ -732,12 +845,14 @@ def generate_markdown(
     lines.append("### Verdict")
     lines.append("")
     # Score: confirmed findings + skill-only criticals - severity disagreements
+    # Change 6: Count only disagreements where at least one side is CRITICAL (unit consistency)
     # Precompute per-model disagreement counts from the severities list
     model_disagreements = {mk: 0 for mk in model_names}
     for d in severity_disagreements:
         sev_map = dict(d["severities"])
         unique_sevs = set(sev_map.values())
-        if len(unique_sevs) > 1:
+        # Change 6: Only count if at least one side is CRITICAL
+        if len(unique_sevs) > 1 and "CRITICAL" in unique_sevs:
             for mk in model_names:
                 if mk in sev_map:
                     model_disagreements[mk] += 1
@@ -806,7 +921,8 @@ def generate_markdown(
     lines.append("")
     lines.append(
         "**Scoring:** `confirmed_critical + skill_only_critical - baseline_only_critical - severity_disagreements`. "
-        "All terms are CRITICAL-only for unit consistency. The baseline-only penalty makes coverage gaps visible: "
+        "All terms are CRITICAL-only for unit consistency. Severity disagreements counted only when at least "
+        "one model assigned CRITICAL (cross-scale equivalent: reject). The baseline-only penalty makes coverage gaps visible: "
         "a model that suppresses real bugs the baseline caught scores lower, even if it found other bugs the baseline missed."
     )
     lines.append("")
@@ -867,9 +983,11 @@ def generate_markdown(
         lines.append("")
         lines.append("## SmallChat Benchmark")
         lines.append("")
+        # Change 8: Benchmark provenance - state arm and dedup usage
         lines.append(
             f"Skill impact on the curated SmallChat dataset ({len(benchmark_records)} records in `data/benchmark.jsonl`) — "
-            "separate ground truth from the 45-scenario generalization set below."
+            "separate ground truth from the 45-scenario generalization set below. "
+            "Arm: with-skill reviews. Counts use deduped findings."
         )
         lines.append("")
         lines.append(
@@ -919,9 +1037,10 @@ def generate_markdown(
             "Same 45-scenario dataset and matching as `report/cross_matrix.md`."
         )
         lines.append("")
+        # Change 10: Recall denominator uses only buggy diffs (expected=="findings")
         lines.append(
             "Metrics computed by matching model findings to benchmark bugs (file basename + line ±5). "
-            "All scenarios count: recall = hits / total scenarios; findings on clean or refusal "
+            'Recall denominator = 25 buggy diffs only (expected=="findings"); findings on clean or refusal '
             "scenarios count as false positives. DS = harmonic mean of precision and recall."
         )
         lines.append("")
@@ -931,6 +1050,15 @@ def generate_markdown(
         lines.append(
             "|-------|-----------|--------|------|----------|----------------|---------------|---------------|---------|"
         )
+        # Change 11b: Overall column disclaimer
+        lines.append("")
+        lines.append(
+            "> **Note:** Overall = LLM judge (GLM5.2), which also participates as a reviewer: may reflect self-preference. "
+            "**DS is the primary metric** — it is computed against ground truth and reproducible from the "
+            "committed eval data. Overall is a quality opinion on a 0-2 scale from a single judge with no "
+            "inter-rater check: use it to break ties, not to rank."
+        )
+        lines.append("")
 
         for model_name in model_names:
             # Eval data uses full profile keys (e.g. mistral-small-4-119b)
@@ -962,8 +1090,13 @@ def generate_markdown(
         lines.append("")
         lines.append("Assessment of model refusal behavior on clean and ambiguous cases.")
         lines.append("")
-        lines.append("| Model | Clean FP Rate | Ambiguous Confidence Error | Refusal Accuracy |")
-        lines.append("|-------|:-------------:|:--------------------------:|:----------------:|")
+        # Change 7: Show denominators in table header
+        lines.append(
+            "| Model | Clean FP Rate (n/d) | Ambiguous Confidence Error (n/d) | Refusal Accuracy |"
+        )
+        lines.append(
+            "|-------|:-------------------:|:--------------------------------:|:----------------:|"
+        )
 
         for model_name in model_names:
             eval_name = profile_name_map.get(model_name, model_name)
@@ -973,18 +1106,58 @@ def generate_markdown(
             clean_fp_rate = metrics.get("clean_fp_rate", 0.0)
             ambiguous_error = metrics.get("ambiguous_confidence_error", 0.0)
             refusal_acc = metrics.get("refusal_accuracy", 0.0)
+            clean_total = metrics.get("clean_total", 0)
+            ambiguous_total = metrics.get("ambiguous_total", 0)
+
+            # Change 7: Render denominators, show "n/d" when denominator is 0
+            if clean_total > 0:
+                clean_fp_display = (
+                    f"{clean_fp_rate:.1%} ({metrics.get('clean_fps', 0)}/{clean_total})"
+                )
+            else:
+                clean_fp_display = "n/d (0/0)"
+
+            if ambiguous_total > 0:
+                ambig_error_display = f"{ambiguous_error:.1%} ({metrics.get('ambiguous_errors', 0)}/{ambiguous_total})"
+            else:
+                ambig_error_display = "n/d (0/0)"
 
             lines.append(
-                f"| {model_name} | {clean_fp_rate:.1%} | {ambiguous_error:.1%} | {refusal_acc:.1%} |"
+                f"| {model_name} | {clean_fp_display} | {ambig_error_display} | {refusal_acc:.1%} |"
             )
 
         lines.append("")
         lines.append(
             "> **Note:** Clean FP Rate measures false positives on records expected to have no findings. "
             "Ambiguous Confidence Error measures incorrect high-confidence conclusions on ambiguous cases. "
-            "Refusal Accuracy = 1 - Ambiguous Confidence Error."
+            "Refusal Accuracy = 1 - Ambiguous Confidence Error. Denominators shown in parentheses."
         )
         lines.append("")
+
+    # Phase 4: Add Limitations section (skeleton part 4)
+    lines.append("## Limitations")
+    lines.append("")
+    lines.append(
+        "- **n=45 (25 buggy)**: Evaluation based on 45 diff scenarios, of which 25 contain ground-truth bugs."
+    )
+    lines.append(
+        f"- **Repetitions**: each model+skill pairing was evaluated {repetitions}x per diff scenario."
+    )
+    if repetitions == 1:
+        lines.append(
+            "- **No variance estimate**: with a single run per cell there is no standard deviation, "
+            "so differences of ~0.03 Detection Score between pairings should be read as noise, "
+            "not as a ranking difference."
+        )
+    lines.append(
+        "- **Judge COI**: The judge (GLM5.2) also participates as a reviewer, so judge scores may reflect self-preference."
+    )
+    lines.append(provenance_limitation(eval_provenance) + "\n")
+    lines.append(
+        '- **Denominator choice**: Recall denominator uses only buggy diffs (expected=="findings"); findings on clean or refusal scenarios count as false positives.'
+    )
+    lines.append("")
+    lines.append("")
 
     lines.append("")
 

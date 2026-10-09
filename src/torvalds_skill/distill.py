@@ -632,6 +632,36 @@ def _repair_missing_sections(
     return skill_md
 
 
+def check_skill_word_count(skill_md: str, limit: int = 10000) -> bool:
+    """Check if skill word count is within the maximum limit.
+
+    Args:
+        skill_md: The skill markdown content
+        limit: Maximum allowed word count (default: 10000)
+
+    Returns:
+        True if within limit
+
+    Raises:
+        ValueError: If word count exceeds limit
+    """
+    word_count = len(skill_md.split())
+    if word_count > limit:
+        raise ValueError(f"Skill word count {word_count} exceeds maximum {limit}")
+    return True
+
+
+def _write_gated_document(content: str, output_path: Path, limit: int = 10000) -> str:
+    """Persist a generated document after the MAX word gate passes.
+
+    The gate runs BEFORE the write so an oversized artifact never reaches disk.
+    """
+    check_skill_word_count(content, limit=limit)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(content, encoding="utf-8")
+    return content
+
+
 def distill_skill(
     patterns_path: Path,
     output_path: Path,
@@ -851,7 +881,7 @@ def distill_skill(
         r"^\s*---\s*\n.*?\n---\s*\n", "", skill_md, count=1, flags=re.S
     )
 
-    output_path.write_text(skill_md_with_frontmatter, encoding="utf-8")
-    word_count = len(skill_md.split())
-    print(f"skill written: {output_path} ({word_count} words)")
+    skill_md_with_frontmatter = _write_gated_document(skill_md_with_frontmatter, output_path)
+
+    print(f"skill written: {output_path} ({len(skill_md_with_frontmatter.split())} words)")
     return skill_md_with_frontmatter

@@ -414,16 +414,26 @@ python3 scripts/run_eval.py --cross --models glm5.2 --rescore-zeros --parallel
 | `--out <path>` | Output JSONL path |
 | `--status` | Print completion table, make no API calls |
 | `--models <m1,m2>` | Restrict to a subset of models |
+| `--baseline` | Also run the no-skill arm (`skill='none'`) in the diagonal file |
+| `--repetitions <n>` | Run each diff `n` times; each repetition is a separate record (`rep`, 0-based) |
 | `--rescore-zeros` | Re-judge records that previously scored zero (malformed judge JSON) |
 | `--force` | Re-evaluate all pairs, ignoring the resume index |
 | `--parallel` | Run two (model, skill) pairs concurrently (`ThreadPoolExecutor`, lock-guarded appends) |
+| `--judge-model <m>` | Score findings with a fixed external judge instead of self-judging |
 
 **Rendering**
 
 ```bash
 # 4×4 model×skill matrix (marginals: best model, best skill, novel-bug coverage)
 python3 scripts/render_cross.py
+
+# Render a report that admits it was produced from a contaminated run
+python3 scripts/render_cross.py --eval-provenance pre-decontamination
 ```
+
+| Flag | Effect |
+|---|---|
+| `--eval-provenance` | Which reviewer-prompt version produced the results (`decontaminated` default, or `pre-decontamination`). Stated in the report header, so a report cannot claim clean data when it was rendered from a contaminated run |
 
 Outputs: `report/cross_matrix.md` (matrix), plus two diff-based sections in `report/comparison.md` once `data/eval_results.jsonl` exists (generalization and refusal-calibration). Long-running eval logs go to `/tmp/` (for example `/tmp/eval_cross_run3.log`), not `report/`.
 
@@ -479,3 +489,54 @@ python -m torvalds_skill soul --model mistral-small-4-119b --out soul/soul-mistr
 Extract resume skips:
 1. Message IDs in `data/checkpoint.jsonl` (already processed)
 2. Message IDs in `data/skip_list.json` (produced zero moves)
+
+## Severity mapping
+
+The pipeline uses two independent severity scales that must be mapped when comparing model outputs to ground truth.
+
+### Model self-reported severities
+
+When a model generates a finding, it assigns a severity from its own vocabulary:
+
+| Model severity | Meaning |
+|---|---|
+| `reject` | Critical bug — must be fixed |
+| `request-changes` | Significant issue — should be fixed |
+| `nitpick` | Minor concern — nice to have |
+| `uncertain` | Ambiguous — needs human review |
+
+These are produced by the skill prompt during the **review stage** (either `run_eval.py` or the review pipeline).
+
+### Ground-truth severities
+
+Ground-truth bugs in `data/eval_diffs.jsonl` have severities defined in `src/torvalds_skill/severity.py`:
+
+| Ground-truth severity | Meaning |
+|---|---|
+| `CRITICAL` | Silent data corruption, security flaw, use-after-free |
+| `HIGH` | Logic error, resource leak, API misuse |
+| `MEDIUM` | Performance issue, edge case bug |
+| `LOW` | Style violation, minor inefficiency |
+
+These are authored when creating the eval diffs.
+
+### Cross-scale mapping for comparisons
+
+When matching findings to bugs (in `match_finding_to_bug` and `compute_cell_metrics`), the pipeline uses this mapping:
+
+| Model severity | Ground-truth severity | Rationale |
+|---|---|---|
+| `reject` | `CRITICAL` | Both indicate show-stopper defects |
+| `request-changes` | `HIGH` | Significant but not catastrophic |
+| `nitpick` | `MEDIUM` / `LOW` | Context-dependent, mapped conservatively |
+| `uncertain` | (no mapping) | Uncertain findings do not count as matches |
+
+This mapping is applied during **evaluation** when computing precision, recall, and Detection Score. The mapping is one-way: model severity → ground-truth severity, not the reverse.
+
+### Where each scale is produced
+
+| Scale | Production point | Consumer |
+|---|---|---|
+| Model severity | Skill prompt → model response | `parse_findings_from_review` in `run_eval.py` |
+| Ground-truth severity | `eval_diffs.jsonl` authoring | `match_finding_to_bug` in `matching.py` |
+| Cross-scale mapping | `severity.py` | `compute_cell_metrics` in `render_cross.py` |

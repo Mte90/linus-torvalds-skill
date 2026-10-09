@@ -17,6 +17,7 @@ from scripts.run_eval import (
     _rescore_zeros,
     _run_pair,
     _status_cells,
+    build_diff_prompt,
     match_finding_to_diff_bug,
     run_model_on_diff,
     score_finding_with_judge,
@@ -1378,3 +1379,467 @@ class TestRescoreZeros:
         _print_status_table(str(results), diffs, "glm5.2", False)
         out = capsys.readouterr().out
         assert "1/1" in out and "COMPLETE" in out
+
+
+class TestBuildDiffPrompt:
+    """Tests for build_diff_prompt ground-truth-free requirement."""
+
+    def test_prompt_contains_no_ground_truth_bugs_findings(self):
+        """Regression: prompt must NOT contain ground truth bug information."""
+        skill_text = "# Test Skill\n\nReview code carefully."
+
+        # Test with findings expected (2+ bugs)
+        diff_record_findings = {
+            "id": "DIFF-001",
+            "diff": "+buggy code\n+more buggy code",
+            "language": "c",
+            "file": "server.c",
+            "expected": "findings",
+            "bugs": [
+                {
+                    "line": 100,
+                    "category": "memory-safety",
+                    "severity": "CRITICAL",
+                    "description": "Use after free vulnerability in connection handler",
+                },
+                {
+                    "line": 250,
+                    "category": "logic",
+                    "severity": "HIGH",
+                    "description": "Off-by-one error in buffer allocation",
+                },
+            ],
+        }
+
+        prompt = build_diff_prompt(diff_record_findings, skill_text)
+
+        # Must NOT contain ground truth indicators
+        assert "Ground truth bugs present in this diff" not in prompt
+        assert "should be clean" not in prompt
+        # Must NOT contain any bug descriptions (use first 40 chars as distinctive substring)
+        for bug in diff_record_findings["bugs"]:
+            desc_fragment = bug["description"][:40]
+            assert desc_fragment not in prompt
+            assert f"at line {bug['line']}" not in prompt
+
+        # Must STILL contain diff body and skill text (guard against over-deletion)
+        assert "+buggy code" in prompt
+        assert "+more buggy code" in prompt
+        assert "# Test Skill" in prompt
+        assert "Review code carefully" in prompt
+
+    def test_prompt_contains_no_ground_truth_no_findings(self):
+        """Regression: prompt for clean diffs must NOT say 'should be clean'."""
+        skill_text = "# Test Skill\n\nReview code carefully."
+
+        diff_record_clean = {
+            "id": "DIFF-002",
+            "diff": "+clean code\n+refactored function",
+            "language": "python",
+            "file": "utils.py",
+            "expected": "no-findings",
+            "bugs": [],
+        }
+
+        prompt = build_diff_prompt(diff_record_clean, skill_text)
+
+        # Must NOT contain clean hint
+        assert "should be clean" not in prompt
+        assert "Ground truth bugs present in this diff" not in prompt
+
+        # Must STILL contain diff body and skill text
+        assert "+clean code" in prompt
+        assert "# Test Skill" in prompt
+
+    def test_prompt_contains_no_ground_truth_refuse(self):
+        """Regression: prompt for ambiguous diffs must NOT leak ground truth."""
+        skill_text = "# Test Skill\n\nReview code carefully."
+
+        diff_record_refuse = {
+            "id": "DIFF-003",
+            "diff": "+partial implementation\n+incomplete logic",
+            "language": "c",
+            "file": "driver.c",
+            "expected": "refuse-to-conclude",
+            "bugs": [
+                {
+                    "line": 42,
+                    "category": "unclear",
+                    "severity": "LOW",
+                    "description": "Intent of this code path is ambiguous",
+                }
+            ],
+        }
+
+        prompt = build_diff_prompt(diff_record_refuse, skill_text)
+
+        # Must NOT contain ground truth indicators
+        assert "Ground truth bugs present in this diff" not in prompt
+        assert "should be clean" not in prompt
+        # Must NOT contain bug description fragment
+        assert "Intent of this code path is ambiguous"[:40] not in prompt
+        assert "at line 42" not in prompt
+
+        # Must STILL contain diff body and skill text
+        assert "+partial implementation" in prompt
+        assert "# Test Skill" in prompt
+
+
+class TestBaselineMode:
+    """Tests for baseline mode (no skill text) functionality."""
+
+    def test_baseline_prompt_contains_no_skill_block(self):
+        """Baseline mode prompt must NOT contain any skill text."""
+        diff_record = {
+            "id": "DIFF-001",
+            "diff": "+test code",
+            "language": "python",
+            "file": "test.py",
+            "expected": "findings",
+            "bugs": [],
+        }
+
+        # Baseline mode: skill_text is None
+        prompt = build_diff_prompt(diff_record, None)
+
+        # Must NOT contain skill block markers
+        assert "== SKILL ==" not in prompt
+        # Must NOT contain any skill text content
+        assert (
+            "Torvalds skill" not in prompt or "Linus Torvalds reviewer skill" in prompt
+        )  # Only in header
+
+        # Must STILL contain diff block
+        assert "== DIFF ==" in prompt
+        assert "+test code" in prompt
+        assert "File: test.py" in prompt
+        assert "Language: python" in prompt
+
+    def test_baseline_prompt_contains_no_ground_truth(self):
+        """Baseline mode prompt must NOT contain ground truth bug information."""
+        diff_record = {
+            "id": "DIFF-001",
+            "diff": "+buggy code",
+            "language": "c",
+            "file": "server.c",
+            "expected": "findings",
+            "bugs": [
+                {
+                    "line": 100,
+                    "category": "memory-safety",
+                    "severity": "CRITICAL",
+                    "description": "Use after free vulnerability",
+                }
+            ],
+        }
+
+        # Baseline mode: skill_text is None
+        prompt = build_diff_prompt(diff_record, None)
+
+        # Must NOT contain ground truth
+        assert "Use after free" not in prompt
+        assert "at line 100" not in prompt
+        assert "Ground truth" not in prompt
+
+    def test_baseline_records_carry_skill_none(self, monkeypatch, tmp_path):
+        """Baseline mode records must have skill='none'."""
+
+        # Mock call_llm
+        def mock_call_llm(*args, **kwargs):
+            return "# Review\n\nNo findings."
+
+        monkeypatch.setattr("scripts.run_eval.call_llm", mock_call_llm)
+
+        # Mock MODELS (not used in baseline mode)
+        skill_path = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
+        monkeypatch.setattr("scripts.run_eval.MODELS", {"test-model": skill_path})
+
+        # Mock get_profile
+        mock_profile = MagicMock()
+        mock_profile.max_tokens = 1000
+        mock_profile.review_timeout = 600
+        mock_profile.reasoning = False
+
+        def mock_get_profile(model):
+            return mock_profile
+
+        monkeypatch.setattr("scripts.run_eval.get_profile", mock_get_profile)
+
+        # Run in baseline mode
+        diff_record = {
+            "id": "DIFF-001",
+            "diff": "+test",
+            "language": "python",
+            "file": "test.py",
+            "expected": "findings",
+            "bugs": [],
+        }
+
+        result = run_model_on_diff("test-model", diff_record, no_judge=True, baseline=True)
+
+        assert result is not None
+        assert result["skill"] == "none"
+
+
+class TestRepetitions:
+    """Tests for --repetitions functionality."""
+
+    def test_repetitions_flag_parses_default_one(self):
+        """Test that --repetitions flag parses and defaults to 1."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            "--repetitions",
+            type=int,
+            default=1,
+            help="Number of times to run each diff (default: 1).",
+        )
+
+        args = parser.parse_args([])
+        assert args.repetitions == 1
+
+        args = parser.parse_args(["--repetitions", "3"])
+        assert args.repetitions == 3
+
+        args = parser.parse_args(["--repetitions", "5"])
+        assert args.repetitions == 5
+
+    def test_records_carry_rep_field(self, monkeypatch, tmp_path):
+        """Each repetition gets a separate record with 'rep' field (0-based)."""
+        import json as json_lib
+
+        # Mock call_llm
+        def mock_call_llm(*args, **kwargs):
+            return "# Review\n\nNo findings."
+
+        monkeypatch.setattr("scripts.run_eval.call_llm", mock_call_llm)
+
+        # Mock MODELS
+        skill_path = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
+        monkeypatch.setattr("scripts.run_eval.MODELS", {"test-model": skill_path})
+
+        # Mock get_profile
+        mock_profile = MagicMock()
+        mock_profile.max_tokens = 1000
+        mock_profile.review_timeout = 600
+        mock_profile.reasoning = False
+
+        def mock_get_profile(model):
+            return mock_profile
+
+        monkeypatch.setattr("scripts.run_eval.get_profile", mock_get_profile)
+
+        # Create output file
+        output_file = tmp_path / "results.jsonl"
+
+        # Run with 3 repetitions
+        diff_records = [
+            {
+                "id": "DIFF-001",
+                "diff": "+test",
+                "language": "python",
+                "file": "test.py",
+                "expected": "findings",
+                "bugs": [],
+            }
+        ]
+
+        existing_results = {}
+        _run_pair(
+            "test-model",
+            "test-model",
+            diff_records,
+            True,
+            None,
+            existing_results,
+            output_file,
+            False,
+            repetitions=3,
+            baseline=False,
+        )
+
+        # Verify 3 records were written with rep 0, 1, 2
+        lines = output_file.read_text().strip().split("\n")
+        assert len(lines) == 3
+
+        reps = []
+        for line in lines:
+            record = json_lib.loads(line)
+            reps.append(record["rep"])
+
+        assert reps == [0, 1, 2]
+
+    def test_resume_skips_existing_rep(self, monkeypatch, tmp_path):
+        """Resume-safe: existing (diff, model, skill, rep) triple is skipped."""
+        import json as json_lib
+
+        # Mock call_llm
+        call_count = [0]
+
+        def mock_call_llm(*args, **kwargs):
+            call_count[0] += 1
+            return "# Review\n\nNo findings."
+
+        monkeypatch.setattr("scripts.run_eval.call_llm", mock_call_llm)
+
+        # Mock MODELS
+        skill_path = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
+        monkeypatch.setattr("scripts.run_eval.MODELS", {"test-model": skill_path})
+
+        # Mock get_profile
+        mock_profile = MagicMock()
+        mock_profile.max_tokens = 1000
+        mock_profile.review_timeout = 600
+        mock_profile.reasoning = False
+
+        def mock_get_profile(model):
+            return mock_profile
+
+        monkeypatch.setattr("scripts.run_eval.get_profile", mock_get_profile)
+
+        # Create output file with existing rep=0 record
+        output_file = tmp_path / "results.jsonl"
+        existing_record = {
+            "diff_id": "DIFF-001",
+            "model": "test-model",
+            "skill": "test-model",
+            "rep": 0,
+            "findings": [],
+            "scores": {"accuracy": 0, "prioritization": 0, "justification": 0, "actionability": 0},
+        }
+        output_file.write_text(json_lib.dumps(existing_record) + "\n")
+
+        # Run with 3 repetitions
+        diff_records = [
+            {
+                "id": "DIFF-001",
+                "diff": "+test",
+                "language": "python",
+                "file": "test.py",
+                "expected": "findings",
+                "bugs": [],
+            }
+        ]
+
+        existing_results = {}
+        # Load existing results from file
+        with open(output_file) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    record = json_lib.loads(line)
+                    key = (
+                        record.get("diff_id"),
+                        record.get("model"),
+                        record.get("skill") or record.get("model"),
+                        record.get("rep", 0),
+                    )
+                    existing_results[key] = record
+
+        _run_pair(
+            "test-model",
+            "test-model",
+            diff_records,
+            True,
+            None,
+            existing_results,
+            output_file,
+            False,
+            repetitions=3,
+            baseline=False,
+        )
+
+        # Verify only 2 new records were written (rep=1 and rep=2)
+        lines = output_file.read_text().strip().split("\n")
+        assert len(lines) == 3  # 1 existing + 2 new
+
+        # Verify rep=0 was not re-evaluated (call_count should be 2, not 3)
+        assert call_count[0] == 2
+
+    def test_legacy_record_without_rep_honored_as_rep_zero(self, monkeypatch, tmp_path):
+        """Legacy record without rep field is honored as rep=0 and not re-evaluated."""
+        import json as json_lib
+
+        # Mock call_llm
+        call_count = [0]
+
+        def mock_call_llm(*args, **kwargs):
+            call_count[0] += 1
+            return "# Review\n\nNo findings."
+
+        monkeypatch.setattr("scripts.run_eval.call_llm", mock_call_llm)
+
+        # Mock MODELS
+        skill_path = Path(__file__).parent.parent / "linus-torvalds-skill" / "SKILL.md"
+        monkeypatch.setattr("scripts.run_eval.MODELS", {"test-model": skill_path})
+
+        # Mock get_profile
+        mock_profile = MagicMock()
+        mock_profile.max_tokens = 1000
+        mock_profile.review_timeout = 600
+        mock_profile.reasoning = False
+
+        def mock_get_profile(model):
+            return mock_profile
+
+        monkeypatch.setattr("scripts.run_eval.get_profile", mock_get_profile)
+
+        # Create output file with legacy record (no rep field)
+        output_file = tmp_path / "results.jsonl"
+        legacy_record = {
+            "diff_id": "DIFF-001",
+            "model": "test-model",
+            "skill": "test-model",
+            # No 'rep' field - legacy record
+            "findings": [],
+            "scores": {"accuracy": 0, "prioritization": 0, "justification": 0, "actionability": 0},
+        }
+        output_file.write_text(json_lib.dumps(legacy_record) + "\n")
+
+        # Run with 3 repetitions
+        diff_records = [
+            {
+                "id": "DIFF-001",
+                "diff": "+test",
+                "language": "python",
+                "file": "test.py",
+                "expected": "findings",
+                "bugs": [],
+            }
+        ]
+
+        existing_results = {}
+        # Load existing results from file (backward compatible: missing rep = 0)
+        with open(output_file) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    record = json_lib.loads(line)
+                    diff_id = record.get("diff_id")
+                    model = record.get("model")
+                    skill = record.get("skill") or record.get("model")
+                    rep = record.get("rep", 0)  # Backward compatible
+                    key = (diff_id, model, skill, rep)
+                    existing_results[key] = record
+
+        _run_pair(
+            "test-model",
+            "test-model",
+            diff_records,
+            True,
+            None,
+            existing_results,
+            output_file,
+            False,
+            repetitions=3,
+            baseline=False,
+        )
+
+        # Verify only 2 new records were written (rep=1 and rep=2)
+        # Legacy record treated as rep=0, so it's skipped
+        lines = output_file.read_text().strip().split("\n")
+        assert len(lines) == 3  # 1 legacy + 2 new
+
+        # Verify legacy record was not re-evaluated (call_count should be 2, not 3)
+        assert call_count[0] == 2

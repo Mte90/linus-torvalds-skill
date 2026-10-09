@@ -1,0 +1,106 @@
+[
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Buffer overflow in nickname construction",
+    "benchmark_id": "SC-003",
+    "benchmark_bug_title": "Ignored return value of write() in broadcast loop can silently drop messages",
+    "file": "smallchat-server.c",
+    "line_distance": 0
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Missing NUL\u2011terminator for client nickname",
+    "benchmark_id": "SC-003",
+    "benchmark_bug_title": "Ignored return value of write() in broadcast loop can silently drop messages",
+    "file": "smallchat-server.c",
+    "line_distance": 5
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Out\u2011of\u2011bounds access of `Chat->clients` array",
+    "benchmark_id": "SC-003",
+    "benchmark_bug_title": "Ignored return value of write() in broadcast loop can silently drop messages",
+    "file": "smallchat-server.c",
+    "line_distance": 0
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Reliance on `assert` for runtime invariant",
+    "benchmark_id": "SC-003",
+    "benchmark_bug_title": "Ignored return value of write() in broadcast loop can silently drop messages",
+    "file": "smallchat-server.c",
+    "line_distance": 2
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Ignoring possible failure of `socketSetNonBlockNoDelay`",
+    "benchmark_id": "SC-003",
+    "benchmark_bug_title": "Ignored return value of write() in broadcast loop can silently drop messages",
+    "file": "smallchat-server.c",
+    "line_distance": 1
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Ignoring write errors in `sendMsgToAllClientsBut`",
+    "benchmark_id": "SC-006",
+    "benchmark_bug_title": "Missing error handling for write() of welcome message",
+    "file": "smallchat-server.c",
+    "line_distance": 9
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Treating any `read` error as client disconnect",
+    "benchmark_id": "SC-013",
+    "benchmark_bug_title": "/nick with no argument gives misleading 'Unsupported command' error instead of usage message",
+    "file": "smallchat-server.c",
+    "line_distance": 10
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Missing `const` qualifier on `TCPConnect` address parameter",
+    "benchmark_id": "SC-023",
+    "benchmark_bug_title": "chatRealloc leaks original pointer on failure",
+    "file": "chatlib.c",
+    "line_distance": 5
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Magic number used for listen backlog",
+    "benchmark_id": "SC-022",
+    "benchmark_bug_title": "TCPConnect breaks out of address iteration loop on EINPROGRESS instead of continuing",
+    "file": "chatlib.c",
+    "line_distance": 6
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Missing size_t definition",
+    "benchmark_id": "SC-029",
+    "benchmark_bug_title": "No const correctness on string parameters in header declarations",
+    "file": "chatlib.h",
+    "line_distance": 1
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Inconsistent naming convention",
+    "benchmark_id": "SC-029",
+    "benchmark_bug_title": "No const correctness on string parameters in header declarations",
+    "file": "chatlib.h",
+    "line_distance": 5
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "Missing .PHONY declarations",
+    "benchmark_id": "SC-029",
+    "benchmark_bug_title": "No const correctness on string parameters in header declarations",
+    "file": "chatlib.h",
+    "line_distance": 9
+  },
+  {
+    "model": "gpt-oss-120b",
+    "finding_title": "CFLAGS placed after output file",
+    "benchmark_id": "SC-029",
+    "benchmark_bug_title": "No const correctness on string parameters in header declarations",
+    "file": "chatlib.h",
+    "line_distance": 5
+  }
+]

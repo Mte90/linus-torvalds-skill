@@ -817,7 +817,7 @@ def main() -> int:
     # 2. Word count
     all_pass &= check(
         "Word count in range (1500-10000)",
-        1500 <= word_count <= 15000,
+        1500 <= word_count <= 10000,
         f"{word_count} words",
     )
 

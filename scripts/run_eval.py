@@ -11,9 +11,8 @@ Usage:
   python3 scripts/run_eval.py --no-judge         # offline mode, zero scores
   python3 scripts/run_eval.py --models glm5.2    # run single model
   python3 scripts/run_eval.py --force            # regenerate all results
-   python3 scripts/run_eval.py --rescore-zeros    # re-judge poisoned records
-   python3 scripts/run_eval.py --rescore-all --judge-model glm5.2  # re-judge all with fixed judge
-   python3 scripts/run_eval.py --parallel         # run models in parallel (max 2 workers)
+  python3 scripts/run_eval.py --baseline         # run baseline (no skill)
+  python3 scripts/run_eval.py --repetitions 3    # run each diff 3 times
 """
 
 from __future__ import annotations
@@ -120,51 +119,42 @@ Return exactly this JSON structure (no markdown, no extra text):
 """
 
 
-def build_diff_prompt(diff_record: dict, skill_text: str) -> str:
-    """Build diff-only review prompt.
+def build_diff_prompt(diff_record: dict, skill_text: str | None) -> str:
+    """Build ground-truth-free diff review prompt.
 
     Args:
         diff_record: Record from eval_diffs.jsonl with id, diff, language, file, expected, bugs
-        skill_text: Torvalds skill text to apply
+        skill_text: Torvalds skill text to apply. If None, baseline mode (no skill block).
 
     Returns:
-        Prompt string for LLM
+        Prompt string for LLM (contains no ground-truth bug information)
     """
     diff_id = diff_record.get("id", "unknown")
     diff_text = diff_record.get("diff", "")
     file_path = diff_record.get("file", "unknown")
     language = diff_record.get("language", "unknown")
 
-    # Build bugs section
-    bugs = diff_record.get("bugs", [])
-    bugs_text = ""
-    if bugs:
-        bugs_text = "Ground truth bugs present in this diff:\n"
-        for i, bug in enumerate(bugs, 1):
-            severity = bug.get("severity", "unknown")
-            category = bug.get("category", "unknown")
-            line = bug.get("line", "unknown")
-            desc = bug.get("description", "no description")
-            bugs_text += f"  {i}. [{severity}] {category} at line {line}: {desc}\n"
-    else:
-        bugs_text = "No ground truth bugs (this diff should be clean)."
+    # Build prompt header
+    prompt_parts = [
+        "You are a code reviewer applying the Linus Torvalds reviewer skill to a code diff."
+    ]
+    prompt_parts.append("\nDo NOT use any tools. Everything you need is inlined below.")
 
-    return f"""You are a code reviewer applying the Linus Torvalds reviewer skill to a code diff.
+    # Add skill block only if skill_text is provided
+    if skill_text is not None:
+        prompt_parts.append("\n== SKILL ==")
+        prompt_parts.append(skill_text)
 
-Do NOT use any tools. Everything you need is inlined below.
+    # Add diff block
+    prompt_parts.append("\n== DIFF ==")
+    prompt_parts.append(f"File: {file_path}")
+    prompt_parts.append(f"Language: {language}")
+    prompt_parts.append(f"Diff ID: {diff_id}")
+    prompt_parts.append(f"\n{diff_text}")
 
-== SKILL ==
-{skill_text}
-
-== DIFF ==
-File: {file_path}
-Language: {language}
-Diff ID: {diff_id}
-
-{diff_text}
-
-{bugs_text}
-
+    return (
+        "".join(prompt_parts)
+        + """
 ## Task
 
 Review the diff above using the Torvalds skill. Find bugs, security issues, memory safety problems, and code quality issues.
@@ -196,6 +186,7 @@ For each finding use:
 
 Write your review to stdout.
 """
+    )
 
 
 def match_finding_to_diff_bug(finding: dict, bugs: list[dict], diff_file: str = "") -> dict | None:
@@ -461,6 +452,7 @@ def run_model_on_diff(
     no_judge: bool,
     judge_model: str | None = None,
     skill_model: str | None = None,
+    baseline: bool = False,
 ) -> dict:
     """Run a single model on a single diff record.
 
@@ -470,16 +462,21 @@ def run_model_on_diff(
         no_judge: If True, skip judging (offline mode)
         judge_model: Model to use for judging (defaults to same as review model)
         skill_model: Whose skill to apply (defaults to model itself; set for cross runs)
+        baseline: If True, run without skill text (skill="none")
 
     Returns:
-        Result dict with: diff_id, model, expected, findings, scores, refused
+        Result dict with: diff_id, model, expected, findings, scores, refused, skill, rep
     """
-    skill_file = MODELS.get(skill_model or model)
-    if not skill_file or not skill_file.exists():
-        print(f"error: skill file not found: {skill_file}", file=sys.stderr)
-        return None
+    # Baseline mode: no skill text
+    if baseline:
+        skill_text = None
+    else:
+        skill_file = MODELS.get(skill_model or model)
+        if not skill_file or not skill_file.exists():
+            print(f"error: skill file not found: {skill_file}", file=sys.stderr)
+            return None
+        skill_text = skill_file.read_text()
 
-    skill_text = skill_file.read_text()
     diff_id = diff_record.get("id", "unknown")
 
     # Build prompt and call model
@@ -553,8 +550,8 @@ def run_model_on_diff(
         "scores": avg_scores,
         "refused": refused,
     }
-    if skill_model:
-        result["skill"] = skill_model
+    # Always include skill field ("none" for baseline, skill_model for others)
+    result["skill"] = skill_model if skill_model and not baseline else "none"
     return result
 
 
@@ -790,6 +787,66 @@ def _rescore_zeros(
     print(f"  Still failing (judge_error): {still_failing}")
 
 
+def _stamp_judge_model(results_path: Path, judge_model: str | None) -> None:
+    """Record which judge produced the scores, without re-judging anything.
+
+    Records written before ``judge_model`` existed carry no proof of which model
+    scored them, so a report can only assert the judge from how the run was
+    invoked. Stamping closes that gap at zero API cost. It does NOT recompute
+    scores: use ``--rescore-all`` when the scores themselves must be redone.
+
+    Records already tagged with a different judge are left untouched and
+    reported, so a wrong label can never be written silently.
+
+    Run this only when no evaluation is writing to the same file.
+    """
+    if not judge_model:
+        print(
+            "error: --stamp-judge-model requires the judge name (e.g. --stamp-judge-model glm5.2)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    results = []
+    with open(results_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                results.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    if not results:
+        print(f"No records found in {results_path}")
+        return
+
+    stamped = 0
+    already = 0
+    conflicts: list[str] = []
+    for record in results:
+        existing = record.get("judge_model")
+        if existing is None:
+            record["judge_model"] = judge_model
+            stamped += 1
+        elif existing == judge_model:
+            already += 1
+        else:
+            conflicts.append(f"{record.get('model')}/{record.get('skill')}={existing}")
+
+    tmp_path = results_path.with_suffix(".tmp")
+    tmp_path.write_text("\n".join(json.dumps(r) for r in results) + "\n")
+    tmp_path.replace(results_path)
+
+    print(f"Stamped judge_model={judge_model} on {stamped} record(s) in {results_path}")
+    print(f"  already tagged with this judge: {already}")
+    if conflicts:
+        print(f"  LEFT UNTOUCHED, tagged with a different judge: {len(conflicts)}")
+        for entry in conflicts[:5]:
+            print(f"    {entry}")
+
+
 def _rescore_all(
     results_path: Path, diffs_path: Path, no_judge: bool, judge_model: str | None
 ) -> None:
@@ -917,65 +974,80 @@ def _run_pair(
     existing_results: dict,
     output_path: Path,
     force: bool,
+    repetitions: int = 1,
+    baseline: bool = False,
 ) -> tuple[str, int, int]:
     """Run all diffs for one (model, skill) pair.
 
     Args:
         model: Model label
-        skill_model: Skill file to apply
+        skill_model: Skill file to apply (or "none" for baseline)
         diff_records: List of diff records to process
         no_judge: If True, skip judging
         judge_model: Model to use for judging
-        existing_results: Dict of already-computed results (keyed by (diff_id, model, skill))
+        existing_results: Dict of already-computed results (keyed by (diff_id, model, skill, rep))
         output_path: Path to output JSONL file
         force: If True, regenerate all results
+        repetitions: Number of times to run each diff (default 1)
+        baseline: If True, run without skill text
 
     Returns:
         Tuple of (label, findings_count, judge_err_count)
     """
     label = model if model == skill_model else f"{model}←{skill_model}"
-    print(f"[{label}] processing {len(diff_records)} diffs...", flush=True)
+    if baseline:
+        label = f"{model}←baseline"
+    print(f"[{label}] processing {len(diff_records)} diffs × {repetitions} rep(s)...", flush=True)
     cell_start = time.time()
     cell_judge_err = 0
     findings_count = 0
 
     for idx, diff_record in enumerate(diff_records, 1):
         diff_id = diff_record.get("id", "unknown")
-        key = (diff_id, model, skill_model)
 
-        # Skip if already computed (unless force mode)
-        if not force and key in existing_results:
-            continue
+        # Run multiple repetitions
+        for rep in range(repetitions):
+            # Key includes rep for resume-safety (backward compatible: missing rep treated as 0)
+            key = (diff_id, model, skill_model if skill_model else "none", rep)
 
-        result = run_model_on_diff(model, diff_record, no_judge, judge_model, skill_model)
-        if result:
-            # Thread-safe append to JSONL
-            with _results_lock:
-                with open(output_path, "a") as out_f:
-                    out_f.write(json.dumps(result) + "\n")
-                    out_f.flush()
+            # Skip if already computed (unless force mode)
+            if not force and key in existing_results:
+                continue
 
-            findings_count += len(result.get("findings", []))
-            # Track judge errors
-            for f in result.get("findings", []):
-                if f.get("scores", {}).get("judge_error"):
-                    cell_judge_err += 1
-
-        # Per-record progress
-        elapsed = int(time.time() - cell_start)
-        if result:
-            findings_count = len(result.get("findings", []))
-            print(
-                f"[{label}] {idx}/{len(diff_records)} diff_id={diff_id} findings={findings_count} "
-                f"refused={result.get('refused', False)} "
-                f"judge_err={cell_judge_err} elapsed={elapsed}s",
-                flush=True,
+            result = run_model_on_diff(
+                model, diff_record, no_judge, judge_model, skill_model, baseline
             )
-        else:
-            print(
-                f"[{label}] {idx}/{len(diff_records)} diff_id={diff_id} status=error elapsed={elapsed}s",
-                flush=True,
-            )
+            if result:
+                # Add rep field to result
+                result["rep"] = rep
+
+                # Thread-safe append to JSONL
+                with _results_lock:
+                    with open(output_path, "a") as out_f:
+                        out_f.write(json.dumps(result) + "\n")
+                        out_f.flush()
+
+                findings_count += len(result.get("findings", []))
+                # Track judge errors
+                for f in result.get("findings", []):
+                    if f.get("scores", {}).get("judge_error"):
+                        cell_judge_err += 1
+
+            # Per-record progress
+            elapsed = int(time.time() - cell_start)
+            if result:
+                findings_count = len(result.get("findings", []))
+                print(
+                    f"[{label}] {idx}/{len(diff_records)} rep={rep} diff_id={diff_id} findings={findings_count} "
+                    f"refused={result.get('refused', False)} "
+                    f"judge_err={cell_judge_err} elapsed={elapsed}s",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[{label}] {idx}/{len(diff_records)} rep={rep} diff_id={diff_id} status=error elapsed={elapsed}s",
+                    flush=True,
+                )
 
     # Cell end summary
     elapsed_total = int(time.time() - cell_start)
@@ -998,9 +1070,9 @@ Examples:
   python3 scripts/run_eval.py --no-judge         # offline mode, zero scores
   python3 scripts/run_eval.py --models glm5.2    # run single model
   python3 scripts/run_eval.py --force            # regenerate all results
-   python3 scripts/run_eval.py --rescore-zeros    # re-judge poisoned records
-   python3 scripts/run_eval.py --rescore-all --judge-model glm5.2  # re-judge all with fixed judge
-   python3 scripts/run_eval.py --parallel         # run models in parallel (max 2 workers)
+  python3 scripts/run_eval.py --baseline         # run baseline (no skill text)
+  python3 scripts/run_eval.py --repetitions 3    # run each diff 3 times
+  python3 scripts/run_eval.py --cross            # run off-diagonal skill×model pairs
 """,
     )
     parser.add_argument(
@@ -1066,6 +1138,17 @@ Examples:
         help="Re-judge findings with all-zero scores or judge_error (no model re-run).",
     )
     parser.add_argument(
+        "--stamp-judge-model",
+        type=str,
+        default=None,
+        metavar="MODEL",
+        help=(
+            "Record MODEL as the judge on records that lack a judge_model field, "
+            "without re-judging. Use when scores came from --judge-model at "
+            "generation time but the field did not exist yet."
+        ),
+    )
+    parser.add_argument(
         "--rescore-all",
         action="store_true",
         help=(
@@ -1077,6 +1160,17 @@ Examples:
         "--parallel",
         action="store_true",
         help="Run (model, skill) pairs in parallel with max 2 workers (default: sequential).",
+    )
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="Number of times to run each diff (default: 1). Each repetition gets a separate record with 'rep' field (0-based).",
+    )
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="Run baseline mode: model runs WITHOUT any skill text (skill='none'). Composes with --repetitions.",
     )
     args = parser.parse_args()
 
@@ -1118,6 +1212,11 @@ Examples:
         _rescore_zeros(Path(args.out), Path(args.eval), args.no_judge, args.judge_model)
         sys.exit(0)
 
+    # --stamp-judge-model: tag records, no API calls
+    if args.stamp_judge_model:
+        _stamp_judge_model(Path(args.out), args.stamp_judge_model)
+        sys.exit(0)
+
     # --rescore-all: re-judge every record with a fixed external judge
     if args.rescore_all:
         _rescore_all(Path(args.out), Path(args.eval), args.no_judge, args.judge_model)
@@ -1146,21 +1245,35 @@ Examples:
             print(f"valid models: {', '.join(MODELS.keys())}", file=sys.stderr)
             sys.exit(2)
 
-    if args.cross:
+    # Build pairs based on mode
+    if args.baseline:
+        # Baseline mode: each model runs without skill (skill="none")
+        pairs = [(m, "none") for m in models_to_run]
+        # --cross doesn't apply to baseline (baseline is its own mode)
+    elif args.cross:
         pairs = _cross_pairs(models_to_run, skills_filter)
     else:
         pairs = [(m, m) for m in models_to_run]
 
-    print(f"Running eval: {len(diff_records)} diffs × {len(pairs)} pairings")
+    print(
+        f"Running eval: {len(diff_records)} diffs × {len(pairs)} pairings × {args.repetitions} rep(s)"
+    )
     print(f"  Input: {args.eval}")
     print(f"  Output: {args.out}")
-    print(f"  Pairings (model←skill): {', '.join(f'{m}←{s}' for m, s in pairs)}")
+    if args.baseline:
+        print("  Mode: baseline (no skill text)")
+    elif args.cross:
+        print(f"  Pairings (model←skill): {', '.join(f'{m}←{s}' for m, s in pairs)}")
+    else:
+        print(f"  Pairings (model←skill): {', '.join(f'{m}←{s}' for m, s in pairs)}")
     print(f"  Judge: {args.judge_model or 'self (per-model)'}")
     print(f"  Judge mode: {'disabled' if args.no_judge else 'enabled'}")
     print(f"  Parallel: {args.parallel} ({'max 2 workers' if args.parallel else 'sequential'})")
+    print(f"  Repetitions: {args.repetitions}")
     print()
 
     # Load existing results (for --force check)
+    # Key format: (diff_id, model, skill, rep) - backward compatible: missing rep treated as 0
     output_path = Path(args.out)
     existing_results = {}
     if output_path.exists() and not args.force:
@@ -1170,11 +1283,11 @@ Examples:
                 if line:
                     try:
                         record = json.loads(line)
-                        key = (
-                            record.get("diff_id"),
-                            record.get("model"),
-                            record.get("skill") or record.get("model"),
-                        )
+                        diff_id = record.get("diff_id")
+                        model = record.get("model")
+                        skill = record.get("skill") or record.get("model")
+                        rep = record.get("rep", 0)  # Backward compatible: missing rep = 0
+                        key = (diff_id, model, skill, rep)
                         # Skip records with judge_error (poisoned by scoring failure)
                         has_judge_error = any(
                             f.get("scores", {}).get("judge_error")
@@ -1209,6 +1322,8 @@ Examples:
                         existing_results,
                         output_path,
                         args.force,
+                        args.repetitions,
+                        args.baseline,
                     )
                 )
 
@@ -1229,6 +1344,8 @@ Examples:
                 existing_results,
                 output_path,
                 args.force,
+                args.repetitions,
+                args.baseline,
             )
 
         print()

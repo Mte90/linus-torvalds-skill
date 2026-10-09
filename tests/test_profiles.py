@@ -224,3 +224,61 @@ class TestNoHardCodedGlmReferences:
         assert len(code_matches) == 0, (
             f"Found 'glm' code references outside profiles.py/tests: {code_matches}"
         )
+
+
+class TestSoulVariantField:
+    """Tests for soul_variant field in ModelProfile (variant dispatch enforcement)."""
+
+    def test_soul_variant_field_exists(self):
+        """ModelProfile should have soul_variant field."""
+        from torvalds_skill.profiles import ModelProfile
+
+        profile = ModelProfile()
+        assert hasattr(profile, "soul_variant")
+        assert profile.soul_variant == "soul"  # default value
+
+    def test_all_known_profiles_have_soul_variant(self):
+        """Every profile in KNOWN_PROFILES must have a non-empty soul_variant."""
+        from torvalds_skill.profiles import KNOWN_PROFILES
+
+        for model_name, profile in KNOWN_PROFILES.items():
+            assert profile.soul_variant, f"Profile {model_name} has empty soul_variant"
+            assert profile.soul_variant in (
+                "soul",
+                "soul-glm",
+                "soul-mistral",
+                "soul-qwen",
+            ), f"Profile {model_name} has unexpected soul_variant: {profile.soul_variant}"
+
+    def test_soul_variant_mapping_gpt_oss(self):
+        """gpt-oss-120b should map to 'soul'."""
+        profile = get_profile("gpt-oss-120b")
+        assert profile.soul_variant == "soul"
+
+    def test_soul_variant_mapping_glm(self):
+        """glm5.2 should map to 'soul-glm'."""
+        profile = get_profile("glm5.2")
+        assert profile.soul_variant == "soul-glm"
+
+    def test_soul_variant_mapping_mistral(self):
+        """mistral-small-4-119b should map to 'soul-mistral'."""
+        profile = get_profile("mistral-small-4-119b")
+        assert profile.soul_variant == "soul-mistral"
+
+    def test_soul_variant_mapping_qwen(self):
+        """qwen3.8-27b should map to 'soul-qwen'."""
+        profile = get_profile("qwen3.8-27b")
+        assert profile.soul_variant == "soul-qwen"
+
+    def test_default_profile_soul_variant(self):
+        """DEFAULT_PROFILE should have soul_variant='soul'."""
+        assert DEFAULT_PROFILE.soul_variant == "soul"
+
+    def test_env_override_soul_variant(self):
+        """Environment variable should be able to override soul_variant."""
+        os.environ["LLM_PROFILE_GPT_OSS_120B__SOUL_VARIANT"] = "soul-custom"
+        try:
+            profile = get_profile("gpt-oss-120b")
+            assert profile.soul_variant == "soul-custom"
+        finally:
+            del os.environ["LLM_PROFILE_GPT_OSS_120B__SOUL_VARIANT"]

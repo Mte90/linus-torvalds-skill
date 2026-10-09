@@ -117,3 +117,53 @@ class TestSafeTruncate:
         result = safe_truncate(text, 15)
         # Should cut at a space, not in the middle of a word
         assert not result[:-3].endswith(" "), f"Should not end with space before ellipsis: {result}"
+
+
+class TestSectionOrder:
+    """Tests for comparison.md section ordering."""
+
+    def test_no_headings_between_banners_and_qa(self):
+        """Test that no ## headings appear between warning banners and Question & Answer."""
+        comparison_path = Path(__file__).parent.parent / "report" / "comparison.md"
+        if not comparison_path.exists():
+            pytest.skip("comparison.md not found")
+
+        content = comparison_path.read_text(encoding="utf-8")
+        lines = content.split("\n")
+
+        # Find the first ## heading (should be Question & Answer)
+        first_section_line = None
+        for i, line in enumerate(lines):
+            if line.strip().startswith("## "):
+                first_section_line = i
+                break
+
+        assert first_section_line is not None, "No ## headings found in comparison.md"
+        assert "Question & Answer" in lines[first_section_line], (
+            f"First ## heading should be 'Question & Answer', got: {lines[first_section_line]}"
+        )
+
+    def test_skill_generation_under_evidence(self):
+        """Test that Skill Generation Per Model appears after Evidence heading."""
+        comparison_path = Path(__file__).parent.parent / "report" / "comparison.md"
+        if not comparison_path.exists():
+            pytest.skip("comparison.md not found")
+
+        content = comparison_path.read_text(encoding="utf-8")
+        lines = content.split("\n")
+
+        evidence_line = None
+        skill_gen_line = None
+
+        for i, line in enumerate(lines):
+            if line.strip() == "## Evidence":
+                evidence_line = i
+            if line.strip() == "## Skill Generation Per Model":
+                skill_gen_line = i
+
+        assert evidence_line is not None, "## Evidence heading not found"
+        assert skill_gen_line is not None, "## Skill Generation Per Model heading not found"
+        assert skill_gen_line > evidence_line, (
+            f"Skill Generation Per Model (line {skill_gen_line + 1}) should appear after "
+            f"Evidence (line {evidence_line + 1})"
+        )

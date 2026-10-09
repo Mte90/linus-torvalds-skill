@@ -63,7 +63,7 @@ BANNED_PATTERNS = [
 
 # Word count target range
 MIN_WORDS = 2000
-MAX_WORDS = 12000
+MAX_WORDS = 10000
 
 
 def check(label: str, condition: bool, detail: str = "") -> bool:

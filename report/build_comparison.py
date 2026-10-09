@@ -28,7 +28,11 @@ except ImportError:
 _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
-from torvalds_skill.matching import match_finding_to_bug  # noqa: E402
+from torvalds_skill.matching import (  # noqa: E402
+    dedupe_records,
+    finding_identity,
+    match_finding_to_bug,
+)
 
 # Models and their review files
 MODELS = [
@@ -314,7 +318,7 @@ def _dedup_findings(findings: list[Finding]) -> list[Finding]:
     """Collapse duplicate findings within a single review.
 
     Two findings are duplicates when they share the same file AND:
-    - title similarity >= 0.35 (same bug, slightly different wording), or
+    - title similarity >= 0.30 (same bug, slightly different wording), or
     - title similarity >= 0.20 AND lines within ±3 (same location, similar title).
     Line proximity alone is insufficient — in small files, different bugs
     can be within ±10 lines of each other.
@@ -583,9 +587,9 @@ def _keyword_overlap(title1: str, title2: str) -> bool:
     """Check if two titles share significant keywords.
 
     Returns True if titles match by:
+    - SequenceMatcher similarity >= 0.30, OR
     - At least 2 overlapping content words (after filtering stopwords), OR
-    - Jaccard similarity ratio >= 0.3, OR
-    - SequenceMatcher similarity >= 0.35
+    - Jaccard similarity ratio >= 0.3
     """
     # First check sequence similarity (new fuzzy matching)
     if _title_similarity(title1, title2) >= 0.30:
@@ -660,11 +664,19 @@ def find_severity_disagreements(
 
 
 def extract_triggers(findings: list[Finding]) -> dict[str, int]:
-    """Extract and count unique triggers from findings."""
+    """Extract and count unique triggers from findings.
+
+    Includes "unmatched" count for findings without a trigger.
+    """
     triggers = defaultdict(int)
+    unmatched_count = 0
     for f in findings:
         if f.trigger:
             triggers[f.trigger] += 1
+        else:
+            unmatched_count += 1
+    if unmatched_count > 0:
+        triggers["unmatched"] = unmatched_count
     return dict(triggers)
 
 
@@ -1177,8 +1189,19 @@ def match_finding_to_benchmark(
     return None
 
 
-def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[dict]) -> dict:
+def compute_benchmark_metrics(
+    findings: list[Finding],
+    benchmark_records: list[dict],
+    write_matches: bool = False,
+    output_path: Path | None = None,
+) -> dict:
     """Compute precision, recall, Detection Score (DS) against benchmark ground truth.
+
+    Args:
+        findings: List of findings to match
+        benchmark_records: Benchmark records to match against
+        write_matches: If True, write benchmark_matches.json
+        output_path: Path to write benchmark_matches.json (default: report/benchmark_matches.json)
 
     Returns dict with:
     - precision: benchmark hits / total findings
@@ -1234,7 +1257,7 @@ def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[d
     # Severity match rate
     severity_match_rate = len(matched_severities) / len(hits) if hits else 0.0
 
-    return {
+    result = {
         "precision": precision,
         "recall": recall,
         "ds": ds,
@@ -1244,6 +1267,30 @@ def compute_benchmark_metrics(findings: list[Finding], benchmark_records: list[d
         "total_findings": len(findings),
         "total_benchmark": len(benchmark_records),
     }
+
+    # Change 8: Write benchmark_matches.json if requested
+    if write_matches and output_path:
+        matches_data = []
+        for finding in findings:
+            matched_record = match_finding_to_benchmark(finding, benchmark_records)
+            if matched_record:
+                # Calculate line distance
+                line_distance = (
+                    abs(finding.line - matched_record.get("line", 0)) if finding.line else None
+                )
+                matches_data.append(
+                    {
+                        "model": "unknown",  # Will be filled in by caller
+                        "finding_title": finding.title,
+                        "benchmark_id": matched_record.get("id"),
+                        "benchmark_bug_title": matched_record.get("description", ""),
+                        "file": finding.file or "unknown",
+                        "line_distance": line_distance,
+                    }
+                )
+        output_path.write_text(json.dumps(matches_data, indent=2))
+
+    return result
 
 
 def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]) -> dict:
@@ -1295,11 +1342,10 @@ def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]
     score_counts = {"accuracy": 0, "prioritization": 0, "justification": 0, "actionability": 0}
 
     matched_benchmark_ids = set()
-    total_findings = 0
+    seen_findings: set[tuple[object, ...]] = set()
 
     for result in eval_results:
         findings = result.get("findings", [])
-        total_findings += len(findings)
 
         # Aggregate scores
         scores = result.get("scores", {})
@@ -1308,14 +1354,26 @@ def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]
                 score_sums[key] += scores[key]
                 score_counts[key] += 1
 
-        # Shared matcher: basename + aliases, line ±5 (same as cross_matrix.md)
+        # Shared matcher: basename + aliases, line ±5 (same as cross_matrix.md).
+        # Deduplicated across repetitions so precision does not depend on how
+        # many times the same diff was re-run.
         for finding in findings:
             for record in diff_records:
                 if match_finding_to_bug(finding, record.get("bugs", []), record.get("file", "")):
                     bid = record.get("id")
+                    identity = finding_identity(finding, bid)
+                    if identity in seen_findings:
+                        break
+                    seen_findings.add(identity)
                     if bid:
                         matched_benchmark_ids.add(bid)
                     break
+            else:
+                unmatched_identity = finding_identity(finding, None)
+                if unmatched_identity not in seen_findings:
+                    seen_findings.add(unmatched_identity)
+
+    total_findings = len(seen_findings)
 
     hits = sorted(matched_benchmark_ids)
     misses = sorted(
@@ -1480,10 +1538,16 @@ def main():
 
         # Parse with-skill review
         if skill_path.exists():
-            skill_findings = parse_review_file(skill_path)
+            # Parse BEFORE deduplication for raw count
+            skill_findings_raw = parse_review(
+                content=skill_path.read_text(encoding="utf-8", errors="replace"),
+                track_section_file=True,
+            )
+            skill_findings = _dedup_findings(skill_findings_raw)
             skill_metrics = {
                 "words": len(skill_path.read_text().split()),
-                "unique_findings": len(skill_findings),
+                "unique_findings_raw": len(skill_findings_raw),  # Raw count before dedup
+                "unique_findings": len(skill_findings),  # Deduped count
             }
             for sev in SEVERITIES:
                 skill_metrics[sev] = sum(1 for f in skill_findings if f.severity == sev)
@@ -1558,10 +1622,24 @@ def main():
     # (None = reviews missing for this arm: score as zero hits, not a crash;
     # the N/A verdict/metrics elsewhere already mark the arm pending)
     benchmark_metrics = {}
+    benchmark_matches_path = report_dir / "benchmark_matches.json"
     if benchmark_records is not None:
         for key, findings in all_findings.items():
             model_name = key.replace("_skill", "").replace("_baseline", "")
-            benchmark_metrics[key] = compute_benchmark_metrics(findings or [], benchmark_records)
+            # Write matches only for the first skill arm (gpt-oss_ skill)
+            write_matches = key == "gpt-oss-120b_skill"
+            benchmark_metrics[key] = compute_benchmark_metrics(
+                findings or [],
+                benchmark_records,
+                write_matches=write_matches,
+                output_path=benchmark_matches_path,
+            )
+            # Update model name in matches data
+            if write_matches:
+                matches = json.loads(benchmark_matches_path.read_text())
+                for m in matches:
+                    m["model"] = model_name
+                benchmark_matches_path.write_text(json.dumps(matches, indent=2))
 
     # Load eval results for diff-based metrics (graceful skip if files missing)
     eval_diffs_path = repo_root / "data" / "eval_diffs.jsonl"
@@ -1584,6 +1662,7 @@ def main():
 
         # Load eval results
         eval_results = []
+        eval_repetitions = 1
         with open(eval_results_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -1593,6 +1672,13 @@ def main():
                     eval_results.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
+
+        # The eval pipeline appends a re-run beside a judge-failed record instead
+        # of overwriting it, so the same evaluation can appear twice. Keep the last
+        # record per key, matching how the resume index resolves the collision.
+        eval_results = dedupe_records(eval_results)
+
+        eval_repetitions = max(1, len({r.get("rep", 0) for r in eval_results}))
 
         # Group eval results by model
         results_by_model = {}
@@ -1628,6 +1714,10 @@ def main():
         benchmark_metrics=benchmark_metrics,
         diff_eval_metrics=diff_eval_metrics or None,
         refusal_metrics=refusal_metrics or None,
+        repetitions=eval_repetitions,
+        # data/eval_results.jsonl is written only by the decontaminated eval prompt;
+        # tests/test_eval.py fails the build if ground truth ever re-enters that prompt.
+        eval_provenance="decontaminated",
     )
 
     # Write output

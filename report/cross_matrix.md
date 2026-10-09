@@ -4,27 +4,47 @@ Diagonal data from `data/eval_results.jsonl`, cross-data from `data/eval_results
 
 *Judge model: GLM5.2 (fixed external judge, applied via `--rescore-all`).*
 
+> **WARNING: pre-decontamination data.** The reviewer prompt for this eval run included the ground-truth bug list (removed afterwards), so every number below measures answer-key transcription fidelity, not detection ability. A decontaminated re-run is pending.
+
+Dataset: 45 diff scenarios = 25 buggy, 15 clean (no findings expected), 5 refuse-to-conclude (correct answer is uncertainty).
+
+> **Note:** The judge (GLM5.2) also participates in the evaluation as a reviewer: judge scores may reflect self-preference.
+
+## Question & Answer
+
+**Question this report answers:** Which model+skill combination detects bugs best? (Cross-model evaluation on 45 synthetic diffs.)
+
+**Headline answer:** The reviewing model — not the attached skill — drives how many bugs are found. Swapping skills rarely changes a model's true-positive count; the skill mainly affects precision (false positives), which is what moves the Detection Score. See the Overview Matrix below for specifics.
+
+**Overview matrix:** The table below shows Detection Score (DS) and Judge score (J) for each model+skill pairing. Native pairings (model == skill) are marked.
+
+> **Anti-contradiction note:** This report answers a different question than `report/comparison.md`. This report asks 'Which model+skill combination detects bugs best?' on a dataset of 45 synthetic diffs (pre-decontamination). The comparison.md asks 'Does adding the skill help or hurt each model?' on the real SmallChat codebase. The comparison.md verdicts vary by model (Skill adds value / Skill reduces coverage / No change). Apparent disagreement between the two reports is expected — they measure different things on different data.
+
+
+
+## Evidence
+
 ## Verdict
 
-**Best pairing**: `qwen3.8-27b` reviewing with `qwen3.8-27b` skill found **25 bugs** across 45 diff scenarios.
+**Best pairing**: `qwen3.8-27b` reviewing with `qwen3.8-27b` skill found **25 bugs** across 25 diff scenarios.
 
-**Best Detection Score**: `qwen3.8-27b` on `gpt-oss-120b` (DS=0.55).
+**Best Detection Score**: `qwen3.8-27b` on `gpt-oss-120b` (DS=0.70).
 
 **Best Judge Score**: `glm5.2` on `gpt-oss-120b` (J=1.6/2).
 
 **Best critical-bug pairing**: `gpt-oss-120b` on `glm5.2` found **4** `reject`-severity bugs.
 
-**Best reviewer model**: `gpt-oss-120b` found **25** bugs (56% coverage) across all skills.
+**Best reviewer model**: `gpt-oss-120b`, `mistral-small-4-119b`, `qwen3.8-27b` found **25** bugs (100% coverage) across all skills.
 
-**Best skill**: `gpt-oss-120b` found **25** bugs (56% coverage) across all models.
+**Best skill**: `gpt-oss-120b`, `glm5.2`, `mistral-small-4-119b`, `qwen3.8-27b` found **25** bugs (100% coverage) across all models.
 
-**Consensus**: 17 bug(s) found by every model (across all skill pairings), 0 by only one model, 20 missed by all. This measures inter-model agreement, not skill-on vs skill-off.
+**Consensus**: 17 bug(s) found by every model (across all skill pairings), 0 by only one model, 0 missed by all. This measures inter-model agreement, not skill-on vs skill-off.
 
-**Native pairing advantage**: glm5.2: no difference; gpt-oss-120b: native helps; mistral-small-4-119b: no difference; qwen3.8-27b: no difference.
+**Native pairing advantage**: glm5.2: cross helps; gpt-oss-120b: native helps; mistral-small-4-119b: no difference; qwen3.8-27b: no difference.
 
-**Best skill per model**: 1 model(s) perform best with their native skill, 3 with a cross-skill. See the *Best Skill per Model* table below for specifics.
+**Best skill per model**: 2 model(s) perform best with their native skill, 2 with a cross-skill. See the *Best Skill per Model* table below for specifics.
 
-See `report/comparison.md` for the baseline-vs-skill analysis (whether adding any skill helps or hurts each model).
+See `report/comparison.md` for the baseline-vs-skill analysis (whether adding any skill helps or hurts each model). Note: the two reports use different datasets (real codebase vs synthetic diffs) and this cross eval is pre-decontamination.
 
 In plain terms: the reviewing model — not the attached skill — drives how many bugs are found. Swapping skills rarely changes a model's true-positive count; the skill mainly affects precision (false positives), which is what moves the Detection Score. Start from the Overview Matrix, then use the ranking tables for specifics.
 
@@ -38,15 +58,23 @@ Definitions of every metric used in this report. Read this before the matrices.
 
 - **Precision**: Of all findings reported, the fraction that matched a ground-truth bug. Low precision means many false positives.
 
-- **Recall**: Matched findings divided by the number of diff scenarios (buggy and clean). Low recall means missed bugs.
+- **Recall**: Matched findings divided by the number of buggy diff scenarios (25 ground-truth bugs). Low recall means missed bugs.
 
 - **Refusal Rate (R)**: Fraction of diffs where the model refused to review. In this dataset R=0 for all pairings, so it is omitted from the tables.
 
-- **Judge Score (J)**: Mean of four sub-scores (accuracy, prioritization, justification, actionability) on a 0–2 scale. Reflects review quality as scored by the judge model.
+- **Judge Score (J)**: Mean of four sub-scores (accuracy, prioritization, justification, actionability) on a 0–2 scale. Reflects review quality as scored by the judge model. **Note**: The judge (GLM5.2) also participates in the evaluation as a reviewer: judge scores may reflect self-preference.
 
 - **Native**: Diagonal pairing where the model reviews a diff using its own skill (model == skill).
 
 - **Exclusive**: Bugs found by this model/skill and no other model/skill. A high exclusive count means the pairing contributes unique value.
+
+- **Match (TP)**: A finding that matches a ground-truth bug within the ±5 line tolerance.
+
+- **Duplicate**: A finding that matches a ground-truth bug already matched by an earlier finding in the same cell.
+
+- **On non-buggy**: A finding on a record with `expected != 'findings'` (clean or refusal scenario).
+
+- **Non-TP findings**: Total findings minus true positives (= duplicates + on non-buggy).
 
 
 ---
@@ -57,12 +85,14 @@ Each cell shows: Detection Score (DS), and mean Judge score (0–2 scale).
 
 *(native)* indicates diagonal pairing (model == skill).
 
+**Note**: n=45 scenarios (25 buggy), 1 run per cell; intra-skill Detection Score differences of ~0.03 are not significant.
+
 | Skill \\ Model | glm5.2 | gpt-oss-120b | mistral-small-4-119b | qwen3.8-27b |
 |---|---|---|---|---|
-| **glm5.2** | DS=0.22 J=1.2/2 *(native)* | DS=0.36 J=1.1/2 | DS=0.49 J=0.9/2 | DS=0.55 J=1.1/2 |
-| **gpt-oss-120b** | DS=0.24 J=1.6/2 | DS=0.41 J=1.2/2 *(native)* | DS=0.49 J=1.0/2 | DS=0.55 J=1.0/2 |
-| **mistral-small-4-119b** | DS=0.24 J=1.1/2 | DS=0.35 J=1.2/2 | DS=0.49 J=1.1/2 *(native)* | DS=0.52 J=1.1/2 |
-| **qwen3.8-27b** | DS=0.19 J=1.2/2 | DS=0.38 J=1.1/2 | DS=0.47 J=1.1/2 | DS=0.54 J=1.0/2 *(native)* |
+| **glm5.2** | DS=0.28 J=1.2/2 *(native)* | DS=0.44 J=1.1/2 | DS=0.63 J=0.9/2 | DS=0.70 J=1.1/2 |
+| **gpt-oss-120b** | DS=0.31 J=1.6/2 | DS=0.52 J=1.2/2 *(native)* | DS=0.63 J=1.0/2 | DS=0.70 J=1.0/2 |
+| **mistral-small-4-119b** | DS=0.31 J=1.1/2 | DS=0.44 J=1.2/2 | DS=0.63 J=1.1/2 *(native)* | DS=0.66 J=1.1/2 |
+| **qwen3.8-27b** | DS=0.24 J=1.2/2 | DS=0.47 J=1.1/2 | DS=0.60 J=1.1/2 | DS=0.68 J=1.0/2 *(native)* |
 
 
 ## Precision Matrix
@@ -79,14 +109,14 @@ Rows = skill applied, columns = reviewing model. Fraction of reported findings t
 
 ## Recall Matrix
 
-Rows = skill applied, columns = reviewing model. Matched findings per diff scenario (buggy and clean) — higher is better.
+Rows = skill applied, columns = reviewing model. Matched findings per buggy diff scenario (25 ground-truth bugs) — higher is better.
 
 | Skill \\ Model | glm5.2 | gpt-oss-120b | mistral-small-4-119b | qwen3.8-27b |
 |---|---|---|---|---|
-| glm5.2 | 0.24 | 0.42 | 0.49 | 0.56 |
-| gpt-oss-120b | 0.24 | 0.42 | 0.49 | 0.56 |
-| mistral-small-4-119b | 0.24 | 0.38 | 0.49 | 0.56 |
-| qwen3.8-27b | 0.20 | 0.40 | 0.47 | 0.56 |
+| glm5.2 | 0.44 | 0.76 | 0.88 | 1.00 |
+| gpt-oss-120b | 0.44 | 0.76 | 0.88 | 1.00 |
+| mistral-small-4-119b | 0.44 | 0.68 | 0.88 | 1.00 |
+| qwen3.8-27b | 0.36 | 0.72 | 0.84 | 1.00 |
 
 
 ## Native Pairing Ranking (model == skill)
@@ -95,16 +125,16 @@ Diagonal cells only — each model using its own skill.
 
 | Model | Detection Score | Bugs Found | Judge Score |
 |-------|-----------------|------------|-------------|
-| qwen3.8-27b | 0.54 | 25/45 | 1.0/2 |
-| mistral-small-4-119b | 0.49 | 22/45 | 1.1/2 |
-| gpt-oss-120b | 0.41 | 19/45 | 1.2/2 |
-| glm5.2 | 0.22 | 11/45 | 1.2/2 |
+| qwen3.8-27b | 0.68 | 25/25 | 1.0/2 |
+| mistral-small-4-119b | 0.63 | 22/25 | 1.1/2 |
+| gpt-oss-120b | 0.52 | 19/25 | 1.2/2 |
+| glm5.2 | 0.28 | 11/25 | 1.2/2 |
 
 ## Best Pairing by Metric
 
-The single best pairing for each headline metric.
+The best pairing(s) for each headline metric (ties shown).
 
-- **Best Detection Score**: qwen3.8-27b on gpt-oss-120b (DS=0.55)
+- **Best Detection Score** (tie): qwen3.8-27b on gpt-oss-120b, qwen3.8-27b on glm5.2 (DS=0.70)
 
 - **Best Judge Score**: glm5.2 on gpt-oss-120b (J=1.6/2)
 
@@ -115,28 +145,28 @@ The single best pairing for each headline metric.
 
 Row means (per reviewing model across skills) and column means (per skill across models).
 
-**Best Model**: qwen3.8-27b (row-mean DS=0.54, judge=1.1)
+**Best Model**: qwen3.8-27b (row-mean DS=0.69, judge=1.1)
 
-**Best Skill**: gpt-oss-120b (column-mean DS=0.42, judge=1.2)
+**Best Skill**: gpt-oss-120b (column-mean DS=0.54, judge=1.2)
 
 
 ### Model Rankings (by row-mean Detection Score)
 
 | Rank | Model | Detection Score | Judge Mean | Rarity Score |
 |------|-------|-----------------|------------|--------------|
-| 1 | qwen3.8-27b | 0.54 | 1.1 | 0.15 |
-| 2 | mistral-small-4-119b | 0.48 | 1.0 | 0.15 |
-| 3 | gpt-oss-120b | 0.37 | 1.1 | 0.15 |
-| 4 | glm5.2 | 0.23 | 1.3 | 0.09 |
+| 1 | qwen3.8-27b | 0.69 | 1.1 | 0.28 |
+| 2 | mistral-small-4-119b | 0.62 | 1.0 | 0.28 |
+| 3 | gpt-oss-120b | 0.47 | 1.1 | 0.28 |
+| 4 | glm5.2 | 0.29 | 1.3 | 0.17 |
 
 ### Skill Rankings (by column-mean Detection Score)
 
 | Rank | Skill | Detection Score | Judge Mean | Rarity Score |
 |------|-------|-----------------|------------|--------------|
-| 1 | gpt-oss-120b | 0.42 | 1.2 | 0.15 |
-| 2 | glm5.2 | 0.40 | 1.1 | 0.15 |
-| 3 | mistral-small-4-119b | 0.40 | 1.1 | 0.15 |
-| 4 | qwen3.8-27b | 0.39 | 1.1 | 0.15 |
+| 1 | gpt-oss-120b | 0.54 | 1.2 | 0.28 |
+| 2 | glm5.2 | 0.51 | 1.1 | 0.28 |
+| 3 | mistral-small-4-119b | 0.51 | 1.1 | 0.28 |
+| 4 | qwen3.8-27b | 0.50 | 1.1 | 0.28 |
 
 ---
 
@@ -144,11 +174,11 @@ Row means (per reviewing model across skills) and column means (per skill across
 
 How many ground-truth bugs each pairing, model, and skill actually found, broken down by severity and category. Raw counts — no precision penalty.
 
-Ground-truth bugs: **45**
+Ground-truth bugs: **25**
 
 ### Bugs Found per Pairing (True Positives)
 
-| Model | Skill | Bugs Found (TP) | False Positives | Total Findings |
+| Model | Skill | Bugs Found (TP) | Non-TP findings | Total Findings |
 |-------|-------|-----------------|-----------------|----------------|
 | qwen3.8-27b | qwen3.8-27b *(native)* | 25 | 23 | 48 |
 | qwen3.8-27b | gpt-oss-120b | 25 | 21 | 46 |
@@ -171,19 +201,19 @@ Ground-truth bugs: **45**
 
 | Model | Total Found | Coverage | Exclusive |
 |-------|-------------|----------|-----------|
-| gpt-oss-120b | 25 | 56% | 0 |
-| mistral-small-4-119b | 25 | 56% | 0 |
-| qwen3.8-27b | 25 | 56% | 0 |
-| glm5.2 | 17 | 38% | 0 |
+| gpt-oss-120b | 25 | 100% | 0 |
+| mistral-small-4-119b | 25 | 100% | 0 |
+| qwen3.8-27b | 25 | 100% | 0 |
+| glm5.2 | 17 | 68% | 0 |
 
 ### Bugs Found per Skill (union across all models)
 
 | Skill | Total Found | Coverage | Exclusive |
 |-------|-------------|----------|-----------|
-| gpt-oss-120b | 25 | 56% | 0 |
-| glm5.2 | 25 | 56% | 0 |
-| mistral-small-4-119b | 25 | 56% | 0 |
-| qwen3.8-27b | 25 | 56% | 0 |
+| gpt-oss-120b | 25 | 100% | 0 |
+| glm5.2 | 25 | 100% | 0 |
+| mistral-small-4-119b | 25 | 100% | 0 |
+| qwen3.8-27b | 25 | 100% | 0 |
 
 ### Bugs Found by Only One Model
 
@@ -371,45 +401,46 @@ For each ground-truth bug, how many of the four reviewing models found it (union
 
 | Finders | Bugs Found | % of Ground Truth |
 |---------|-------------|--------------------|
-| 4/4 models | 17 | 38% |
-| 3/4 models | 8 | 18% |
+| 4/4 models | 17 | 68% |
+| 3/4 models | 8 | 32% |
 | 2/4 models | 0 | 0% |
 | 1/4 models | 0 | 0% |
-| 0/4 models (missed) | 20 | 44% |
+| 0/4 models (missed) | 0 | 0% |
 
 **17 bug(s) reached full consensus** — found by all four models. These represent the easiest-to-detect defects.
-
-**20 bug(s) missed by every model** — these may require skill refinement or represent subtle defects beyond current detection capability.
 
 
 ---
 
 ## Native Pairing Advantage
 
-For each model, compare its native skill (model == skill) against the mean of cross-skills (model != skill). Positive delta = native skill helps; negative = cross-skill helps. This measures native-skill advantage, not skill-on vs skill-off — for that comparison see `report/comparison.md`.
+For each model, compare its native skill (model == skill) against the mean of cross-skills (model != skill). Positive delta = native skill helps; negative = cross-skill helps. This measures native-skill advantage, not skill-on vs skill-off — for that comparison see `report/comparison.md`. Note: the two reports use different datasets (real codebase vs synthetic diffs) and this cross eval is pre-decontamination.
 
 | Model | Native DS | Cross-Skill Mean DS | Delta | Verdict |
 |-------|----------|---------------------|-------|---------|
-| glm5.2 | 0.22 | 0.23 | -0.00 | no difference |
-| gpt-oss-120b | 0.41 | 0.36 | +0.05 | native helps |
-| mistral-small-4-119b | 0.49 | 0.48 | +0.01 | no difference |
-| qwen3.8-27b | 0.54 | 0.54 | -0.00 | no difference |
+| glm5.2 | 0.28 | 0.29 | -0.01 | cross helps |
+| gpt-oss-120b | 0.52 | 0.45 | +0.07 | native helps |
+| mistral-small-4-119b | 0.63 | 0.62 | +0.01 | no difference |
+| qwen3.8-27b | 0.68 | 0.69 | -0.00 | no difference |
 
 ## Best Skill per Model
 
 For each model, the skill that produces the highest Detection Score. Since true-positive counts are model-driven while the skill mainly affects the false-positive rate, the recommended skill is the one that maximizes DS (i.e., minimizes false positives).
 
-| Model | Best Skill | DS | Recommendation |
-|-------|-----------|----|----------------|
-| glm5.2 | gpt-oss-120b | 0.24 | cross-skill `gpt-oss-120b` |
-| gpt-oss-120b | gpt-oss-120b | 0.41 | native skill |
-| mistral-small-4-119b | glm5.2 | 0.49 | cross-skill `glm5.2` |
-| qwen3.8-27b | glm5.2 | 0.55 | cross-skill `glm5.2` |
+| Model | Best Skill(s) | DS | Recommendation |
+|-------|--------------|----|----------------|
+| glm5.2 | gpt-oss-120b, mistral-small-4-119b | 0.31 | cross-skills gpt-oss-120b, mistral-small-4-119b (tied) |
+| gpt-oss-120b | gpt-oss-120b | 0.52 | native skill |
+| mistral-small-4-119b | glm5.2, gpt-oss-120b, mistral-small-4-119b | 0.63 | native skill (tied) |
+| qwen3.8-27b | glm5.2, gpt-oss-120b | 0.70 | cross-skills glm5.2, gpt-oss-120b (tied) |
 
 
 ---
 
 ## Judge Score Detail
+
+> **Note**: The judge (GLM5.2) also participates in the evaluation as a reviewer: judge scores may reflect self-preference.
+
 
 The four sub-scores below feed the Judge Score (J) shown in the matrices above. Each is the mean over evaluated diffs on a 0–2 scale, scored by the judge model; values vary little across pairings, so they are shown as appendix detail.
 
@@ -451,4 +482,18 @@ The four sub-scores below feed the Judge Score (J) shown in the matrices above. 
 | gpt-oss-120b | 1.6 | 1.2 | 1.0 | 1.0 |
 | mistral-small-4-119b | 1.1 | 1.2 | 1.1 | 1.1 |
 | qwen3.8-27b | 1.3 | 1.1 | 1.0 | 1.0 |
+
+
+## Limitations
+
+- **n=45 (25 buggy)**: Evaluation based on 45 diff scenarios, of which 25 contain ground-truth bugs.
+
+- **Single-run-per-cell**: Each model+skill pairing evaluated once; a repetitions mechanism exists in the pipeline for future runs.
+
+- **Judge COI**: The judge (GLM5.2) also participates as a reviewer, so judge scores may reflect self-preference.
+
+- **Pre-decontamination status**: The reviewer prompt initially included ground truth (subsequently removed); calibration/generalization numbers measure transcription fidelity, not detection.
+
+- **Denominator choice**: Recall denominator uses only buggy diffs (expected=="findings"); findings on clean or refusal scenarios count as false positives.
+
 

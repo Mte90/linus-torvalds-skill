@@ -1307,6 +1307,59 @@ class TestDistillPromptNonFireList:
         assert "redundant" in DISTILL_SYSTEM_PROMPT.lower() or "rm" in DISTILL_SYSTEM_PROMPT
 
 
+class TestDistillWordCountGate:
+    """Tests for the MAX word count gate in distill.py."""
+
+    def test_word_count_gate_allows_under_limit(self):
+        """Word count at 9990 should pass."""
+        from torvalds_skill.distill import check_skill_word_count
+
+        skill_md = "word " * 9990
+        assert check_skill_word_count(skill_md) is True
+
+    def test_word_count_gate_blocks_over_limit(self):
+        """Word count over 10000 should raise ValueError."""
+        from torvalds_skill.distill import check_skill_word_count
+
+        skill_md = "word " * 10001
+        with pytest.raises(ValueError) as excinfo:
+            check_skill_word_count(skill_md)
+        assert "10001" in str(excinfo.value)
+        assert "10000" in str(excinfo.value)
+
+
+class TestWriteGatedDocument:
+    """The MAX word gate must run BEFORE the file write."""
+
+    def test_oversized_document_is_not_written(self, tmp_path):
+        """A document over the limit must raise and never reach disk."""
+        from torvalds_skill.distill import _write_gated_document
+
+        out = tmp_path / "skill.md"
+        with pytest.raises(ValueError):
+            _write_gated_document("word " * 10001, out)
+        assert not out.exists()
+
+    def test_document_within_limit_is_written(self, tmp_path):
+        """A document under the limit is written, creating parent dirs."""
+        from torvalds_skill.distill import _write_gated_document
+
+        out = tmp_path / "nested" / "skill.md"
+        content = "word " * 9990
+        result = _write_gated_document(content, out)
+        assert result == content
+        assert out.read_text(encoding="utf-8") == content
+
+    def test_custom_limit_is_enforced(self, tmp_path):
+        """The limit parameter controls the gate threshold."""
+        from torvalds_skill.distill import _write_gated_document
+
+        out = tmp_path / "skill.md"
+        with pytest.raises(ValueError):
+            _write_gated_document("word " * 11, out, limit=10)
+        assert not out.exists()
+
+
 class TestSeverityWeightedSampling:
     """Tests for severity-weighted sampling in distillation."""
 
