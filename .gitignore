@@ -13,7 +13,23 @@ profiles.toml
 # data/moves.jsonl    — 23MB,  LLM extraction (~$5-8 to regenerate)
 # data/patterns.json  — 116KB, from cluster stage
 # data/manifest.json  — 4KB,   provenance metadata
-data/
+# NOTE: `data/*`, not `data/` — git does not descend into an excluded directory,
+# so `data/` would make the curated-file negations below silently ineffective.
+data/*
+
+# === Eval assets (commit these: they are the evidence behind report numbers) ===
+# Without them nobody can reproduce or verify any figure in comparison.md /
+# cross_matrix.md. Kept small: the diff set is fixed, and the result files hold
+# one JSON record per (model, skill, diff).
+!data/eval_diffs.jsonl
+!data/eval_diffs.schema.json
+!data/eval_results.jsonl
+!data/eval_results_cross.jsonl
+# Intermediate/throwaway eval files stay ignored.
+data/eval_results*.bak.*
+data/eval_results*.tmp
+data/eval_results*.reps3-partial
+report/baseline/
 
 # === Curated data worth committing (not re-downloadable) ===
 # skip_list.json — 6379 message IDs that produce 0 moves; saves API calls on future runs
