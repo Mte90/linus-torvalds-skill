@@ -65,6 +65,23 @@ def load_jsonl(path: Path) -> list[dict]:
     return dedupe_records(records)
 
 
+def _benchmark_to_diff_records(bugs: list[dict]) -> list[dict]:
+    """Convert benchmark bugs into synthetic diff-records for compute_cell_metrics.
+
+    Each bug becomes a record with id, file, bugs=[bug], expected='findings'
+    so the renderer's matching logic works unchanged.
+    """
+    return [
+        {
+            "id": bug.get("id", f"SC-{i}"),
+            "file": bug.get("file", "unknown"),
+            "bugs": [bug],
+            "expected": "findings",
+        }
+        for i, bug in enumerate(bugs)
+    ]
+
+
 def group_results_by_pairing(results: list[dict]) -> dict[tuple[str, str], list[dict]]:
     """Group results by (model, skill) pairing.
 
@@ -1379,6 +1396,71 @@ def render_markdown(
     lines.append(f"| 0/4 models (missed) | {missed} | {missed_pct:.0f}% |")
     lines.append("")
 
+    # Build a lookup from bug_id to its metadata for detailed listings
+    bug_meta: dict[str, dict] = {}
+    for dr in diff_records:
+        for b in dr.get("bugs", []):
+            bid = b.get("id", dr.get("id", ""))
+            if bid:
+                bug_meta[bid] = b
+
+    # Detailed bug listings per consensus bucket
+    lines.append("### Bug Details by Consensus\n")
+    for count in range(4, 0, -1):
+        bugs = sorted(consensus_buckets.get(count, []))
+        if not bugs:
+            continue
+        label = {
+            4: "Full Consensus (4/4 models)",
+            3: "Three Models (3/4)",
+            2: "Two Models (2/4)",
+            1: "Sole Discovery (1/4 model)",
+        }[count]
+        lines.append(f"#### {label}\n")
+        if count == 1:
+            lines.append("| Bug ID | File | Severity | Category | Description | Found By |")
+            lines.append("|--------|------|----------|----------|-------------|-----------|")
+            for bug in bugs:
+                meta = bug_meta.get(bug, {})
+                finder = bug_finders.get(bug, ["?"])[0]
+                lines.append(
+                    f"| {bug} | {meta.get('file', '?')} | {meta.get('severity', '?')} "
+                    f"| {meta.get('category', '?')} | {meta.get('description', '?')} | {finder} |"
+                )
+        else:
+            finders_str = ", ".join(sorted(bug_finders.get(bug, [])))
+            lines.append("| Bug ID | File | Severity | Category | Description | Found By |")
+            lines.append("|--------|------|----------|----------|-------------|-----------|")
+            for bug in bugs:
+                meta = bug_meta.get(bug, {})
+                lines.append(
+                    f"| {bug} | {meta.get('file', '?')} | {meta.get('severity', '?')} "
+                    f"| {meta.get('category', '?')} | {meta.get('description', '?')} | {finders_str} |"
+                )
+        lines.append("")
+
+    if missed > 0:
+        found_bug_ids = set(finder_counts.keys())
+        all_bug_ids = {
+            b.get("id", dr.get("id", "")) for dr in diff_records for b in dr.get("bugs", [])
+        }
+        missed_ids = sorted(all_bug_ids - found_bug_ids)
+        if missed_ids:
+            lines.append("#### Missed by All Models (0/4)\n")
+            lines.append("| Bug ID | File | Severity | Category | Description |")
+            lines.append("|--------|------|----------|----------|-------------|")
+            for bug in missed_ids:
+                meta = bug_meta.get(bug, {})
+                lines.append(
+                    f"| {bug} | {meta.get('file', '?')} | {meta.get('severity', '?')} "
+                    f"| {meta.get('category', '?')} | {meta.get('description', '?')} |"
+                )
+            lines.append("")
+        lines.append(
+            f"**{missed} bug(s) missed by every model** — these may require skill refinement "
+            "or represent subtle defects beyond current detection capability.\n"
+        )
+
     found_by_all = consensus_buckets.get(4, [])
     found_by_one = consensus_buckets.get(1, [])
     if found_by_all:
@@ -1390,11 +1472,6 @@ def render_markdown(
         lines.append(
             f"**{len(found_by_one)} bug(s) found by only one model** — these highlight "
             "model-specific strengths and potential complementarity.\n"
-        )
-    if missed > 0:
-        lines.append(
-            f"**{missed} bug(s) missed by every model** — these may require skill refinement "
-            "or represent subtle defects beyond current detection capability.\n"
         )
 
     # Native Pairing Advantage: native vs cross-skill Detection Score per model
@@ -1581,14 +1658,39 @@ def main() -> None:
             "was produced from a contaminated run."
         ),
     )
+    parser.add_argument(
+        "--codebase",
+        action="store_true",
+        help=(
+            "Codebase mode: load results from data/eval_results_codebase.jsonl "
+            "and ground truth from data/benchmark.jsonl (full SmallChat review). "
+            "Overrides --results, --cross-results, and --diffs defaults."
+        ),
+    )
+    parser.add_argument(
+        "--codebase-results",
+        type=Path,
+        default=Path("data/eval_results_codebase.jsonl"),
+        help="Codebase eval results file (default: data/eval_results_codebase.jsonl)",
+    )
+    parser.add_argument(
+        "--benchmark",
+        type=Path,
+        default=Path("data/benchmark.jsonl"),
+        help="Ground truth bugs file for codebase mode (default: data/benchmark.jsonl)",
+    )
 
     args = parser.parse_args()
 
-    diagonal_results = load_jsonl(args.results)
-    cross_results = load_jsonl(args.cross_results)
-    diff_records = load_jsonl(args.diffs)
-
-    all_results = diagonal_results + cross_results
+    if args.codebase:
+        all_results = load_jsonl(args.codebase_results)
+        benchmark_bugs = load_jsonl(args.benchmark)
+        diff_records = _benchmark_to_diff_records(benchmark_bugs)
+    else:
+        diagonal_results = load_jsonl(args.results)
+        cross_results = load_jsonl(args.cross_results)
+        diff_records = load_jsonl(args.diffs)
+        all_results = diagonal_results + cross_results
 
     # Separate baseline records (skill=="none") from skill records
     baseline_results, skill_results = separate_baseline_from_skills(all_results)

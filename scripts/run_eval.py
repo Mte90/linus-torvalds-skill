@@ -48,6 +48,15 @@ from torvalds_skill.profiles import get_profile  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 EVAL_INPUT = ROOT / "data" / "eval_diffs.jsonl"
 EVAL_OUTPUT = ROOT / "data" / "eval_results.jsonl"
+BENCHMARK_PATH = ROOT / "data" / "benchmark.jsonl"
+SMALLCHAT_TARGET = Path("/tmp/smallchat")
+SMALLCHAT_FILES = [
+    "smallchat-server.c",
+    "smallchat-client.c",
+    "chatlib.c",
+    "chatlib.h",
+    "Makefile",
+]
 
 # Thread-safe JSONL append lock
 _results_lock = Lock()
@@ -196,6 +205,224 @@ def match_finding_to_diff_bug(finding: dict, bugs: list[dict], diff_file: str = 
     comparison report pipeline.
     """
     return match_finding_to_bug(finding, bugs, diff_file)
+
+
+def _ensure_smallchat() -> None:
+    """Clone antirez/smallchat to /tmp/smallchat if missing."""
+    if SMALLCHAT_TARGET.exists():
+        return
+    import subprocess
+
+    print(f"Cloning antirez/smallchat to {SMALLCHAT_TARGET}...")
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "--depth",
+            "1",
+            "https://github.com/antirez/smallchat",
+            str(SMALLCHAT_TARGET),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _read_smallchat_sources() -> str:
+    """Read and concatenate all smallchat source files into a sources block."""
+    parts = []
+    for src in SMALLCHAT_FILES:
+        path = SMALLCHAT_TARGET / src
+        content = path.read_text() if path.exists() else f"(file not found: {src})"
+        parts.append(f"== SOURCE: {src} ==\n{content}\n")
+    return "\n".join(parts)
+
+
+def build_codebase_prompt(skill_text: str | None) -> str:
+    """Build a full-codebase review prompt (antirez/smallchat).
+
+    Args:
+        skill_text: Torvalds skill text to apply. If None, baseline mode (no skill block).
+
+    Returns:
+        Prompt string for LLM (contains no ground-truth bug information)
+    """
+    sources_block = _read_smallchat_sources()
+
+    parts = [
+        "You are a code reviewer applying the Linus Torvalds reviewer skill to a real codebase.",
+        "\nDo NOT use any tools. Do NOT read any files. Everything you need is inlined below.",
+    ]
+
+    if skill_text is not None:
+        parts.append("\n== SKILL ==")
+        parts.append(skill_text)
+
+    parts.append(f"\n{sources_block}")
+    parts.append(
+        """
+## Task
+
+Review the codebase above using the Torvalds skill. Find bugs, security issues, memory safety problems, and code quality issues.
+
+## Format
+
+For each finding use:
+### [SEVERITY] Finding title
+- **Type:** (the trigger from the skill that fired, or "unmatched" if none matches)
+- **Trigger:** (the trigger from the skill that fired, or "unmatched" if none matches)
+- **Location:** file:line
+- **Issue:** what's wrong
+- **Fix:** concrete action
+- **Pass:** 1 | 2
+
+**Format rules:**
+- Use exactly `###` (three hash marks) for severity headings
+- Use `**Field:**` format (colon inside bold markers) for all fields
+- Severity values are: CRITICAL, HIGH, MEDIUM, LOW (uppercase only)
+
+## Two-Pass Review Rule
+
+Pass 1 — Correctness and Memory Safety ONLY:
+  - Report ONLY: crashes, corruption, OOB access, unchecked errors, resource leaks.
+  - Severity: CRITICAL or HIGH only.
+  - Label each finding: `Pass: 1`
+
+Pass 2 — Style and Build Findings (capped):
+  - Report ONLY for files that have ZERO Pass-1 findings.
+  - Max 2 findings per file.
+  - Severity: MEDIUM or LOW only.
+  - Label each finding: `Pass: 2`
+
+Merge rule: If a file has any Pass-1 findings, ALL Pass-2 findings for that file are dropped.
+
+## Rules
+
+- Cover ALL source files.
+- Report every real bug you find. Map each finding to the closest matching skill trigger when one exists; if none matches, set Trigger: unmatched — do NOT suppress real bugs.
+- Use the skill's severity calibration and precedence hierarchy.
+- Precedence: correctness > performance > complexity > style > API stability.
+- Be concrete: cite line numbers, name functions, quote code.
+- Don't invent problems. If a file is genuinely clean, say "No findings."
+- English.
+
+Write your review to stdout.
+"""
+    )
+    return "".join(parts)
+
+
+def load_benchmark_bugs() -> list[dict]:
+    """Load ground-truth bugs from data/benchmark.jsonl.
+
+    Returns the bugs as synthetic diff-records so compute_cell_metrics can
+    consume them unchanged: each bug becomes a record with id, file, bugs=[bug],
+    expected='findings'.
+    """
+    bugs = []
+    with open(BENCHMARK_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                bugs.append(json.loads(line))
+    return bugs
+
+
+def benchmark_to_diff_records(bugs: list[dict]) -> list[dict]:
+    """Convert benchmark bugs into synthetic diff-records for compute_cell_metrics.
+
+    Each bug becomes a record: {id, file, bugs:[bug], expected:'findings'}
+    so the renderer's matching logic (match_finding_to_diff_bug) works unchanged.
+    """
+    return [
+        {
+            "id": bug.get("id", f"SC-{i}"),
+            "file": bug.get("file", "unknown"),
+            "bugs": [bug],
+            "expected": "findings",
+        }
+        for i, bug in enumerate(bugs)
+    ]
+
+
+def run_model_on_codebase(
+    model: str,
+    bugs: list[dict],
+    no_judge: bool,
+    judge_model: str | None = None,
+    skill_model: str | None = None,
+    baseline: bool = False,
+) -> dict | None:
+    """Run a single model on the full smallchat codebase.
+
+    Produces one result record matching the diff-mode format so the renderer
+    can consume it unchanged.
+    """
+    if baseline:
+        skill_text = None
+    else:
+        skill_file = MODELS.get(skill_model or model)
+        if not skill_file or not skill_file.exists():
+            print(f"error: skill file not found: {skill_file}", file=sys.stderr)
+            return None
+        skill_text = skill_file.read_text()
+
+    prompt = build_codebase_prompt(skill_text)
+    profile = get_profile(model)
+    timeout = getattr(profile, "review_timeout", 600)
+
+    response = None
+    for attempt in range(2):
+        try:
+            response = call_llm(model, prompt, timeout=timeout)
+            if response.strip():
+                break
+            print(
+                f"warning: empty response (attempt {attempt + 1}) for {model} on codebase",
+                file=sys.stderr,
+            )
+            response = None
+        except Exception as e:
+            print(
+                f"error: API call failed for {model} on codebase (attempt {attempt + 1}): {e}",
+                file=sys.stderr,
+            )
+            response = None
+
+    if response is None or not response.strip():
+        return None
+
+    # Parse findings using a synthetic diff_record for file context
+    synthetic = {"diff": "", "file": "smallchat-server.c"}
+    findings = parse_findings_from_review(response, synthetic)
+
+    refused = check_refused(response, findings)
+
+    # Score each finding against all benchmark bugs
+    scores_list = []
+    for finding in findings:
+        bug = match_finding_to_diff_bug(finding, bugs, finding.get("file", ""))
+        finding["scores"] = score_finding_with_judge(finding, bug, judge_model or model, no_judge)
+        scores_list.append(finding["scores"])
+
+    if scores_list:
+        avg_scores = {
+            k: sum(s.get(k, 0) for s in scores_list) / len(scores_list)
+            for k in ("accuracy", "prioritization", "justification", "actionability")
+        }
+    else:
+        avg_scores = {"accuracy": 0, "prioritization": 0, "justification": 0, "actionability": 0}
+
+    result = {
+        "diff_id": "SMALLCHAT",
+        "model": model,
+        "expected": "findings",
+        "findings": findings,
+        "scores": avg_scores,
+        "refused": refused,
+        "skill": skill_model if skill_model and not baseline else "none",
+    }
+    return result
 
 
 def _extract_json_from_content(content: str) -> dict | None:
@@ -1059,6 +1286,111 @@ def _run_pair(
     return label, findings_count, cell_judge_err
 
 
+def _run_codebase_mode(args) -> None:
+    """Run codebase-mode evaluation: one record per (model, skill) pair.
+
+    Clones antirez/smallchat, builds full-codebase prompts, matches findings
+    against data/benchmark.jsonl. Output goes to data/eval_results_codebase.jsonl
+    unless --out is given.
+    """
+    _ensure_smallchat()
+    bugs = load_benchmark_bugs()
+    print(f"Loaded {len(bugs)} ground-truth bugs from {BENCHMARK_PATH}")
+
+    # Determine output path
+    if args.out is None:
+        output_path = ROOT / "data" / "eval_results_codebase.jsonl"
+    else:
+        output_path = Path(args.out)
+
+    # Determine models
+    if args.models:
+        models_to_run = [m.strip() for m in args.models.split(",")]
+        missing = [m for m in models_to_run if m not in MODELS]
+        if missing:
+            print(f"error: unknown models: {', '.join(missing)}", file=sys.stderr)
+            sys.exit(2)
+    else:
+        models_to_run = list(MODELS.keys())
+
+    # Build pairs
+    if args.baseline:
+        pairs = [(m, "none") for m in models_to_run]
+    elif args.cross:
+        skills_filter = None
+        if args.skills:
+            skills_filter = [s.strip() for s in args.skills.split(",")]
+        pairs = _cross_pairs(models_to_run, skills_filter)
+    else:
+        pairs = [(m, m) for m in models_to_run]
+
+    print(f"Codebase mode: {len(pairs)} pairings × {args.repetitions} rep(s)")
+    print(f"  Output: {output_path}")
+    print(f"  Judge: {args.judge_model or 'self (per-model)'}")
+    print()
+
+    # Load existing results for resume (key: model, skill, rep)
+    existing = {}
+    if output_path.exists() and not args.force:
+        with open(output_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                    key = (rec.get("model"), rec.get("skill", "none"), rec.get("rep", 0))
+                    has_err = any(
+                        f.get("scores", {}).get("judge_error") for f in rec.get("findings", [])
+                    )
+                    if not has_err:
+                        existing[key] = rec
+                except json.JSONDecodeError:
+                    continue
+
+    if args.force and output_path.exists():
+        output_path.unlink()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for model, skill_model in pairs:
+        for rep in range(args.repetitions):
+            key = (model, skill_model if skill_model else "none", rep)
+            if key in existing:
+                print(f"[{model}←{skill_model}] rep={rep} skipped (already done)")
+                continue
+
+            baseline = args.baseline or skill_model == "none"
+            result = run_model_on_codebase(
+                model=model,
+                bugs=bugs,
+                no_judge=args.no_judge,
+                judge_model=args.judge_model,
+                skill_model=skill_model if not baseline else None,
+                baseline=baseline,
+            )
+            if result is None:
+                print(f"[{model}←{skill_model}] rep={rep} status=error")
+                continue
+
+            result["rep"] = rep
+            with open(output_path, "a") as f:
+                f.write(json.dumps(result) + "\n")
+                f.flush()
+
+            n_findings = len(result.get("findings", []))
+            n_err = sum(
+                1 for f in result.get("findings", []) if f.get("scores", {}).get("judge_error")
+            )
+            print(
+                f"[{model}←{skill_model}] rep={rep} findings={n_findings} "
+                f"refused={result.get('refused', False)} judge_err={n_err}"
+            )
+
+    print()
+    print(f"Codebase eval complete: {len(pairs)} pairings")
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -1172,7 +1504,23 @@ Examples:
         action="store_true",
         help="Run baseline mode: model runs WITHOUT any skill text (skill='none'). Composes with --repetitions.",
     )
+    parser.add_argument(
+        "--codebase",
+        action="store_true",
+        help=(
+            "Codebase mode: clone antirez/smallchat, review full source files "
+            "(not synthetic diffs), match against data/benchmark.jsonl. "
+            "Produces one record per (model, skill) pair instead of per-diff."
+        ),
+    )
     args = parser.parse_args()
+
+    # --codebase mode: full-codebase review, one record per pair
+    # Dispatch before the --cross output-path resolution so codebase mode
+    # writes to eval_results_codebase.jsonl, not the diff-based cross file.
+    if args.codebase:
+        _run_codebase_mode(args)
+        sys.exit(0)
 
     # Resolve default output path based on --cross flag
     if args.out is None:

@@ -2,6 +2,16 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-10-12
+
+- **Cross-matrix unified with comparison pipeline (`--codebase` mode):** the cross-matrix evaluation now operates on the real SmallChat codebase instead of synthetic diffs, making its rankings directly comparable with `comparison.md`. Previously the two reports diverged because they used different inputs (45 synthetic diffs vs full codebase), different ground truth (embedded bugs vs `benchmark.jsonl`), different prompt styles, and different matching tolerances (±5 vs ±10). Codebase mode eliminates all four mismatches.
+  - `scripts/run_eval.py` — new `--codebase` flag: clones `antirez/smallchat`, builds a full-codebase review prompt via `build_codebase_prompt` (reusing the comparison pipeline's prompt structure), matches findings against `data/benchmark.jsonl` (43 real bugs), and produces one record per (model, skill) pair instead of 1080 per-diff records. Reduces total LLM calls from ~1080 to ~20.
+  - `scripts/render_cross.py` — matching `--codebase` flag: loads `benchmark.jsonl` as synthetic diff-records via `_benchmark_to_diff_records`, so `compute_cell_metrics` works unchanged. Matching tolerance inherits the shared matcher from `src/torvalds_skill/matching.py`.
+  - Ground-truth leak verified absent: the codebase prompt contains no bug IDs, no bug descriptions, and no file/line hints from `benchmark.jsonl` — only the source code and the review instructions.
+  - `tests/test_codebase_mode.py` (15 tests): prompt builder (skill block, baseline, review instructions, no-leak), benchmark-to-diff adapter, real benchmark load, CLI flag presence in both scripts, end-to-end render from synthetic codebase-mode results, and a regression test verifying `--codebase` dispatches before `--out` resolution in `main()`.
+  - Suite: 1228 passed, ruff + format clean.
+- **Dispatch-order fix (codebase mode):** `main()` resolved `args.out` to `eval_results_cross.jsonl` when `--cross` was set, *then* dispatched `--codebase` mode — so codebase mode wrote to the old diff-based cross file, colliding with 1080 existing records and skipping 11/12 pairings as "already done". Fixed by moving the `--codebase` dispatch before the `--out` resolution. One contaminated `diff_id=SMALLCHAT` record was removed from `eval_results_cross.jsonl` (backup saved). Regression test at AST level ensures the dispatch order cannot regress.
+
 ## 2026-10-09
 
 - **Report provenance is now an explicit input (both generators):**
