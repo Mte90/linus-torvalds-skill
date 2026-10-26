@@ -486,6 +486,7 @@ def render_markdown(
     baseline_cell_data: dict[str, dict[str, Any]] | None = None,
     has_baseline: bool = False,
     eval_provenance: EvalProvenance = "decontaminated",
+    codebase_mode: bool = False,
 ) -> None:
     """Render the cross-model evaluation matrix as markdown with extended sections.
 
@@ -509,9 +510,14 @@ def render_markdown(
 
     # Header
     lines.append("# Cross-Model Evaluation Matrix\n")
-    lines.append(
-        "Diagonal data from `data/eval_results.jsonl`, cross-data from `data/eval_results_cross.jsonl`.\n"
-    )
+    if codebase_mode:
+        lines.append(
+            "Codebase data from `data/eval_results_codebase.jsonl` (full SmallChat review, 43 ground-truth bugs).\n"
+        )
+    else:
+        lines.append(
+            "Diagonal data from `data/eval_results.jsonl`, cross-data from `data/eval_results_cross.jsonl`.\n"
+        )
     lines.append(
         "*Judge model: GLM5.2 (fixed external judge, scored via `--judge-model` at generation time).\n"
     )
@@ -522,10 +528,15 @@ def render_markdown(
     buggy_count = sum(1 for r in diff_records if r.get("expected") == "findings")
     clean_count = sum(1 for r in diff_records if r.get("expected") == "no-findings")
     refuse_count = sum(1 for r in diff_records if r.get("expected") == "refuse-to-conclude")
-    lines.append(
-        f"Dataset: {len(diff_records)} diff scenarios = {buggy_count} buggy, {clean_count} clean "
-        f"(no findings expected), {refuse_count} refuse-to-conclude (correct answer is uncertainty).\n"
-    )
+    if codebase_mode:
+        lines.append(
+            f"Dataset: {len(diff_records)} ground-truth bugs from `benchmark.jsonl`.\n"
+        )
+    else:
+        lines.append(
+            f"Dataset: {len(diff_records)} diff scenarios = {buggy_count} buggy, {clean_count} clean "
+            f"(no findings expected), {refuse_count} refuse-to-conclude (correct answer is uncertainty).\n"
+        )
 
     # Judge COI note
     lines.append(
@@ -535,10 +546,16 @@ def render_markdown(
 
     # Phase 4: Add Question & Answer section (skeleton part 2)
     lines.append("## Question & Answer\n")
-    lines.append(
-        "**Question this report answers:** Which model+skill combination detects bugs best? "
-        "(Cross-model evaluation on 45 synthetic diffs.)\n"
-    )
+    if codebase_mode:
+        lines.append(
+            "**Question this report answers:** Which model+skill combination detects bugs best? "
+            "(Cross-model evaluation on the real SmallChat codebase, 43 ground-truth bugs.)\n"
+        )
+    else:
+        lines.append(
+            "**Question this report answers:** Which model+skill combination detects bugs best? "
+            "(Cross-model evaluation on 45 synthetic diffs.)\n"
+        )
     lines.append(
         "**Headline answer:** The reviewing model — not the attached skill — drives how many bugs are found. "
         "Swapping skills rarely changes a model's true-positive count; the skill mainly affects precision "
@@ -549,9 +566,14 @@ def render_markdown(
         "model+skill pairing. Native pairings (model == skill) are marked.\n"
     )
     # Anti-contradiction box
-    lines.append(
-        "> **Anti-contradiction note:** This report answers a different question than `report/comparison.md`. This report asks 'Which model+skill combination detects bugs best?' on a dataset of 45 synthetic diffs. The comparison.md asks 'Does adding the skill help or hurt each model?' on the real SmallChat codebase. The comparison.md verdicts vary by model (Skill adds value / Skill reduces coverage / No change). Apparent disagreement between the two reports is expected — they measure different things on different data.\n"
-    )
+    if codebase_mode:
+        lines.append(
+            "> **Anti-contradiction note:** This report answers a different question than `report/comparison.md`. This report asks 'Which model+skill combination detects bugs best?' on the real SmallChat codebase. The comparison.md asks 'Does adding the skill help or hurt each model?' on the same codebase. Both reports now use the same codebase; apparent disagreement reflects different metrics, not different data.\n"
+        )
+    else:
+        lines.append(
+            "> **Anti-contradiction note:** This report answers a different question than `report/comparison.md`. This report asks 'Which model+skill combination detects bugs best?' on a dataset of 45 synthetic diffs. The comparison.md asks 'Does adding the skill help or hurt each model?' on the real SmallChat codebase. The comparison.md verdicts vary by model (Skill adds value / Skill reduces coverage / No change). Apparent disagreement between the two reports is expected — they measure different things on different data.\n"
+        )
     lines.append("\n")
 
     # Plain-language verdict (computed up-front from the whole matrix)
@@ -685,7 +707,8 @@ def render_markdown(
         lines.append("## Verdict\n")
         lines.append(
             f"**Best pairing**: `{best_pair[0]}` reviewing with `{best_pair[1]}` skill found "
-            f"**{best_pair[2]} bugs** across {total_bugs_ground_truth} diff scenarios.\n"
+            f"**{best_pair[2]} bugs** across {total_bugs_ground_truth} "
+            + ("ground-truth bugs.\n" if codebase_mode else "diff scenarios.\n")
         )
 
         # Best Detection Score (tie-aware)
@@ -776,8 +799,13 @@ def render_markdown(
         lines.append(
             "See `report/comparison.md` for the baseline-vs-skill analysis "
             "(whether adding any skill helps or hurts each model). "
-            "Note: the two reports use different datasets (real codebase vs synthetic diffs) "
-            "and this cross eval is pre-decontamination.\n"
+            "Note: "
+            + (
+                "both reports use the same codebase.\n"
+                if codebase_mode
+                else "the two reports use different datasets (real codebase vs synthetic diffs) "
+                "and this cross eval is pre-decontamination.\n"
+            )
         )
         lines.append(
             "In plain terms: the reviewing model — not the attached skill — drives how many "
@@ -830,11 +858,14 @@ def render_markdown(
         "Low precision means many false positives.\n"
     )
     lines.append(
-        "- **Recall**: Matched findings divided by the number of buggy diff scenarios "
-        f"({buggy_count} ground-truth bugs). Low recall means missed bugs.\n"
+        "- **Recall**: Matched findings divided by the number of buggy "
+        + ("ground-truth bugs " if codebase_mode else "diff scenarios ")
+        + f"({buggy_count} ground-truth bugs). Low recall means missed bugs.\n"
     )
     lines.append(
-        "- **Refusal Rate (R)**: Fraction of diffs where the model refused to review. "
+        "- **Refusal Rate (R)**: Fraction of "
+        + ("reviews " if codebase_mode else "diffs ")
+        + "where the model refused to review. "
         "In this dataset R=0 for all pairings, so it is omitted from the tables.\n"
     )
     lines.append(
@@ -844,8 +875,9 @@ def render_markdown(
         "judge scores may reflect self-preference.\n"
     )
     lines.append(
-        "- **Native**: Diagonal pairing where the model reviews a diff using its own skill "
-        "(model == skill).\n"
+        "- **Native**: Diagonal pairing where the model reviews "
+        + ("the codebase " if codebase_mode else "a diff ")
+        + "using its own skill (model == skill).\n"
     )
     lines.append(
         "- **Exclusive**: Bugs found by this model/skill and no other model/skill. "
@@ -858,10 +890,11 @@ def render_markdown(
         "- **Duplicate**: A finding that matches a ground-truth bug already matched by an earlier "
         "finding in the same cell.\n"
     )
-    lines.append(
-        "- **On non-buggy**: A finding on a clean or refusal scenario. Ground truth says there "
-        "is no bug, so such a finding cannot match anything and lands in Unmatched.\n"
-    )
+    if not codebase_mode:
+        lines.append(
+            "- **On non-buggy**: A finding on a clean or refusal scenario. Ground truth says there "
+            "is no bug, so such a finding cannot match anything and lands in Unmatched.\n"
+        )
     lines.append(
         "- **Non-TP findings**: Total distinct findings minus true positives (= Duplicates + Unmatched).\n"
         "- **Duplicates**: A second finding matching a ground-truth bug already claimed by an "
@@ -886,10 +919,16 @@ def render_markdown(
         if max_reps > 1
         else "1 run per cell"
     )
-    lines.append(
-        f"**Note**: n=45 scenarios (25 buggy), {run_note}; intra-skill Detection Score "
-        "differences of ~0.03 are not significant.\n"
-    )
+    if codebase_mode:
+        lines.append(
+            f"**Note**: n={buggy_count} ground-truth bugs, {run_note}; intra-skill Detection Score "
+            "differences of ~0.03 are not significant.\n"
+        )
+    else:
+        lines.append(
+            f"**Note**: n=45 scenarios (25 buggy), {run_note}; intra-skill Detection Score "
+            "differences of ~0.03 are not significant.\n"
+        )
 
     header = "| Skill \\\\ Model |"
     for model in all_models:
@@ -959,8 +998,9 @@ def render_markdown(
 
     lines.append("## Recall Matrix\n")
     lines.append(
-        "Rows = skill applied, columns = reviewing model. Matched findings per buggy diff "
-        f"scenario ({buggy_count} ground-truth bugs) — higher is better.\n"
+        "Rows = skill applied, columns = reviewing model. Matched findings per "
+        + ("ground-truth bug" if codebase_mode else "buggy diff scenario")
+        + f" ({buggy_count} ground-truth bugs) — higher is better.\n"
     )
     lines.append("| Skill \\\\ Model | " + " | ".join(all_models) + " |")
     lines.append("|" + "---|" * (len(all_models) + 1))
@@ -1482,8 +1522,13 @@ def render_markdown(
         "cross-skills (model != skill). Positive delta = native skill helps; "
         "negative = cross-skill helps. This measures native-skill advantage, not "
         "skill-on vs skill-off — for that comparison see `report/comparison.md`. "
-        "Note: the two reports use different datasets (real codebase vs synthetic diffs) "
-        "and this cross eval is pre-decontamination.\n"
+        "Note: "
+        + (
+            "both reports use the same codebase.\n"
+            if codebase_mode
+            else "the two reports use different datasets (real codebase vs synthetic diffs) "
+            "and this cross eval is pre-decontamination.\n"
+        )
     )
     lines.append("| Model | Native DS | Cross-Skill Mean DS | Delta | Verdict |")
     lines.append("|-------|----------|---------------------|-------|---------|")
@@ -1564,7 +1609,9 @@ def render_markdown(
     )
     lines.append(
         "The four sub-scores below feed the Judge Score (J) shown in the matrices above. "
-        "Each is the mean over evaluated diffs on a 0–2 scale, scored by the judge model; "
+        "Each is the mean over evaluated "
+        + ("reviews " if codebase_mode else "diffs ")
+        + "on a 0–2 scale, scored by the judge model; "
         "values vary little across pairings, so they are shown as appendix detail.\n"
     )
     for axis in ["accuracy", "prioritization", "justification", "actionability"]:
@@ -1600,18 +1647,30 @@ def render_markdown(
 
     # Phase 4: Add Limitations section (skeleton part 4)
     lines.append("## Limitations\n")
+    if codebase_mode:
+        lines.append(
+            f"- **n={len(diff_records)} ground-truth bugs**: Evaluation based on the real SmallChat codebase with {len(diff_records)} known bugs.\n"
+        )
+    else:
+        lines.append(
+            "- **n=45 (25 buggy)**: Evaluation based on 45 diff scenarios, of which 25 contain ground-truth bugs.\n"
+        )
     lines.append(
-        "- **n=45 (25 buggy)**: Evaluation based on 45 diff scenarios, of which 25 contain ground-truth bugs.\n"
-    )
-    lines.append(
-        f"- **Repetitions**: each model+skill pairing was evaluated {max((cell.get('reps', 1) for cell in cell_data.values()), default=1)}x per diff scenario.\n"
+        f"- **Repetitions**: each model+skill pairing was evaluated {max((cell.get('reps', 1) for cell in cell_data.values()), default=1)}x per "
+        + ("bug.\n" if codebase_mode else "diff scenario.\n")
     )
     lines.append(
         "- **Judge COI**: The judge (GLM5.2) also participates as a reviewer, so judge scores may reflect self-preference.\n"
     )
     lines.append(provenance_limitation(eval_provenance) + "\n")
     lines.append(
-        '- **Denominator choice**: Recall denominator uses only buggy diffs (expected=="findings"); findings on clean or refusal scenarios count as false positives.\n'
+        "- **Denominator choice**: Recall denominator uses only "
+        + ("ground-truth bugs" if codebase_mode else "buggy diffs")
+        + (
+            "; any finding that matches no ground-truth bug counts as a false positive.\n"
+            if codebase_mode
+            else ' (expected=="findings"); findings on clean or refusal scenarios count as false positives.\n'
+        )
     )
     lines.append("\n")
 
@@ -1763,6 +1822,7 @@ def main() -> None:
         baseline_cell_data=baseline_cell_data,
         has_baseline=len(baseline_results) > 0,
         eval_provenance=args.eval_provenance,
+        codebase_mode=bool(args.codebase),
     )
     print(f"Matrix written to {args.out}")
 

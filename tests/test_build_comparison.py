@@ -868,7 +868,8 @@ class TestRenderMarkdownSkeleton:
         # Anti-contradiction blockquote
         assert "Anti-contradiction note" in content, "Anti-contradiction blockquote missing"
         assert "report/cross_matrix.md" in content, "Cross-reference missing"
-        assert "45 synthetic diffs" in content, "Dataset description missing"
+        assert "on the real SmallChat codebase" in content, "Cross-matrix dataset description missing"
+        assert "Both reports use the same data" in content, "Shared-data clarification missing"
 
         # Evidence umbrella
         assert "## Evidence" in content, "Evidence umbrella section missing"

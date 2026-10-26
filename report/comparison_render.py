@@ -200,7 +200,7 @@ def generate_markdown(
     lines.append(scorecard)
     lines.append("")
     lines.append(
-        "> **Anti-contradiction note:** This report answers a different question than `report/cross_matrix.md`. The cross matrix asks 'Which model+skill combination detects bugs best?' on a dataset of 45 synthetic diffs. This report asks 'Does adding the skill help or hurt each model?' on the real SmallChat codebase. Apparent disagreement between the two reports is expected — they measure different things on different data (synthetic held-out diffs vs a real codebase), and the metric that decides a winner is Detection Score in both. For the per-pairing view of the synthetic dataset see `cross_matrix.md`; this report's cross-reference is only there to prevent misreading the two as contradictory."
+        "> **Anti-contradiction note:** This report answers a different question than `report/cross_matrix.md`. The cross matrix asks 'Which model+skill combination detects bugs best?' on the real SmallChat codebase. This report asks 'Does adding the skill help or hurt each model?' on the same codebase. Both reports use the same data; apparent disagreement reflects different metrics, not different data, and the metric that decides a winner is Detection Score in both. For the per-pairing view see `cross_matrix.md`."
     )
     lines.append("")
     # Orphaned intro paragraph moved here (scope sentence for Q&A)

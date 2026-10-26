@@ -1,6 +1,6 @@
 ---
 title: Model Comparison — SmallChat Review
-date: 2026-10-09
+date: 2026-10-26
 codebase: antirez/smallchat
 models: gpt-oss-120b, glm5.2, mistral, qwen3.8-27b
 skill: linus-torvalds-skill (language-agnostic)
@@ -9,7 +9,8 @@ method: static review, skill triggers applied per source file
 
 # Model Comparison — SmallChat Review
 
-> **WARNING: pre-decontamination data.** The diff-eval reviewer prompt included ground truth (since removed); Generalization/Calibration numbers measure transcription fidelity, not detection. Re-run pending.
+> **Evaluation provenance:** the reviewer prompt carried only the code under review, never the ground-truth bug list (enforced by regression tests in `tests/test_eval.py`). Every number below therefore measures detection, not transcription. Judge: GLM5.2, a fixed external model scored at generation time via `--judge-model`.
+
 
 Dataset: SmallChat codebase (~706 LOC), 4 models reviewed with and without the Linus Torvalds skill.
 
@@ -35,7 +36,7 @@ How to read the Verdict column: 'Skill-Only Critical' counts critical bugs a mod
 The skill adds the most value for mistral, which gained 9 critical finding(s) exclusive to the with-skill review.
 
 
-> **Anti-contradiction note:** This report answers a different question than `report/cross_matrix.md`. The cross matrix asks 'Which model+skill combination detects bugs best?' on a dataset of 45 synthetic diffs (pre-decontamination). This report asks 'Does adding the skill help or hurt each model?' on the real SmallChat codebase. The cross_matrix.md currently shows qwen3.8-27b as the best pairing on synthetic data; here the winner varies by model. Apparent disagreement between the two reports is expected — they measure different things on different data.
+> **Anti-contradiction note:** This report answers a different question than `report/cross_matrix.md`. The cross matrix asks 'Which model+skill combination detects bugs best?' on the real SmallChat codebase. This report asks 'Does adding the skill help or hurt each model?' on the same codebase. Both reports use the same data; apparent disagreement reflects different metrics, not different data, and the metric that decides a winner is Detection Score in both. For the per-pairing view see `cross_matrix.md`.
 
 4 models (fourth being qwen3.8-27b) reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.
 
@@ -85,7 +86,7 @@ Every finding from gpt-oss-120b and glm5.2 and mistral and qwen3.8-27b reviews, 
 | 1 | Missing `const` qualifier on `TCPConnect` address... | ✓ (LOW) | ✗ | ✗ | ✗ | gpt-oss-120b only |
 | 2 | Magic number used for listen backlog | ✓ (LOW) | ✗ | ✓ (HIGH) | ✗ | — |
 | 3 | Memory leak in TCPConnect on EINPROGRESS return... | ✗ | ✓ (HIGH) | ✓ (HIGH) | ✗ | — |
-| 4 | Memory leak in TCPConnect on EINPROGRESS return... | ✗ | ✗ | ✗ | ✓ (HIGH) | — |
+| 4 | Memory leak in TCPConnect on EINPROGRESS return... | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
 | 5 | Fatal exit on out-of-memory in chatMalloc and... | ✗ | ✓ (HIGH) | ✓ (CRITICAL) | ✗ | — |
 | 6 | Finding: Missing error handling in acceptClient | ✗ | ✗ | ✓ (HIGH) | ✗ | mistral only |
 | 7 | Memory leak in TCPConnect on EINPROGRESS return... | ✗ | ✗ | ✗ | ✗ | — |
@@ -188,7 +189,7 @@ Which skill triggers fired in each review:
 | Theme 5 – Consistent... | ✗ | ✗ | ✗ | ✓ (2) |
 | Unchecked error return in a... | ✗ | ✗ | ✓ (5) | ✗ |
 
-**Note:** Unmatched trigger firings (no skill trigger matched): gpt-oss-120b=4, qwen3.8-27b=5
+**Note:** 9 finding(s) fired no skill trigger and are excluded from the table above (they carry no trigger theme): gpt-oss-120b=4, qwen3.8-27b=5. They are still counted as findings in the metrics tables, so precision here reflects trigger coverage while overall precision reflects all findings.
 
 ---
 
@@ -517,12 +518,12 @@ Metrics computed by matching model findings to benchmark bugs (file basename + l
 | Model | Precision | Recall | DS | Accuracy | Prioritization | Justification | Actionability | Overall |
 |-------|-----------|--------|------|----------|----------------|---------------|---------------|---------|
 
-> **Note:** Overall = LLM judge (GLM5.2), which also participates as a reviewer: may reflect self-preference.
+> **Note:** Overall = LLM judge (GLM5.2), which also participates as a reviewer: may reflect self-preference. **DS is the primary metric** — it is computed against ground truth and reproducible from the committed eval data. Overall is a quality opinion on a 0-2 scale from a single judge with no inter-rater check: use it to break ties, not to rank.
 
-| gpt-oss-120b | 39.6% | 42.2% | 40.9% | 63.3% | 49.4% | 64.4% | 59.3% | 59.1% |
-| glm5.2 | 20.4% | 24.4% | 22.2% | 65.5% | 52.7% | 57.6% | 55.0% | 57.7% |
-| mistral | 48.9% | 48.9% | 48.9% | 58.9% | 51.1% | 58.9% | 54.4% | 55.8% |
-| qwen3.8-27b | 52.1% | 55.6% | 53.8% | 60.0% | 48.0% | 52.2% | 49.4% | 52.4% |
+| gpt-oss-120b | 12.0% | 22.2% | 15.6% | 51.0% | 45.0% | 49.4% | 47.0% | 48.1% |
+| glm5.2 | 7.9% | 24.4% | 12.0% | 79.7% | 58.5% | 83.7% | 84.8% | 76.7% |
+| mistral | 24.4% | 48.9% | 32.6% | 45.6% | 40.6% | 52.8% | 54.4% | 48.3% |
+| qwen3.8-27b | 14.3% | 35.6% | 20.4% | 74.0% | 64.1% | 84.2% | 83.9% | 76.5% |
 
 ---
 
@@ -532,19 +533,21 @@ Assessment of model refusal behavior on clean and ambiguous cases.
 
 | Model | Clean FP Rate (n/d) | Ambiguous Confidence Error (n/d) | Refusal Accuracy |
 |-------|:-------------------:|:--------------------------------:|:----------------:|
-| gpt-oss-120b | 100.0% (0/15) | 100.0% (0/5) | 0.0% |
-| glm5.2 | 100.0% (0/15) | 100.0% (0/5) | 0.0% |
-| mistral | 100.0% (0/15) | 100.0% (0/5) | 0.0% |
-| qwen3.8-27b | 100.0% (0/15) | 100.0% (0/5) | 0.0% |
+| gpt-oss-120b | 100.0% (0/30) | 100.0% (0/10) | 0.0% |
+| glm5.2 | 100.0% (0/30) | 100.0% (0/10) | 0.0% |
+| mistral | 100.0% (0/30) | 100.0% (0/10) | 0.0% |
+| qwen3.8-27b | 100.0% (0/30) | 100.0% (0/7) | 0.0% |
 
 > **Note:** Clean FP Rate measures false positives on records expected to have no findings. Ambiguous Confidence Error measures incorrect high-confidence conclusions on ambiguous cases. Refusal Accuracy = 1 - Ambiguous Confidence Error. Denominators shown in parentheses.
 
 ## Limitations
 
 - **n=45 (25 buggy)**: Evaluation based on 45 diff scenarios, of which 25 contain ground-truth bugs.
-- **Single-run-per-cell**: Each model+skill pairing evaluated once; a repetitions mechanism exists in the pipeline for future runs.
+- **Repetitions**: each model+skill pairing was evaluated 1x per diff scenario.
+- **No variance estimate**: with a single run per cell there is no standard deviation, so differences of ~0.03 Detection Score between pairings should be read as noise, not as a ranking difference.
 - **Judge COI**: The judge (GLM5.2) also participates as a reviewer, so judge scores may reflect self-preference.
-- **Pre-decontamination status**: The reviewer prompt initially included ground truth (subsequently removed); calibration/generalization numbers measure transcription fidelity, not detection.
+- **Prompt provenance**: reviewers never saw the ground-truth bug list, so these numbers measure detection against the ground-truth bug list.
+
 - **Denominator choice**: Recall denominator uses only buggy diffs (expected=="findings"); findings on clean or refusal scenarios count as false positives.
 
 

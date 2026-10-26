@@ -12,8 +12,9 @@ EvalProvenance = Literal["decontaminated", "pre-decontamination"]
 
 _BANNERS: dict[EvalProvenance, str] = {
     "decontaminated": (
-        "> **Evaluation provenance:** the reviewer prompt carried only the diff, never the "
-        "ground-truth bug list (enforced by regression tests in `tests/test_eval.py`). "
+        "> **Evaluation provenance:** the reviewer prompt carried only the "
+        "code under review, never the ground-truth bug list"
+        " (enforced by regression tests in `tests/test_eval.py`). "
         "Every number below therefore measures detection, not transcription. Judge: GLM5.2, "
         "a fixed external model scored at generation time via `--judge-model`."
     ),
@@ -27,7 +28,7 @@ _BANNERS: dict[EvalProvenance, str] = {
 _LIMITATIONS: dict[EvalProvenance, str] = {
     "decontaminated": (
         "- **Prompt provenance**: reviewers never saw the ground-truth bug list, so these "
-        "numbers measure detection against a 25-bug ground truth."
+        "numbers measure detection against the ground-truth bug list."
     ),
     "pre-decontamination": (
         "- **Pre-decontamination status**: the reviewer prompt initially included ground truth "

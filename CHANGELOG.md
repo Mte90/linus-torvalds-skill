@@ -2,6 +2,12 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-10-26
+
+- **Codebase-mode evaluation completed (20/20 records):** finished the decontaminated cross-model evaluation on the real SmallChat codebase. All four models (gpt-oss-120b, glm5.2, mistral-small-4-119b, qwen3.8-27b) ran across diagonal, baseline, and cross arms (20 pairings total), judged by GLM5.2. Report regenerated as `report/cross_matrix.md` with the corrected codebase header.
+- **Header bug fix:** `render_cross.py` reported the wrong data source in codebase mode ("Diagonal data from `eval_results.jsonl`"). Added a `codebase_mode` flag to `render_markdown` so the header now correctly says "Codebase data from `data/eval_results_codebase.jsonl`". Suite: 1229 passed, ruff clean.
+- **Judge COI accepted (P1-2):** user accepted GLM5.2 acting as both reviewer and judge. The COI disclosure note was already present in the report (4 locations). No code change needed.
+
 ## 2026-10-12
 
 - **Cross-matrix unified with comparison pipeline (`--codebase` mode):** the cross-matrix evaluation now operates on the real SmallChat codebase instead of synthetic diffs, making its rankings directly comparable with `comparison.md`. Previously the two reports diverged because they used different inputs (45 synthetic diffs vs full codebase), different ground truth (embedded bugs vs `benchmark.jsonl`), different prompt styles, and different matching tolerances (±5 vs ±10). Codebase mode eliminates all four mismatches.

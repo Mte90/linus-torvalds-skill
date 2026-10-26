@@ -372,16 +372,17 @@ Checks:
 
 ## Evaluation (`scripts/run_eval.py`)
 
-Measures whether a skill improves a model's bug-finding ability on held-out diffs. This is pure measurement: no training, no fine-tuning.
+Measures whether a skill improves a model's bug-finding ability on a held-out bug set. This is pure measurement: no training, no fine-tuning. Two input modes exist: **codebase mode** (default for the published cross-matrix — one full review of the SmallChat codebase per pairing, matched against `data/benchmark.jsonl`) and **diff mode** (one review per held-out diff from `data/eval_diffs.jsonl`).
 
 **Inputs**
 
-- `data/eval_diffs.jsonl` — 45 diffs with ground-truth bugs (schema: `data/eval_diffs.schema.json`, validated by `scripts/validate_eval.py`)
+- Codebase mode: `antirez/smallchat` cloned at run time; ground truth `data/benchmark.jsonl` (43 real bugs), schema documented in `data/benchmark.schema.json`
+- Diff mode: `data/eval_diffs.jsonl` — 45 diffs with ground-truth bugs (schema: `data/eval_diffs.schema.json`, validated by `scripts/validate_eval.py`)
 - Model profiles from `src/torvalds_skill/profiles.py`; API credentials from the environment (same contract as the review pipeline)
 
 **Per-record flow**
 
-1. `build_diff_prompt` injects the skill text into the review prompt
+1. `build_codebase_prompt` (codebase mode) or `build_diff_prompt` (diff mode) injects the skill text into the review prompt
 2. Model call via `report.llm_review.call_llm` (cache-aware; SIGALRM wall-clock timeout in the main thread, per-read socket timeout in worker threads)
 3. `parse_findings_from_review` extracts structured findings; `check_refused` detects refusals
 4. Findings are matched to ground-truth bugs; unmatched findings become new-bug candidates
@@ -395,10 +396,16 @@ Each launch loads existing `(diff_id, model, skill)` keys and skips completed pa
 **Flags**
 
 ```bash
-# Diagonal (model with its own skill) — writes data/eval_results.jsonl
+# Codebase mode: full SmallChat review, one record per (model, skill) — writes data/eval_results_codebase.jsonl
+python3 scripts/run_eval.py --codebase
+
+# Codebase mode, all three arms (diagonal + baseline + cross)
+python3 scripts/run_eval.py --codebase --cross --baseline
+
+# Diagonal diff mode (model with its own skill) — writes data/eval_results.jsonl
 python3 scripts/run_eval.py
 
-# Cross mode (off-diagonal model×skill pairs) — writes data/eval_results_cross.jsonl
+# Cross diff mode (off-diagonal model×skill pairs) — writes data/eval_results_cross.jsonl
 python3 scripts/run_eval.py --cross
 
 # Read-only completion table (no API calls)
@@ -411,6 +418,9 @@ python3 scripts/run_eval.py --cross --models glm5.2 --rescore-zeros --parallel
 | Flag | Effect |
 |---|---|
 | `--cross` | Evaluate off-diagonal model×skill pairs |
+| `--codebase` | Full-codebase review mode (SmallChat + `data/benchmark.jsonl`) instead of per-diff; one record per (model, skill) |
+| `--codebase-results <path>` | Output file for codebase mode (default `data/eval_results_codebase.jsonl`) |
+| `--benchmark <path>` | Ground-truth bugs for codebase mode (default `data/benchmark.jsonl`) |
 | `--out <path>` | Output JSONL path |
 | `--status` | Print completion table, make no API calls |
 | `--models <m1,m2>` | Restrict to a subset of models |
@@ -424,11 +434,14 @@ python3 scripts/run_eval.py --cross --models glm5.2 --rescore-zeros --parallel
 **Rendering**
 
 ```bash
-# 4×4 model×skill matrix (marginals: best model, best skill, novel-bug coverage)
+# 4×4 model×skill matrix — codebase mode (matches the published report)
+python3 scripts/render_cross.py --codebase
+
+# 4×4 model×skill matrix — diff mode (held-out diffs)
 python3 scripts/render_cross.py
 
 # Render a report that admits it was produced from a contaminated run
-python3 scripts/render_cross.py --eval-provenance pre-decontamination
+python3 scripts/render_cross.py --codebase --eval-provenance pre-decontamination
 ```
 
 | Flag | Effect |
