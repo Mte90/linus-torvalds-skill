@@ -186,7 +186,10 @@ def call_llm(
         "stream": True,
     }
     if disable_thinking:
+        # Some vLLM deployments honor chat_template_kwargs; others need the
+        # top-level flag. Send both so the suppression is picked up regardless.
         payload["chat_template_kwargs"] = {"enable_thinking": False}
+        payload["enable_thinking"] = False
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(CHAT_URL, data=body, headers=headers(), method="POST")
 

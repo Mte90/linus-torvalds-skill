@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -229,12 +230,20 @@ def _ensure_smallchat() -> None:
 
 
 def _read_smallchat_sources() -> str:
-    """Read and concatenate all smallchat source files into a sources block."""
+    """Read and concatenate all smallchat source files into a sources block.
+
+    Each line carries its absolute number in the left margin: the prompt asks for
+    ``Location: file:line``, and without a numbered listing the reviewer has no way to
+    produce a real line, so findings arrive with ``line: null`` and never match ground truth.
+    """
     parts = []
     for src in SMALLCHAT_FILES:
         path = SMALLCHAT_TARGET / src
         content = path.read_text() if path.exists() else f"(file not found: {src})"
-        parts.append(f"== SOURCE: {src} ==\n{content}\n")
+        numbered = "\n".join(
+            f"{number:4d}| {text}" for number, text in enumerate(content.splitlines(), 1)
+        )
+        parts.append(f"== SOURCE: {src} ==\n{numbered}\n")
     return "\n".join(parts)
 
 
@@ -271,7 +280,7 @@ For each finding use:
 ### [SEVERITY] Finding title
 - **Type:** (the trigger from the skill that fired, or "unmatched" if none matches)
 - **Trigger:** (the trigger from the skill that fired, or "unmatched" if none matches)
-- **Location:** file:line
+- **Location:** file:line (use the number printed in the left margin of the listing above)
 - **Issue:** what's wrong
 - **Fix:** concrete action
 - **Pass:** 1 | 2
@@ -302,7 +311,7 @@ Merge rule: If a file has any Pass-1 findings, ALL Pass-2 findings for that file
 - Report every real bug you find. Map each finding to the closest matching skill trigger when one exists; if none matches, set Trigger: unmatched — do NOT suppress real bugs.
 - Use the skill's severity calibration and precedence hierarchy.
 - Precedence: correctness > performance > complexity > style > API stability.
-- Be concrete: cite line numbers, name functions, quote code.
+- Be concrete: cite line numbers from the left margin, name functions, quote code.
 - Don't invent problems. If a file is genuinely clean, say "No findings."
 - English.
 
@@ -372,9 +381,15 @@ def run_model_on_codebase(
     timeout = getattr(profile, "review_timeout", 600)
 
     response = None
+    # A reasoning model can spend its whole output budget on chain-of-thought and return no
+    # review body. Repeating the identical call just burns another timeout, so the retry
+    # suppresses the thinking phase instead.
+    disable_thinking = False
     for attempt in range(2):
         try:
-            response = call_llm(model, prompt, timeout=timeout)
+            response = call_llm(
+                model, prompt, timeout=timeout, disable_thinking=disable_thinking
+            )
             if response.strip():
                 break
             print(
@@ -388,6 +403,8 @@ def run_model_on_codebase(
                 file=sys.stderr,
             )
             response = None
+            if "reasoning_only_response" in str(e):
+                disable_thinking = True
 
     if response is None or not response.strip():
         return None
@@ -395,6 +412,14 @@ def run_model_on_codebase(
     # Parse findings using a synthetic diff_record for file context
     synthetic = {"diff": "", "file": "smallchat-server.c"}
     findings = parse_findings_from_review(response, synthetic)
+
+    unlocated = sum(1 for finding in findings if finding.get("line") is None)
+    if unlocated:
+        print(
+            f"warning: {unlocated}/{len(findings)} findings from {model} cite no line number"
+            " and cannot be matched against ground truth",
+            file=sys.stderr,
+        )
 
     refused = check_refused(response, findings)
 
@@ -421,6 +446,7 @@ def run_model_on_codebase(
         "scores": avg_scores,
         "refused": refused,
         "skill": skill_model if skill_model and not baseline else "none",
+        "review": response,
     }
     return result
 
@@ -570,76 +596,168 @@ Fix: {finding.get("fix", "no fix proposed")}
     }
 
 
+_SEVERITY_ALIASES = {
+    "CRITICAL": "CRITICAL",
+    "BLOCKER": "CRITICAL",
+    "FATAL": "CRITICAL",
+    "SEVERE": "CRITICAL",
+    "HIGH": "HIGH",
+    "MAJOR": "HIGH",
+    "IMPORTANT": "HIGH",
+    "MEDIUM": "MEDIUM",
+    "MODERATE": "MEDIUM",
+    "NORMAL": "MEDIUM",
+    "LOW": "LOW",
+    "MINOR": "LOW",
+    "TRIVIAL": "LOW",
+    "INFO": "LOW",
+    "NIT": "LOW",
+}
+
+# Accepts "### [HIGH] title", "### HIGH: title", "#### **CRITICAL** title".
+# The severity token is abstract here; _SEVERITY_ALIASES decides what counts as a heading,
+# so ordinary headings such as "### Summary" are not treated as findings.
+_SEVERITY_HEADING_RE = re.compile(
+    r"^#{3,4}[ \t]+(?:\*\*)?\[?(?P<sev>[A-Za-z]{3,12})\]?(?:\*\*)?(?=[ \t:—–-]|$)",
+    re.MULTILINE,
+)
+
+# Finding boundaries are the "**Type:**" lines of the canonical output format. Reviews that
+# omit Type fall back to headings, then to "**Issue:**" markers.
+_TYPE_RE = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\*\*Type:?\*\*(?::)?", re.MULTILINE)
+_ISSUE_RE = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\*\*Issue:?\*\*(?::)?", re.MULTILINE)
+_LOCATION_RE = re.compile(
+    r"^[ \t]*(?:[-*][ \t]*)?\*\*Location:?\*\*(?::)?[ \t]*(.+)$", re.MULTILINE
+)
+_TRIGGER_RE = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\*\*Trigger:?\*\*(?::)?[ \t]*(.+)$", re.MULTILINE)
+_TYPE_VALUE_RE = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\*\*Type:?\*\*(?::)?[ \t]*(.+)$", re.MULTILINE)
+_ISSUE_VALUE_RE = re.compile(
+    r"^[ \t]*(?:[-*][ \t]*)?\*\*Issue:?\*\*(?::)?[ \t]*(.+)$", re.MULTILINE
+)
+_FIX_VALUE_RE = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\*\*Fix:?\*\*(?::)?[ \t]*(.+)$", re.MULTILINE)
+
+
+def _parse_location(location: str, default_file: str) -> tuple[str, int | None]:
+    """Split a Location value into (file, line).
+
+    Models write the location in several shapes; the ground-truth matcher only works on a
+    real line number, so every common form is accepted here rather than dropped silently.
+    """
+    text = location.strip().strip("`").strip().lstrip("*- ").strip()
+    if not text:
+        return default_file, None
+
+    file_re = re.compile(r"([\w./-]+\.[A-Za-z0-9]+)")
+
+    # file:120 / file:120-130 / file#L120
+    match = re.match(r"^(?P<file>[^\s:,()]+?)\s*[:#]\s*[Ll]?(?P<line>\d+)", text)
+    if match:
+        return match.group("file"), int(match.group("line"))
+
+    # "file.c, line 120"
+    match = re.match(r"^(?P<file>[^\s,()]+?)\s*,\s*(?:lines?\s*)?[Ll]?(?P<line>\d+)", text)
+    if match:
+        return match.group("file"), int(match.group("line"))
+
+    file_match = file_re.search(text)
+    file_path = file_match.group(1) if file_match else default_file
+
+    # "line 120" / "L120" / "lines 120-130"
+    match = re.search(r"(?:lines?\s*|[Ll])(?P<line>\d+)", text)
+    if match:
+        return file_path, int(match.group("line"))
+
+    # Bare number: "120"
+    match = re.search(r"(?<!\S)(?P<line>\d{1,5})(?!\S)", text)
+    if match:
+        return file_path, int(match.group("line"))
+
+    return file_path, None
+
+
 def parse_findings_from_review(review_text: str, diff_record: dict) -> list[dict]:
     """Parse findings from a model's review text.
+
+    Findings are delimited by their ``**Type:**`` line, not by severity headings: models
+    routinely drop the brackets (``### HIGH ...``) or emit several findings under one
+    heading, and a heading-based split silently collapses those reviews into a single
+    finding. Severity comes from the nearest preceding heading.
 
     Args:
         review_text: Raw review text from LLM
         diff_record: Original diff record (for file/diff context)
 
     Returns:
-        List of finding dicts with keys: file, line, severity, type, issue, fix
+        List of finding dicts with keys: file, line, severity, type, trigger, issue, fix
     """
-    import re
-
     findings = []
     diff_text = diff_record.get("diff", "")
+    default_file = diff_record.get("file", "")
 
-    # Match severity headings: ### [SEVERITY]
-    heading_re = re.compile(r"^###\s+\[(CRITICAL|HIGH|MEDIUM|LOW)\]\s+(.+)$", re.MULTILINE)
+    headings = []
+    for match in _SEVERITY_HEADING_RE.finditer(review_text):
+        severity = _SEVERITY_ALIASES.get(match.group("sev").upper())
+        if severity is not None:
+            headings.append((match.start(), severity))
 
-    # Match fields
-    type_re = re.compile(r"^\s*-?\s*\*\*Type:\*\*\s*(.+)", re.MULTILINE)
-    trigger_re = re.compile(r"^\s*-?\s*\*\*Trigger:\*\*\s*(.+)", re.MULTILINE)
-    location_re = re.compile(r"^\s*-?\s*\*\*Location:\*\*\s*(.+)", re.MULTILINE)
-    issue_re = re.compile(r"^\s*-?\s*\*\*Issue:\*\*\s*(.+)", re.MULTILINE)
-    fix_re = re.compile(r"^\s*-?\s*\*\*Fix:\*\*\s*(.+)", re.MULTILINE)
+    starts = [match.start() for match in _TYPE_RE.finditer(review_text)]
+    if not starts:
+        starts = [position for position, _ in headings]
+    if not starts:
+        starts = [match.start() for match in _ISSUE_RE.finditer(review_text)]
 
-    # Split into finding blocks
-    blocks = re.split(
-        r"^#{3,4}\s+\[(?:CRITICAL|HIGH|MEDIUM|LOW)\]\s+", review_text, flags=re.MULTILINE
-    )
+    issue_total = sum(1 for _ in _ISSUE_RE.finditer(review_text))
+    if not starts:
+        if issue_total:
+            print(
+                f"warning: {issue_total} issue field(s) found but no finding boundaries",
+                file=sys.stderr,
+            )
+        return []
 
-    for block in blocks:
-        if not block.strip():
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(review_text)
+        block = review_text[start:end]
+
+        issue_match = _ISSUE_VALUE_RE.search(block)
+        location_match = _LOCATION_RE.search(block)
+        # Headings and preambles carry no finding fields; only real finding blocks count.
+        if issue_match is None and location_match is None:
             continue
 
-        # Extract severity from heading (we split on it, so need to find it)
-        heading_re.search("### [" + block.split("\n")[0][:20] + "]" if block else "")
-        severity = "MEDIUM"  # Default
+        severity = "MEDIUM"
+        for position, heading_severity in headings:
+            if position > start:
+                break
+            severity = heading_severity
 
-        # Parse fields
-        type_match = type_re.search(block)
-        trigger_match = trigger_re.search(block)
-        location_match = location_re.search(block)
-        issue_match = issue_re.search(block)
-        fix_match = fix_re.search(block)
+        file_path, line = _parse_location(
+            location_match.group(1) if location_match else "", default_file
+        )
 
-        # Extract line number from location (format: file:line)
-        line = None
-        file_path = diff_record.get("file", "")
+        type_match = _TYPE_VALUE_RE.search(block)
+        trigger_match = _TRIGGER_RE.search(block)
+        fix_match = _FIX_VALUE_RE.search(block)
 
-        if location_match:
-            location = location_match.group(1).strip()
-            if ":" in location:
-                parts = location.split(":")
-                file_path = parts[0]
-                try:
-                    line = int(parts[1])
-                except ValueError:
-                    line = None
+        findings.append(
+            {
+                "file": file_path,
+                "line": line,
+                "severity": severity,
+                "type": type_match.group(1).strip() if type_match else "unknown",
+                "trigger": trigger_match.group(1).strip() if trigger_match else "unmatched",
+                "issue": issue_match.group(1).strip() if issue_match else "no issue described",
+                "fix": fix_match.group(1).strip() if fix_match else "no fix proposed",
+                "diff_text": diff_text,
+            }
+        )
 
-        finding = {
-            "file": file_path,
-            "line": line,
-            "severity": severity,
-            "type": type_match.group(1).strip() if type_match else "unknown",
-            "trigger": trigger_match.group(1).strip() if trigger_match else "unmatched",
-            "issue": issue_match.group(1).strip() if issue_match else "no issue described",
-            "fix": fix_match.group(1).strip() if fix_match else "no fix proposed",
-            "diff_text": diff_text,
-        }
-        findings.append(finding)
+    if issue_total > len(findings):
+        print(
+            f"warning: parsed {len(findings)} of {issue_total} issue field(s);"
+            " review format deviates from the requested template",
+            file=sys.stderr,
+        )
 
     return findings
 
@@ -716,9 +834,14 @@ def run_model_on_diff(
 
     # Call LLM with retry: on exception OR empty response, retry once
     response = None
+    # See run_model_on_codebase: a reasoning-only failure means the model needs its thinking
+    # phase suppressed, not another identical attempt.
+    disable_thinking = False
     for attempt in range(2):
         try:
-            response = call_llm(model, prompt, timeout=timeout)
+            response = call_llm(
+                model, prompt, timeout=timeout, disable_thinking=disable_thinking
+            )
             if response.strip():
                 break
             print(
@@ -732,6 +855,8 @@ def run_model_on_diff(
                 file=sys.stderr,
             )
             response = None
+            if "reasoning_only_response" in str(e):
+                disable_thinking = True
 
     if response is None or not response.strip():
         return None
@@ -776,6 +901,7 @@ def run_model_on_diff(
         "findings": findings,
         "scores": avg_scores,
         "refused": refused,
+        "review": response,
     }
     # Always include skill field ("none" for baseline, skill_model for others)
     result["skill"] = skill_model if skill_model and not baseline else "none"

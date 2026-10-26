@@ -19,6 +19,7 @@ from scripts.run_eval import (
     _status_cells,
     build_diff_prompt,
     match_finding_to_diff_bug,
+    run_model_on_codebase,
     run_model_on_diff,
     score_finding_with_judge,
 )
@@ -1843,3 +1844,71 @@ class TestRepetitions:
 
         # Verify legacy record was not re-evaluated (call_count should be 2, not 3)
         assert call_count[0] == 2
+
+
+class TestReasoningOnlyFallback:
+    """A reasoning-only failure must retry with the thinking phase disabled.
+
+    Repeating the identical call cannot succeed: the model spends the same budget on
+    chain-of-thought and returns no review body again.
+    """
+
+    REVIEW = "### HIGH Buffer overflow\n- **Location:** smallchat-server.c:42\n- **Issue:** x\n"
+
+    def _patch_profile(self, monkeypatch):
+        profile = MagicMock()
+        profile.review_timeout = 60
+        profile.reasoning = True
+        monkeypatch.setattr("scripts.run_eval.get_profile", lambda model: profile)
+
+    def test_diff_mode_disables_thinking_on_retry(self, monkeypatch):
+        self._patch_profile(monkeypatch)
+        calls = []
+
+        def mock_call_llm(model, prompt, timeout=600, **kwargs):
+            calls.append(kwargs.get("disable_thinking"))
+            if len(calls) == 1:
+                raise RuntimeError("reasoning_only_response")
+            return self.REVIEW
+
+        monkeypatch.setattr("scripts.run_eval.call_llm", mock_call_llm)
+        diff_record = {"id": "D1", "diff": "+x", "file": "smallchat-server.c", "bugs": []}
+
+        result = run_model_on_diff("qwen", diff_record, no_judge=True, baseline=True)
+
+        assert calls == [False, True]
+        assert result is not None
+
+    def test_codebase_mode_disables_thinking_on_retry(self, monkeypatch):
+        self._patch_profile(monkeypatch)
+        monkeypatch.setattr("scripts.run_eval.build_codebase_prompt", lambda skill: "prompt")
+        calls = []
+
+        def mock_call_llm(model, prompt, timeout=600, **kwargs):
+            calls.append(kwargs.get("disable_thinking"))
+            if len(calls) == 1:
+                raise RuntimeError("reasoning_only_response")
+            return self.REVIEW
+
+        monkeypatch.setattr("scripts.run_eval.call_llm", mock_call_llm)
+
+        result = run_model_on_codebase("qwen", [], no_judge=True, baseline=True)
+
+        assert calls == [False, True]
+        assert result is not None
+
+    def test_persistent_reasoning_only_returns_none(self, monkeypatch):
+        self._patch_profile(monkeypatch)
+        monkeypatch.setattr("scripts.run_eval.build_codebase_prompt", lambda skill: "prompt")
+        calls = []
+
+        def mock_call_llm(model, prompt, timeout=600, **kwargs):
+            calls.append(kwargs.get("disable_thinking"))
+            raise RuntimeError("reasoning_only_response")
+
+        monkeypatch.setattr("scripts.run_eval.call_llm", mock_call_llm)
+
+        result = run_model_on_codebase("qwen", [], no_judge=True, baseline=True)
+
+        assert calls == [False, True]
+        assert result is None

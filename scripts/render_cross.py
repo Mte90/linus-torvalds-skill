@@ -529,9 +529,7 @@ def render_markdown(
     clean_count = sum(1 for r in diff_records if r.get("expected") == "no-findings")
     refuse_count = sum(1 for r in diff_records if r.get("expected") == "refuse-to-conclude")
     if codebase_mode:
-        lines.append(
-            f"Dataset: {len(diff_records)} ground-truth bugs from `benchmark.jsonl`.\n"
-        )
+        lines.append(f"Dataset: {len(diff_records)} ground-truth bugs from `benchmark.jsonl`.\n")
     else:
         lines.append(
             f"Dataset: {len(diff_records)} diff scenarios = {buggy_count} buggy, {clean_count} clean "
@@ -886,6 +884,13 @@ def render_markdown(
     lines.append(
         "- **Match (TP)**: A finding that matches a ground-truth bug within the ±5 line tolerance.\n"
     )
+    if codebase_mode:
+        lines.append(
+            "- **Unlocatable finding**: A finding that cites no line number. It cannot be matched "
+            "against a ground-truth bug and therefore counts as a false positive. The reviewer sees "
+            "the source with absolute line numbers in the left margin, so an absent line means the "
+            "claim was not anchored to the code.\n"
+        )
     lines.append(
         "- **Duplicate**: A finding that matches a ground-truth bug already matched by an earlier "
         "finding in the same cell.\n"
@@ -965,6 +970,15 @@ def render_markdown(
         lines.append(row)
 
     lines.append("\n")
+
+    if codebase_mode and unmatched:
+        unlocated = sum(1 for finding in unmatched if finding.get("line") is None)
+        if unlocated:
+            lines.append(
+                f"**Unlocatable findings**: {unlocated} finding(s) in this run cite no line number. "
+                "They cannot be matched against a ground-truth bug and are counted as false "
+                "positives.\n"
+            )
 
     # Per-metric matrices
     lines.append("## Precision Matrix\n")
