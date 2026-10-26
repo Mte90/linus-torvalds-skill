@@ -387,9 +387,7 @@ def run_model_on_codebase(
     disable_thinking = False
     for attempt in range(2):
         try:
-            response = call_llm(
-                model, prompt, timeout=timeout, disable_thinking=disable_thinking
-            )
+            response = call_llm(model, prompt, timeout=timeout, disable_thinking=disable_thinking)
             if response.strip():
                 break
             print(
@@ -839,9 +837,7 @@ def run_model_on_diff(
     disable_thinking = False
     for attempt in range(2):
         try:
-            response = call_llm(
-                model, prompt, timeout=timeout, disable_thinking=disable_thinking
-            )
+            response = call_llm(model, prompt, timeout=timeout, disable_thinking=disable_thinking)
             if response.strip():
                 break
             print(

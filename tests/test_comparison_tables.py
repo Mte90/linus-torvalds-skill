@@ -122,8 +122,8 @@ class TestSafeTruncate:
 class TestSectionOrder:
     """Tests for comparison.md section ordering."""
 
-    def test_no_headings_between_banners_and_qa(self):
-        """Test that no ## headings appear between warning banners and Question & Answer."""
+    def test_no_headings_between_banners_and_about_report(self):
+        """Test that no ## headings appear between warning banners and About this report."""
         comparison_path = Path(__file__).parent.parent / "report" / "comparison.md"
         if not comparison_path.exists():
             pytest.skip("comparison.md not found")
@@ -131,7 +131,7 @@ class TestSectionOrder:
         content = comparison_path.read_text(encoding="utf-8")
         lines = content.split("\n")
 
-        # Find the first ## heading (should be Question & Answer)
+        # Find the first ## heading (should be About this report)
         first_section_line = None
         for i, line in enumerate(lines):
             if line.strip().startswith("## "):
@@ -139,8 +139,8 @@ class TestSectionOrder:
                 break
 
         assert first_section_line is not None, "No ## headings found in comparison.md"
-        assert "Question & Answer" in lines[first_section_line], (
-            f"First ## heading should be 'Question & Answer', got: {lines[first_section_line]}"
+        assert "About this report" in lines[first_section_line], (
+            f"First ## heading should be 'About this report', got: {lines[first_section_line]}"
         )
 
     def test_skill_generation_under_evidence(self):

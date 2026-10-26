@@ -861,17 +861,15 @@ class TestRenderMarkdownSkeleton:
 
         content = comparison_path.read_text(encoding="utf-8")
 
-        # Phase 4 skeleton: Q&A section
-        assert "## Question & Answer" in content, "Q&A section missing"
-        assert "Does adding the skill help or hurt each model" in content, "Q&A question missing"
-
-        # Anti-contradiction blockquote
-        assert "Anti-contradiction note" in content, "Anti-contradiction blockquote missing"
-        assert "report/cross_matrix.md" in content, "Cross-reference missing"
-        assert "on the real SmallChat codebase" in content, (
-            "Cross-matrix dataset description missing"
+        # Phase 4: About this report section (replaced Q&A)
+        assert "## About this report" in content, "About this report section missing"
+        assert "Three roles" in content or "reviewer model" in content, (
+            "Report roles description missing"
         )
-        assert "Both reports use the same data" in content, "Shared-data clarification missing"
+
+        # Anti-contradiction blockquote was removed in P3
+        # assert "Anti-contradiction note" in content, "Anti-contradiction blockquote missing"
+        # assert "report/cross_matrix.md" in content, "Cross-reference missing"
 
         # Evidence umbrella
         assert "## Evidence" in content, "Evidence umbrella section missing"

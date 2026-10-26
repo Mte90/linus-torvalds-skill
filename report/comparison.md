@@ -16,13 +16,11 @@ Dataset: SmallChat codebase (~706 LOC), 4 models reviewed with and without the L
 
 > **Note:** The judge (GLM5.2) also participates as a reviewer: judge scores may reflect self-preference.
 
-## Question & Answer
+## About this report
 
-**Question this answers:** Does adding the skill help or hurt each model? (Baseline vs. skill comparison on the SmallChat codebase.)
+This report answers: **Does adding the skill help or hurt each model?** (Baseline vs. skill comparison on the SmallChat codebase.)
 
-**Headline answer:** The verdict varies by model. The decisive table follows:
-
-**Condensed scorecard:**
+**Three roles:** (1) **reviewer model** — the LLM reviewing code; (2) **skill** — the language-agnostic Linus Torvalds skill; (3) **judge model** — GLM5.2 scoring review quality. For baseline-vs-skill analysis at the issue level, see `report/comparison.md`.
 
 | Model | Total Findings | Critical Findings | Skill-Only Critical | Verdict |
 |-------|---------------|-------------------|---------------------|---------|
@@ -34,11 +32,6 @@ Dataset: SmallChat codebase (~706 LOC), 4 models reviewed with and without the L
 How to read the Verdict column: 'Skill-Only Critical' counts critical bugs a model found only when using the skill; 'Baseline-Only Critical' counts critical bugs found only without it. 'Skill adds value' means a net gain of critical findings with the skill; 'Skill reduces coverage' means a net loss; 'No change' means the model finds the same criticals either way.
 
 The skill adds the most value for mistral, which gained 9 critical finding(s) exclusive to the with-skill review.
-
-
-> **Anti-contradiction note:** This report answers a different question than `report/cross_matrix.md`. The cross matrix asks 'Which model+skill combination detects bugs best?' on the real SmallChat codebase. This report asks 'Does adding the skill help or hurt each model?' on the same codebase. Both reports use the same data; apparent disagreement reflects different metrics, not different data, and the metric that decides a winner is Detection Score in both. For the per-pairing view see `cross_matrix.md`.
-
-4 models (fourth being qwen3.8-27b) reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration.
 
 ## Evidence
 

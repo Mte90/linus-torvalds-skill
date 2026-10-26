@@ -10,17 +10,17 @@ Dataset: 43 ground-truth bugs from `benchmark.jsonl`.
 
 > **Note:** The judge (GLM5.2) also participates in the evaluation as a reviewer: judge scores may reflect self-preference.
 
-## Question & Answer
+## About this report
 
-**Question this report answers:** Which model+skill combination detects bugs best? (Cross-model evaluation on the real SmallChat codebase, 43 ground-truth bugs.)
+This report answers: **which model+skill combination detects bugs best?** It is a cross-model evaluation on the real SmallChat codebase (43 ground-truth bugs).
 
-**Headline answer:** The reviewing model — not the attached skill — drives how many bugs are found. Swapping skills rarely changes a model's true-positive count; the skill mainly affects precision (false positives), which is what moves the Detection Score. See the Overview Matrix below for specifics.
+Three roles are at play:
 
-**Overview matrix:** The table below shows Detection Score (DS) and Judge score (J) for each model+skill pairing. Native pairings (model == skill) are marked.
+1. **Reviewer model** — the model that reads the code and produces findings. It determines *which* bugs are found and drives the true-positive count.
+2. **Skill** — the prompt/skill applied to the reviewer. It influences precision (false-positive rate) but rarely changes which bugs are detected.
+3. **Judge model** — scores the *quality* of each review on four axes (accuracy, prioritization, justification, actionability). The judge does **not** affect the Detection Score, true positives, recall, or precision. It can be disabled with `--no-judge`.
 
-> **Anti-contradiction note:** This report answers a different question than `report/comparison.md`. This report asks 'Which model+skill combination detects bugs best?' on the real SmallChat codebase. The comparison.md asks 'Does adding the skill help or hurt each model?' on the same codebase. Both reports now use the same codebase; apparent disagreement reflects different metrics, not different data.
-
-
+The notation `X on Y` means reviewer = X with skill = Y. For baseline-vs-skill analysis (does the skill help or hurt each model?), see `report/comparison.md`.
 
 ## Evidence
 
@@ -45,10 +45,6 @@ Dataset: 43 ground-truth bugs from `benchmark.jsonl`.
 **Best skill per model**: 0 model(s) perform best with their native skill, 4 with a cross-skill. See the *Best Skill per Model* table below for specifics.
 
 See `report/comparison.md` for the baseline-vs-skill analysis (whether adding any skill helps or hurts each model). Note: both reports use the same codebase.
-
-In plain terms: the reviewing model — not the attached skill — drives how many bugs are found. Swapping skills rarely changes a model's true-positive count; the skill mainly affects precision (false positives), which is what moves the Detection Score. Start from the Overview Matrix, then use the ranking tables for specifics.
-
-**Baseline comparison**: glm5.2: skill improves DS (0.11 vs 0.08); gpt-oss-120b: skill improves DS (0.24 vs 0.16); mistral-small-4-119b: skill improves DS (0.21 vs 0.06); qwen3.8-27b: skill improves DS (0.14 vs 0.14).
 
 
 
@@ -86,9 +82,7 @@ Definitions of every metric used in this report. Read this before the matrices.
 
 ## Overview Matrix
 
-Each cell shows: Detection Score (DS), and mean Judge score (0–2 scale).
-
-*(native)* indicates diagonal pairing (model == skill).
+Rows = skill applied to the reviewer; columns = reviewer model. Each cell shows Detection Score (DS) and mean Judge score (J, 0–2 scale). `*(native)*` marks diagonal pairings (model == skill). The highest DS in the matrix is shown in **bold** with a ★.
 
 **Note**: n=43 ground-truth bugs, 1 run per cell; intra-skill Detection Score differences of ~0.03 are not significant.
 
@@ -97,7 +91,7 @@ Each cell shows: Detection Score (DS), and mean Judge score (0–2 scale).
 | **glm5.2** | DS=0.07 J=1.8/2 *(native)* | DS=0.20 J=1.4/2 | DS=0.21 J=1.1/2 | DS=0.08 J=1.5/2 |
 | **gpt-oss-120b** | DS=0.11 J=1.9/2 | DS=0.08 J=1.4/2 *(native)* | DS=0.12 J=0.9/2 | DS=0.14 J=1.7/2 |
 | **mistral-small-4-119b** | DS=0.08 J=1.8/2 | DS=0.16 J=1.1/2 | DS=0.16 J=0.9/2 *(native)* | DS=0.08 J=1.7/2 |
-| **qwen3.8-27b** | DS=0.08 J=1.8/2 | DS=0.24 J=1.6/2 | DS=0.20 J=1.3/2 | DS=0.08 J=2.0/2 *(native)* |
+| **qwen3.8-27b** | DS=0.08 J=1.8/2 | **DS=0.24 J=1.6/2 ★** | DS=0.20 J=1.3/2 | DS=0.08 J=2.0/2 *(native)* |
 | **No skill (baseline)** | DS=0.08 J=1.8/2 | DS=0.16 J=1.4/2 | DS=0.06 J=1.1/2 | DS=0.14 J=1.3/2 |
 
 
@@ -534,12 +528,12 @@ For each model, the skill that produces the highest Detection Score. Since true-
 
 ## Judge Score Detail
 
-**Secondary metric.** Detection Score (above) is the primary metric because it is computed against ground truth and is reproducible from the committed eval data. The LLM-judge scores below are a quality opinion, not a measurement: they come from one model, on a 0-2 scale, with no inter-rater check. Use them to break ties, never to rank.
+**Secondary metric.** The judge does **not** affect the Detection Score (DS), true positives, recall, or precision — all detection metrics are computed by matching findings to ground truth. The judge only provides four quality sub-scores (accuracy, prioritization, justification, actionability) on a 0–2 scale, aggregated into the Judge Score (J) shown in the matrices above. Use J to break ties, never to rank. Disable with `--no-judge`.
 
-> **Note**: The judge (GLM5.2) also participates in the evaluation as a reviewer: judge scores may reflect self-preference.
+> **Conflict of interest**: the judge (GLM5.2) also participates in the evaluation as a reviewer, so its self-scored reviews may reflect self-preference.
 
 
-The four sub-scores below feed the Judge Score (J) shown in the matrices above. Each is the mean over evaluated reviews on a 0–2 scale, scored by the judge model; values vary little across pairings, so they are shown as appendix detail.
+Each sub-score is the mean over evaluated reviews on a 0–2 scale; values vary little across pairings, so they are shown as appendix detail.
 
 ### Judge Accuracy Matrix
 

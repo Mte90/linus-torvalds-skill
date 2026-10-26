@@ -663,12 +663,10 @@ class TestRenderMarkdown:
         render_markdown(cell_data, all_models, diff_records, out_path)
         content = out_path.read_text()
         assert "# Cross-Model Evaluation Matrix" in content
-        # Phase 4 skeleton: Q&A section
-        assert "## Question & Answer" in content
-        assert "Which model+skill combination detects bugs best" in content
-        # Anti-contradiction blockquote
-        assert "Anti-contradiction note" in content
-        assert "report/comparison.md" in content
+        # Phase 4: About this report section (replaced Q&A)
+        assert "## About this report" in content
+        assert "Three roles" in content or "reviewer model" in content
+        # No more Anti-contradiction blockquote (removed in P3)
         # Evidence umbrella
         assert "## Evidence" in content
         # Note: Verdict and other sections only appear when there's data
@@ -920,8 +918,8 @@ class TestBaselineSupport:
         # Baseline row should appear in Recall Matrix
         assert "## Recall Matrix" in content
 
-        # Baseline verdict sentence should appear
-        assert "Baseline comparison" in content
+        # Baseline comparison paragraph was removed in P3 (now lives in comparison.md)
+        # assert "Baseline comparison" in content
 
     def test_no_baseline_row_when_baseline_records_absent(self, tmp_path):
         """Test that baseline row does NOT appear when no baseline data exists."""

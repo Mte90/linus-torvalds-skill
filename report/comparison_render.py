@@ -184,39 +184,23 @@ def generate_markdown(
     )
     lines.append("")
 
-    # Phase 4: Add Question & Answer section (skeleton part 2)
-    lines.append("## Question & Answer")
+    # Phase 4: Add About this report section (replaced Q&A)
+    lines.append("## About this report")
     lines.append("")
     lines.append(
-        "**Question this answers:** Does adding the skill help or hurt each model? "
+        "This report answers: **Does adding the skill help or hurt each model?** "
         "(Baseline vs. skill comparison on the SmallChat codebase.)"
     )
     lines.append("")
-    lines.append("**Headline answer:** The verdict varies by model. The decisive table follows:")
+    lines.append(
+        "**Three roles:** (1) **reviewer model** — the LLM reviewing code; "
+        "(2) **skill** — the language-agnostic Linus Torvalds skill; "
+        "(3) **judge model** — GLM5.2 scoring review quality. "
+        "For baseline-vs-skill analysis at the issue level, see `report/comparison.md`."
+    )
     lines.append("")
-    lines.append("**Condensed scorecard:**")
-    lines.append("")
-    # Insert scorecard table directly (not as separate section)
+    # Insert scorecard table directly
     lines.append(scorecard)
-    lines.append("")
-    lines.append(
-        "> **Anti-contradiction note:** This report answers a different question than `report/cross_matrix.md`. The cross matrix asks 'Which model+skill combination detects bugs best?' on the real SmallChat codebase. This report asks 'Does adding the skill help or hurt each model?' on the same codebase. Both reports use the same data; apparent disagreement reflects different metrics, not different data, and the metric that decides a winner is Detection Score in both. For the per-pairing view see `cross_matrix.md`."
-    )
-    lines.append("")
-    # Orphaned intro paragraph moved here (scope sentence for Q&A)
-    model_count = len(model_names)
-    ordinal = {
-        1: "first",
-        2: "second",
-        3: "third",
-        4: "fourth",
-        5: "fifth",
-        6: "sixth",
-    }.get(model_count, f"{model_count}th")
-    lines.append(
-        f"{model_count} models ({ordinal} being {model_names[-1]}) reviewed the same C codebase (antirez/smallchat, ~706 LOC) using the same language-agnostic Linus Torvalds skill. This document cross-references their findings at the issue level — not just counts — to measure consensus, accuracy, and severity calibration."
-    )
-    lines.append("")
 
     # Metrics Summary table
     lines.append("## Evidence")

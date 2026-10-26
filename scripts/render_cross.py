@@ -542,37 +542,33 @@ def render_markdown(
         "judge scores may reflect self-preference.\n"
     )
 
-    # Phase 4: Add Question & Answer section (skeleton part 2)
-    lines.append("## Question & Answer\n")
+    # About this report
+    lines.append("## About this report\n")
     if codebase_mode:
         lines.append(
-            "**Question this report answers:** Which model+skill combination detects bugs best? "
-            "(Cross-model evaluation on the real SmallChat codebase, 43 ground-truth bugs.)\n"
+            "This report answers: **which model+skill combination detects bugs best?** "
+            "It is a cross-model evaluation on the real SmallChat codebase "
+            "(43 ground-truth bugs).\n"
         )
     else:
         lines.append(
-            "**Question this report answers:** Which model+skill combination detects bugs best? "
-            "(Cross-model evaluation on 45 synthetic diffs.)\n"
+            "This report answers: **which model+skill combination detects bugs best?** "
+            "It is a cross-model evaluation on 45 synthetic diffs.\n"
         )
     lines.append(
-        "**Headline answer:** The reviewing model — not the attached skill — drives how many bugs are found. "
-        "Swapping skills rarely changes a model's true-positive count; the skill mainly affects precision "
-        "(false positives), which is what moves the Detection Score. See the Overview Matrix below for specifics.\n"
+        "Three roles are at play:\n\n"
+        "1. **Reviewer model** — the model that reads the code and produces findings. "
+        "It determines *which* bugs are found and drives the true-positive count.\n"
+        "2. **Skill** — the prompt/skill applied to the reviewer. It influences precision "
+        "(false-positive rate) but rarely changes which bugs are detected.\n"
+        "3. **Judge model** — scores the *quality* of each review on four axes "
+        "(accuracy, prioritization, justification, actionability). The judge does **not** "
+        "affect the Detection Score, true positives, recall, or precision. "
+        "It can be disabled with `--no-judge`.\n\n"
+        "The notation `X on Y` means reviewer = X with skill = Y. "
+        "For baseline-vs-skill analysis (does the skill help or hurt each model?), see "
+        "`report/comparison.md`.\n"
     )
-    lines.append(
-        "**Overview matrix:** The table below shows Detection Score (DS) and Judge score (J) for each "
-        "model+skill pairing. Native pairings (model == skill) are marked.\n"
-    )
-    # Anti-contradiction box
-    if codebase_mode:
-        lines.append(
-            "> **Anti-contradiction note:** This report answers a different question than `report/comparison.md`. This report asks 'Which model+skill combination detects bugs best?' on the real SmallChat codebase. The comparison.md asks 'Does adding the skill help or hurt each model?' on the same codebase. Both reports now use the same codebase; apparent disagreement reflects different metrics, not different data.\n"
-        )
-    else:
-        lines.append(
-            "> **Anti-contradiction note:** This report answers a different question than `report/comparison.md`. This report asks 'Which model+skill combination detects bugs best?' on a dataset of 45 synthetic diffs. The comparison.md asks 'Does adding the skill help or hurt each model?' on the real SmallChat codebase. The comparison.md verdicts vary by model (Skill adds value / Skill reduces coverage / No change). Apparent disagreement between the two reports is expected — they measure different things on different data.\n"
-        )
-    lines.append("\n")
 
     # Plain-language verdict (computed up-front from the whole matrix)
     total_bugs_ground_truth = buggy_count  # Plan B: buggy diffs only
@@ -805,40 +801,6 @@ def render_markdown(
                 "and this cross eval is pre-decontamination.\n"
             )
         )
-        lines.append(
-            "In plain terms: the reviewing model — not the attached skill — drives how many "
-            "bugs are found. Swapping skills rarely changes a model's true-positive count; "
-            "the skill mainly affects precision (false positives), which is what moves the "
-            "Detection Score. Start from the Overview Matrix, then use the ranking tables "
-            "for specifics.\n"
-        )
-
-        # Baseline verdict sentence (only when baseline data exists)
-        if has_baseline and baseline_cell_data:
-            baseline_lines = []
-            for model in all_models:
-                best_ds = cell_data.get((model, model), {}).get("ds", 0.0)
-                # Find best DS for this model across all skills
-                best_skill_ds = max(
-                    (cell_data.get((model, s), {}).get("ds", 0.0) for s in all_models), default=0.0
-                )
-                baseline_ds = baseline_cell_data.get(model, {}).get("ds", 0.0)
-                if baseline_ds > 0 or best_skill_ds > 0:
-                    if baseline_ds == 0:
-                        baseline_lines.append(f"{model}: no baseline data")
-                    elif best_skill_ds > baseline_ds:
-                        baseline_lines.append(
-                            f"{model}: skill improves DS ({best_skill_ds:.2f} vs {baseline_ds:.2f})"
-                        )
-                    elif best_skill_ds < baseline_ds:
-                        baseline_lines.append(
-                            f"{model}: skill hurts DS ({best_skill_ds:.2f} vs {baseline_ds:.2f})"
-                        )
-                    else:
-                        baseline_lines.append(f"{model}: no difference")
-            if baseline_lines:
-                lines.append(f"**Baseline comparison**: {'; '.join(baseline_lines)}.\n")
-
         lines.append("\n")
 
     # Metrics Glossary (at top for visibility)
@@ -916,8 +878,12 @@ def render_markdown(
     # Overview Matrix
     lines.append("\n---\n")
     lines.append("## Overview Matrix\n")
-    lines.append("Each cell shows: Detection Score (DS), and mean Judge score (0–2 scale).\n")
-    lines.append("*(native)* indicates diagonal pairing (model == skill).\n")
+    lines.append(
+        "Rows = skill applied to the reviewer; columns = reviewer model. Each cell shows "
+        "Detection Score (DS) and mean Judge score (J, 0–2 scale). `*(native)*` marks "
+        "diagonal pairings (model == skill). The highest DS in the matrix is shown in "
+        "**bold** with a ★.\n"
+    )
     max_reps = max((cell.get("reps", 1) for cell in cell_data.values()), default=1)
     run_note = (
         f"{max_reps} run{'s' if max_reps != 1 else ''} per cell"
@@ -935,6 +901,15 @@ def render_markdown(
             "differences of ~0.03 are not significant.\n"
         )
 
+    # Best DS across all cells — highlighted with ★ in the Overview Matrix
+    best_ds_value = -1.0
+    for (_model, _skill), metrics in cell_data.items():
+        if metrics.get("total_results", 0) == 0:
+            continue
+        ds = metrics.get("ds", 0.0)
+        if ds > best_ds_value:
+            best_ds_value = ds
+
     header = "| Skill \\\\ Model |"
     for model in all_models:
         header += f" {model} |"
@@ -948,10 +923,15 @@ def render_markdown(
         for model in all_models:
             metrics = cell_data.get((model, skill))
             if metrics and metrics["total_results"] > 0:
-                ds_str = f"DS={metrics.get('ds', 0):.2f}"
+                ds = metrics.get("ds", 0.0)
+                ds_str = f"DS={ds:.2f}"
                 j_str = f"J={metrics.get('judge_mean', 0):.1f}/2"
                 native_marker = " *(native)*" if model == skill else ""
-                row += f" {ds_str} {j_str}{native_marker} |"
+                is_best = best_ds_value >= 0 and abs(ds - best_ds_value) < 1e-9
+                cell_text = f"{ds_str} {j_str}{native_marker}"
+                if is_best:
+                    cell_text = f"**{cell_text} ★**"
+                row += f" {cell_text} |"
             else:
                 row += " — |"
         lines.append(row)
@@ -1611,22 +1591,21 @@ def render_markdown(
     lines.append("\n---\n")
     lines.append("## Judge Score Detail\n")
     lines.append(
-        "**Secondary metric.** Detection Score (above) is the primary metric because it is "
-        "computed against ground truth and is reproducible from the committed eval data. "
-        "The LLM-judge scores below are a quality opinion, not a measurement: they come from "
-        "one model, on a 0-2 scale, with no inter-rater check. Use them to break ties, never "
-        "to rank.\n"
+        "**Secondary metric.** The judge does **not** affect the Detection Score (DS), "
+        "true positives, recall, or precision — all detection metrics are computed by "
+        "matching findings to ground truth. The judge only provides four quality sub-scores "
+        "(accuracy, prioritization, justification, actionability) on a 0–2 scale, aggregated "
+        "into the Judge Score (J) shown in the matrices above. Use J to break ties, never to rank. "
+        "Disable with `--no-judge`.\n"
     )
     lines.append(
-        "> **Note**: The judge (GLM5.2) also participates in the evaluation as a reviewer: "
-        "judge scores may reflect self-preference.\n\n"
+        "> **Conflict of interest**: the judge (GLM5.2) also participates in the evaluation as a reviewer, "
+        "so its self-scored reviews may reflect self-preference.\n\n"
     )
     lines.append(
-        "The four sub-scores below feed the Judge Score (J) shown in the matrices above. "
-        "Each is the mean over evaluated "
+        "Each sub-score is the mean over evaluated "
         + ("reviews " if codebase_mode else "diffs ")
-        + "on a 0–2 scale, scored by the judge model; "
-        "values vary little across pairings, so they are shown as appendix detail.\n"
+        + "on a 0–2 scale; values vary little across pairings, so they are shown as appendix detail.\n"
     )
     for axis in ["accuracy", "prioritization", "justification", "actionability"]:
         lines.append(f"### Judge {axis.title()} Matrix\n")
