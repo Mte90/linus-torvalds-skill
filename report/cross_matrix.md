@@ -22,7 +22,58 @@ Three roles are at play:
 
 The notation `X on Y` means reviewer = X with skill = Y. For baseline-vs-skill analysis (does the skill help or hurt each model?), see `report/comparison.md`.
 
-## Evidence
+## Metrics Glossary
+
+Definitions of every metric used in this report. Read this before the matrices.
+
+- **Detection Score **(DS Harmonic mean of precision and recall. Measures how well findings balance correctness (precision) against completeness (recall). Range 0–1; higher is better.
+
+- **Precision**: Of all findings reported, the fraction that matched a ground-truth bug. Low precision means many false positives.
+
+- **Recall**: Matched findings divided by the number of buggy ground-truth bugs (43 ground-truth bugs). Low recall means missed bugs.
+
+- **Refusal Rate **(R Fraction of reviews where the model refused to review. In this dataset R=0 for all pairings, so it is omitted from the tables.
+
+- **Judge Score **(J Mean of four sub-scores (accuracy, prioritization, justification, actionability) on a 0–2 scale. Reflects review quality as scored by the judge model. **Note**: The judge (GLM5.2) also participates in the evaluation as a reviewer: judge scores may reflect self-preference.
+
+- **Native**: Diagonal pairing where the model reviews the codebase using its own skill (model == skill).
+
+- **Exclusive**: Bugs found by this model/skill and no other model/skill. A high exclusive count means the pairing contributes unique value.
+
+- **Match **(TP A finding that matches a ground-truth bug within the ±5 line tolerance.
+
+- **Unlocatable finding**: A finding that cites no line number. It cannot be matched against a ground-truth bug and therefore counts as a false positive. The reviewer sees the source with absolute line numbers in the left margin, so an absent line means the claim was not anchored to the code.
+
+- **Duplicate**: A finding that matches a ground-truth bug already matched by an earlier finding in the same cell.
+
+- **Non-TP findings**: Total distinct findings minus true positives (= Duplicates + Unmatched).
+- **Duplicates**: A second finding matching a ground-truth bug already claimed by an earlier finding in the same cell. Harmless for Detection Score (deduplicated) but it signals verbosity, not extra detection.
+
+- **No skill **(baseline): Model ran without any skill attached (skill=="none"). Used as a reference to measure whether adding a skill helps or hurts. Baseline participates only in model-level comparisons; excluded from skill rankings.
+
+- **Pairing**: A (reviewer model, skill) combination. Written as `X on Y` = "reviewer X with skill Y". The matrix has one cell per pairing.
+
+- **Best pairing**: The pairing (cell) with the most true-positive bug matches (highest TP count), not the highest Detection Score. Reported as "model reviewing with skill found N bugs".
+
+- **Best Detection Score**: The pairing with the highest DS. DS combines precision and recall, so this may differ from the Best pairing (which is raw TP count).
+
+- **Best Judge Score**: The pairing where the judge gave the highest quality score (J, 0–2 scale). The judge is optional (`--no-judge`) and does NOT affect DS — see "Judge Score" above.
+
+- **Best critical-bug pairing**: The pairing that found the most `reject`-severity (highest-severity) bugs. Ties are reported as "(tie)".
+
+- **`reject`-severity**: The top severity tier in this evaluation (equivalent to "blocker" — a bug serious enough to reject a patch). Below it: `request-changes`, then `nitpick`. Used in the "Best critical-bug pairing" verdict line.
+
+- **Best reviewer model**: The model with the highest mean Detection Score across all skills (row mean). Measures which model detects bugs best regardless of skill.
+
+- **Best skill**: The skill with the highest mean Detection Score across all models (column mean). Measures which skill produces the best precision/recall tradeoff.
+
+- **Consensus**: How many of the 4 models found a given ground-truth bug. "Full consensus (4/4)" = all models found it; "Sole discovery (1/4)" = only one model found it. The verdict reports the counts at each level.
+
+- **Native pairing advantage**: For each model, the difference between its native-skill DS (model == skill, the diagonal) and its mean cross-skill DS. Positive = native skill helps that model; negative = a cross-skill helps more. The verdict reports per-model: "cross helps" (negative) or "native helps" (positive). This measures native-skill vs cross-skill, NOT skill-on vs skill-off — for that comparison see `report/comparison.md`.
+
+- **Best skill per model**: For each model, the skill (native or cross) that produces the highest DS. The verdict counts how many models do best with their native skill vs a cross-skill.
+
+
 
 ## Verdict
 
@@ -47,35 +98,6 @@ The notation `X on Y` means reviewer = X with skill = Y. For baseline-vs-skill a
 See `report/comparison.md` for the baseline-vs-skill analysis (whether adding any skill helps or hurts each model). Note: both reports use the same codebase.
 
 
-
-## Metrics Glossary
-
-Definitions of every metric used in this report. Read this before the matrices.
-
-- **Detection Score (DS)**: Harmonic mean of precision and recall. Measures how well findings balance correctness (precision) against completeness (recall). Range 0–1; higher is better.
-
-- **Precision**: Of all findings reported, the fraction that matched a ground-truth bug. Low precision means many false positives.
-
-- **Recall**: Matched findings divided by the number of buggy ground-truth bugs (43 ground-truth bugs). Low recall means missed bugs.
-
-- **Refusal Rate (R)**: Fraction of reviews where the model refused to review. In this dataset R=0 for all pairings, so it is omitted from the tables.
-
-- **Judge Score (J)**: Mean of four sub-scores (accuracy, prioritization, justification, actionability) on a 0–2 scale. Reflects review quality as scored by the judge model. **Note**: The judge (GLM5.2) also participates in the evaluation as a reviewer: judge scores may reflect self-preference.
-
-- **Native**: Diagonal pairing where the model reviews the codebase using its own skill (model == skill).
-
-- **Exclusive**: Bugs found by this model/skill and no other model/skill. A high exclusive count means the pairing contributes unique value.
-
-- **Match (TP)**: A finding that matches a ground-truth bug within the ±5 line tolerance.
-
-- **Unlocatable finding**: A finding that cites no line number. It cannot be matched against a ground-truth bug and therefore counts as a false positive. The reviewer sees the source with absolute line numbers in the left margin, so an absent line means the claim was not anchored to the code.
-
-- **Duplicate**: A finding that matches a ground-truth bug already matched by an earlier finding in the same cell.
-
-- **Non-TP findings**: Total distinct findings minus true positives (= Duplicates + Unmatched).
-- **Duplicates**: A second finding matching a ground-truth bug already claimed by an earlier finding in the same cell. Harmless for Detection Score (deduplicated) but it signals verbosity, not extra detection.
-
-- **No skill (baseline)**: Model ran without any skill attached (skill=="none"). Used as a reference to measure whether adding a skill helps or hurts. Baseline participates only in model-level comparisons; excluded from skill rankings.
 
 
 ---

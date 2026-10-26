@@ -667,8 +667,8 @@ class TestRenderMarkdown:
         assert "## About this report" in content
         assert "Three roles" in content or "reviewer model" in content
         # No more Anti-contradiction blockquote (removed in P3)
-        # Evidence umbrella
-        assert "## Evidence" in content
+        # Metrics Glossary now appears before Verdict
+        assert "## Metrics Glossary" in content
         # Note: Verdict and other sections only appear when there's data
         # Limitations section always appears
         assert "## Limitations" in content

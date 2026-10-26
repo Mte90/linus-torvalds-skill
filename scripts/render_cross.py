@@ -570,6 +570,134 @@ def render_markdown(
         "`report/comparison.md`.\n"
     )
 
+    # Metrics Glossary (before verdict so terms are defined before use)
+    lines.append("## Metrics Glossary\n")
+    lines.append(
+        "Definitions of every metric used in this report. Read this before the matrices.\n"
+    )
+    lines.append(
+        "- **Detection Score **(DS Harmonic mean of precision and recall. "
+        "Measures how well findings balance correctness (precision) against completeness (recall). "
+        "Range 0–1; higher is better.\n"
+    )
+    lines.append(
+        "- **Precision**: Of all findings reported, the fraction that matched a ground-truth bug. "
+        "Low precision means many false positives.\n"
+    )
+    lines.append(
+        "- **Recall**: Matched findings divided by the number of buggy "
+        + ("ground-truth bugs " if codebase_mode else "diff scenarios ")
+        + f"({buggy_count} ground-truth bugs). Low recall means missed bugs.\n"
+    )
+    lines.append(
+        "- **Refusal Rate **(R Fraction of "
+        + ("reviews " if codebase_mode else "diffs ")
+        + "where the model refused to review. "
+        "In this dataset R=0 for all pairings, so it is omitted from the tables.\n"
+    )
+    lines.append(
+        "- **Judge Score **(J Mean of four sub-scores (accuracy, prioritization, justification, "
+        "actionability) on a 0–2 scale. Reflects review quality as scored by the judge model. "
+        "**Note**: The judge (GLM5.2) also participates in the evaluation as a reviewer: "
+        "judge scores may reflect self-preference.\n"
+    )
+    lines.append(
+        "- **Native**: Diagonal pairing where the model reviews "
+        + ("the codebase " if codebase_mode else "a diff ")
+        + "using its own skill (model == skill).\n"
+    )
+    lines.append(
+        "- **Exclusive**: Bugs found by this model/skill and no other model/skill. "
+        "A high exclusive count means the pairing contributes unique value.\n"
+    )
+    lines.append(
+        "- **Match **(TP A finding that matches a ground-truth bug within the ±5 line tolerance.\n"
+    )
+    if codebase_mode:
+        lines.append(
+            "- **Unlocatable finding**: A finding that cites no line number. It cannot be matched "
+            "against a ground-truth bug and therefore counts as a false positive. The reviewer sees "
+            "the source with absolute line numbers in the left margin, so an absent line means the "
+            "claim was not anchored to the code.\n"
+        )
+    lines.append(
+        "- **Duplicate**: A finding that matches a ground-truth bug already matched by an earlier "
+        "finding in the same cell.\n"
+    )
+    if not codebase_mode:
+        lines.append(
+            "- **On non-buggy**: A finding on a clean or refusal scenario. Ground truth says there "
+            "is no bug, so such a finding cannot match anything and lands in Unmatched.\n"
+        )
+    lines.append(
+        "- **Non-TP findings**: Total distinct findings minus true positives (= Duplicates + Unmatched).\n"
+        "- **Duplicates**: A second finding matching a ground-truth bug already claimed by an "
+        "earlier finding in the same cell. Harmless for Detection Score (deduplicated) but it "
+        "signals verbosity, not extra detection.\n"
+    )
+    if has_baseline:
+        lines.append(
+            '- **No skill **(baseline): Model ran without any skill attached (skill=="none"). '
+            "Used as a reference to measure whether adding a skill helps or hurts. "
+            "Baseline participates only in model-level comparisons; excluded from skill rankings.\n"
+        )
+
+    # Composite verdict terms (used in Verdict but not defined in primitive glossary)
+    lines.append(
+        "- **Pairing**: A (reviewer model, skill) combination. Written as `X on Y` = "
+        '"reviewer X with skill Y". The matrix has one cell per pairing.\n'
+    )
+    lines.append(
+        "- **Best pairing**: The pairing (cell) with the most true-positive bug matches "
+        "(highest TP count), not the highest Detection Score. Reported as "
+        '"model reviewing with skill found N bugs".\n'
+    )
+    lines.append(
+        "- **Best Detection Score**: The pairing with the highest DS. DS combines precision "
+        "and recall, so this may differ from the Best pairing (which is raw TP count).\n"
+    )
+    lines.append(
+        "- **Best Judge Score**: The pairing where the judge gave the highest quality score "
+        "(J, 0–2 scale). The judge is optional (`--no-judge`) and does NOT affect DS — "
+        'see "Judge Score" above.\n'
+    )
+    lines.append(
+        "- **Best critical-bug pairing**: The pairing that found the most `reject`-severity "
+        '(highest-severity) bugs. Ties are reported as "(tie)".\n'
+    )
+    lines.append(
+        "- **`reject`-severity**: The top severity tier in this evaluation (equivalent to "
+        '"blocker" — a bug serious enough to reject a patch). Below it: `request-changes`, '
+        'then `nitpick`. Used in the "Best critical-bug pairing" verdict line.\n'
+    )
+    lines.append(
+        "- **Best reviewer model**: The model with the highest mean Detection Score across "
+        "all skills (row mean). Measures which model detects bugs best regardless of skill.\n"
+    )
+    lines.append(
+        "- **Best skill**: The skill with the highest mean Detection Score across all models "
+        "(column mean). Measures which skill produces the best precision/recall tradeoff.\n"
+    )
+    lines.append(
+        "- **Consensus**: How many of the 4 models found a given ground-truth bug. "
+        '"Full consensus (4/4)" = all models found it; "Sole discovery (1/4)" = only one '
+        "model found it. The verdict reports the counts at each level.\n"
+    )
+    lines.append(
+        "- **Native pairing advantage**: For each model, the difference between its "
+        "native-skill DS (model == skill, the diagonal) and its mean cross-skill DS. "
+        "Positive = native skill helps that model; negative = a cross-skill helps more. "
+        'The verdict reports per-model: "cross helps" (negative) or "native helps" '
+        "(positive). This measures native-skill vs cross-skill, NOT skill-on vs skill-off — "
+        "for that comparison see `report/comparison.md`.\n"
+    )
+    lines.append(
+        "- **Best skill per model**: For each model, the skill (native or cross) that "
+        "produces the highest DS. The verdict counts how many models do best with their "
+        "native skill vs a cross-skill.\n"
+    )
+    lines.append("\n")
+
     # Plain-language verdict (computed up-front from the whole matrix)
     total_bugs_ground_truth = buggy_count  # Plan B: buggy diffs only
     best_pair: tuple[str, str, int] | None = None
@@ -674,9 +802,6 @@ def render_markdown(
             skill_impact_lines.append(f"{model}: native helps")
         else:
             skill_impact_lines.append(f"{model}: cross helps")
-
-    # Phase 4: Evidence umbrella - OUTSIDE the if block, before verdict
-    lines.append("## Evidence\n")
 
     if best_pair:
         # Tie-aware: collect all models/skills tied at max bug count
@@ -802,78 +927,6 @@ def render_markdown(
             )
         )
         lines.append("\n")
-
-    # Metrics Glossary (at top for visibility)
-    lines.append("## Metrics Glossary\n")
-    lines.append(
-        "Definitions of every metric used in this report. Read this before the matrices.\n"
-    )
-    lines.append(
-        "- **Detection Score (DS)**: Harmonic mean of precision and recall. "
-        "Measures how well findings balance correctness (precision) against completeness (recall). "
-        "Range 0–1; higher is better.\n"
-    )
-    lines.append(
-        "- **Precision**: Of all findings reported, the fraction that matched a ground-truth bug. "
-        "Low precision means many false positives.\n"
-    )
-    lines.append(
-        "- **Recall**: Matched findings divided by the number of buggy "
-        + ("ground-truth bugs " if codebase_mode else "diff scenarios ")
-        + f"({buggy_count} ground-truth bugs). Low recall means missed bugs.\n"
-    )
-    lines.append(
-        "- **Refusal Rate (R)**: Fraction of "
-        + ("reviews " if codebase_mode else "diffs ")
-        + "where the model refused to review. "
-        "In this dataset R=0 for all pairings, so it is omitted from the tables.\n"
-    )
-    lines.append(
-        "- **Judge Score (J)**: Mean of four sub-scores (accuracy, prioritization, justification, "
-        "actionability) on a 0–2 scale. Reflects review quality as scored by the judge model. "
-        "**Note**: The judge (GLM5.2) also participates in the evaluation as a reviewer: "
-        "judge scores may reflect self-preference.\n"
-    )
-    lines.append(
-        "- **Native**: Diagonal pairing where the model reviews "
-        + ("the codebase " if codebase_mode else "a diff ")
-        + "using its own skill (model == skill).\n"
-    )
-    lines.append(
-        "- **Exclusive**: Bugs found by this model/skill and no other model/skill. "
-        "A high exclusive count means the pairing contributes unique value.\n"
-    )
-    lines.append(
-        "- **Match (TP)**: A finding that matches a ground-truth bug within the ±5 line tolerance.\n"
-    )
-    if codebase_mode:
-        lines.append(
-            "- **Unlocatable finding**: A finding that cites no line number. It cannot be matched "
-            "against a ground-truth bug and therefore counts as a false positive. The reviewer sees "
-            "the source with absolute line numbers in the left margin, so an absent line means the "
-            "claim was not anchored to the code.\n"
-        )
-    lines.append(
-        "- **Duplicate**: A finding that matches a ground-truth bug already matched by an earlier "
-        "finding in the same cell.\n"
-    )
-    if not codebase_mode:
-        lines.append(
-            "- **On non-buggy**: A finding on a clean or refusal scenario. Ground truth says there "
-            "is no bug, so such a finding cannot match anything and lands in Unmatched.\n"
-        )
-    lines.append(
-        "- **Non-TP findings**: Total distinct findings minus true positives (= Duplicates + Unmatched).\n"
-        "- **Duplicates**: A second finding matching a ground-truth bug already claimed by an "
-        "earlier finding in the same cell. Harmless for Detection Score (deduplicated) but it "
-        "signals verbosity, not extra detection.\n"
-    )
-    if has_baseline:
-        lines.append(
-            '- **No skill (baseline)**: Model ran without any skill attached (skill=="none"). '
-            "Used as a reference to measure whether adding a skill helps or hurts. "
-            "Baseline participates only in model-level comparisons; excluded from skill rankings.\n"
-        )
 
     # Overview Matrix
     lines.append("\n---\n")

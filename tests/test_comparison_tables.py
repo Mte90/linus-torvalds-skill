@@ -144,26 +144,26 @@ class TestSectionOrder:
         )
 
     def test_skill_generation_under_evidence(self):
-        """Test that Skill Generation Per Model appears after Evidence heading."""
-        comparison_path = Path(__file__).parent.parent / "report" / "comparison.md"
-        if not comparison_path.exists():
-            pytest.skip("comparison.md not found")
+        """Test that sections appear in correct order in cross_matrix.md."""
+        cross_path = Path(__file__).parent.parent / "report" / "cross_matrix.md"
+        if not cross_path.exists():
+            pytest.skip("cross_matrix.md not found")
 
-        content = comparison_path.read_text(encoding="utf-8")
+        content = cross_path.read_text(encoding="utf-8")
         lines = content.split("\n")
 
-        evidence_line = None
-        skill_gen_line = None
+        metrics_glossary_line = None
+        verdict_line = None
 
         for i, line in enumerate(lines):
-            if line.strip() == "## Evidence":
-                evidence_line = i
-            if line.strip() == "## Skill Generation Per Model":
-                skill_gen_line = i
+            if line.strip() == "## Metrics Glossary":
+                metrics_glossary_line = i
+            if line.strip() == "## Verdict":
+                verdict_line = i
 
-        assert evidence_line is not None, "## Evidence heading not found"
-        assert skill_gen_line is not None, "## Skill Generation Per Model heading not found"
-        assert skill_gen_line > evidence_line, (
-            f"Skill Generation Per Model (line {skill_gen_line + 1}) should appear after "
-            f"Evidence (line {evidence_line + 1})"
+        assert metrics_glossary_line is not None, "## Metrics Glossary heading not found"
+        assert verdict_line is not None, "## Verdict heading not found"
+        assert verdict_line > metrics_glossary_line, (
+            f"Verdict (line {verdict_line + 1}) should appear after "
+            f"Metrics Glossary (line {metrics_glossary_line + 1})"
         )

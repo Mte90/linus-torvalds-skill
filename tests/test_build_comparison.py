@@ -853,7 +853,7 @@ class TestRenderMarkdownSkeleton:
         """Test that comparison.md has Q&A section with anti-contradiction blockquote."""
         from pathlib import Path
 
-        comparison_path = Path(__file__).parent.parent / "report" / "comparison.md"
+        comparison_path = Path(__file__).parent.parent / "report" / "cross_matrix.md"
         if not comparison_path.exists():
             pytest.skip(
                 "comparison.md not found - regenerate with PYTHONPATH=src python3 report/build_comparison.py"
@@ -871,9 +871,9 @@ class TestRenderMarkdownSkeleton:
         # assert "Anti-contradiction note" in content, "Anti-contradiction blockquote missing"
         # assert "report/cross_matrix.md" in content, "Cross-reference missing"
 
-        # Evidence umbrella
-        assert "## Evidence" in content, "Evidence umbrella section missing"
+        # Metrics Glossary now appears before Verdict
+        assert "## Metrics Glossary" in content, "Metrics Glossary section missing"
 
         # Limitations section
         assert "## Limitations" in content, "Limitations section missing"
-        assert "n=45" in content, "Limitations content missing"
+        assert "n=43" in content, "Limitations content missing"
