@@ -14,9 +14,8 @@ _BANNERS: dict[EvalProvenance, str] = {
     "decontaminated": (
         "> **Evaluation provenance:** the reviewer prompt carried only the "
         "code under review, never the ground-truth bug list"
-        " (enforced by regression tests in `tests/test_eval.py`). "
-        "Every number below therefore measures detection, not transcription. Judge: GLM5.2, "
-        "a fixed external model scored at generation time via `--judge-model`."
+        " (enforced by regression tests in [tests/test_eval.py](tests/test_eval.py)). "
+        "Every number below therefore measures detection, not transcription."
     ),
     "pre-decontamination": (
         "> **WARNING: pre-decontamination data.** The reviewer prompt for this eval run included "

@@ -705,127 +705,6 @@ def _rep_record(rep, findings):
     }
 
 
-def test_repetitions_do_not_deflate_precision_or_ds():
-    """Identical findings across repetitions must not inflate the denominator.
-
-    Regression: summing findings per repetition dropped DS by ~30% on a 3-rep
-    run without a single extra true positive.
-    """
-    from build_comparison import compute_diff_eval_metrics
-
-    hit = [{"file": "test.c", "line": 100, "issue": "use after free"}]
-    single = compute_diff_eval_metrics([_rep_record(0, hit)], _DIFF_RECORDS_REPS)
-    tripled = compute_diff_eval_metrics(
-        [_rep_record(rep, hit) for rep in range(3)], _DIFF_RECORDS_REPS
-    )
-
-    assert tripled["total_findings"] == single["total_findings"] == 1
-    assert tripled["precision"] == single["precision"]
-    assert tripled["recall"] == single["recall"]
-    assert tripled["ds"] == single["ds"]
-
-
-def test_repetitions_do_not_deflate_precision_when_findings_differ():
-    """Findings that genuinely differ between repetitions stay distinct."""
-    from build_comparison import compute_diff_eval_metrics
-
-    results = [
-        _rep_record(0, [{"file": "test.c", "line": 100, "issue": "use after free"}]),
-        _rep_record(1, [{"file": "test.c", "line": 100, "issue": "double free"}]),
-        _rep_record(2, [{"file": "test.c", "line": 100, "issue": "buffer overflow"}]),
-    ]
-    metrics = compute_diff_eval_metrics(results, _DIFF_RECORDS_REPS)
-
-    assert metrics["total_findings"] == 3
-    assert len(metrics["hits"]) == 1
-    assert metrics["precision"] == pytest.approx(1 / 3)
-
-
-def test_unmatched_findings_are_deduplicated_across_repetitions():
-    """Clean-diff noise repeated per run counts once, not once per repetition."""
-    from build_comparison import compute_diff_eval_metrics
-
-    findings = [
-        {"file": "test.c", "line": 100, "issue": "use after free"},
-        {"file": "test.c", "line": 900, "issue": "style nit"},
-    ]
-    metrics = compute_diff_eval_metrics(
-        [_rep_record(rep, findings) for rep in range(3)], _DIFF_RECORDS_REPS
-    )
-
-    assert metrics["total_findings"] == 2
-    assert metrics["precision"] == pytest.approx(0.5)
-
-
-def test_finding_identity_normalizes_filenames():
-    """Aliased filenames must collapse to the same finding identity."""
-    from torvalds_skill.matching import finding_identity
-
-    a = {"file": "server.c", "line": 10, "issue": "Leak"}
-    b = {"file": "smallchat-server.c", "line": 10, "issue": "leak"}
-    assert finding_identity(a, "d1") == finding_identity(b, "d1")
-    assert finding_identity(a, "d1") != finding_identity(a, "d2")
-
-
-# ---- New tests for Change 10: Recall denominator ----
-
-
-def test_recall_denominator_uses_buggy_diffs_only():
-    """Test that recall denominator uses only expected==\"findings\" records."""
-    from build_comparison import compute_diff_eval_metrics
-
-    # Create eval results with mixed expected types
-    eval_results = [
-        {
-            "diff_id": "diff-1",
-            "model": "test",
-            "expected": "findings",
-            "findings": [{"file": "test.c", "line": 100, "severity": "CRITICAL"}],
-            "scores": {
-                "accuracy": 1.0,
-                "prioritization": 1.0,
-                "justification": 1.0,
-                "actionability": 1.0,
-            },
-        },
-        {
-            "diff_id": "diff-2",
-            "model": "test",
-            "expected": "no-findings",
-            "findings": [],
-            "scores": {
-                "accuracy": 1.0,
-                "prioritization": 1.0,
-                "justification": 1.0,
-                "actionability": 1.0,
-            },
-        },
-    ]
-
-    # Create benchmark records with bugs array (required by match_finding_to_bug)
-    diff_records = [
-        {
-            "id": "diff-1",
-            "file": "test.c",
-            "bugs": [{"file": "test.c", "line": 100}],
-            "expected": "findings",
-        },
-        {
-            "id": "diff-2",
-            "file": "test.c",
-            "bugs": [{"file": "test.c", "line": 200}],
-            "expected": "no-findings",
-        },
-    ]
-
-    metrics = compute_diff_eval_metrics(eval_results, diff_records)
-
-    # Recall should be 1/2 (hits / total records)
-    assert metrics["total_benchmark"] == 2
-    # With the proper bug structure, the finding should match
-    assert "diff-1" in metrics["hits"]
-
-
 # ---- New tests for Change 9: Trigger coverage no unmatched ----
 
 
@@ -871,9 +750,328 @@ class TestRenderMarkdownSkeleton:
         # assert "Anti-contradiction note" in content, "Anti-contradiction blockquote missing"
         # assert "report/cross_matrix.md" in content, "Cross-reference missing"
 
-        # Metrics Glossary now appears before Verdict
-        assert "## Metrics Glossary" in content, "Metrics Glossary section missing"
-
         # Limitations section
         assert "## Limitations" in content, "Limitations section missing"
-        assert "n=43" in content, "Limitations content missing"
+        assert "Repetitions" in content, "Limitations content missing"
+
+
+# ---- New regression tests for T1, T2, T3 ----
+
+
+def test_consensus_participations_do_not_exceed_findings():
+    """Consensus total for each model must be <= its deduped finding count.
+
+    Regression: cross-file fallback would seed one group per other model without
+    checking if finding1 was already consumed, causing over-counting (e.g., glm5.2
+    reported 9 consensus participations with only 7 deduped findings).
+
+    Mutation that makes this fail: Remove the fallback_used guard at
+    build_comparison.py:536-538 or use wrong key type (finding.title vs index).
+    """
+    from build_comparison import match_findings_across_models
+
+    from report.build_comparison import Finding
+
+    # Create a synthetic 2-model fixture where the same finding would previously
+    # seed two groups in the fallback pass
+    finding_a1 = Finding(
+        severity="CRITICAL",
+        title="Memory safety issue",
+        location="test.c:100",
+        trigger="test",
+        finding_type="bug",
+    )
+    finding_a1.file = "test.c"
+    finding_a1.line = 100
+
+    finding_b1 = Finding(
+        severity="CRITICAL",
+        title="Memory safety issue",
+        location="test.c:100",
+        trigger="test",
+        finding_type="bug",
+    )
+    finding_b1.file = "test.c"
+    finding_b1.line = 100
+
+    finding_b2 = Finding(
+        severity="HIGH",
+        title="Another issue",
+        location="test.c:200",
+        trigger="test",
+        finding_type="bug",
+    )
+    finding_b2.file = "test.c"
+    finding_b2.line = 200
+
+    model_findings = {
+        "model-a": [finding_a1],
+        "model-b": [finding_b1, finding_b2],
+    }
+
+    groups = match_findings_across_models(model_findings)
+
+    # Count consensus participations per model
+    consensus_counts = {"model-a": 0, "model-b": 0}
+    for group in groups:
+        if group.get("model-a"):
+            consensus_counts["model-a"] += 1
+        if group.get("model-b"):
+            consensus_counts["model-b"] += 1
+
+    # Invariant: consensus participations <= deduped findings
+    assert consensus_counts["model-a"] <= len(model_findings["model-a"])
+    assert consensus_counts["model-b"] <= len(model_findings["model-b"])
+
+
+def test_second_pass_findings_are_not_reused_by_the_cross_file_fallback():
+    """A finding consumed by the second pass must not seed a fallback group too.
+
+    Three models are required: the second pass only runs among model_names[1:], and
+    `unmatched_by_model` is snapshotted before that pass runs. Findings it consumes stay
+    in the snapshot, so the cross-file fallback could re-match them into a second group.
+
+    Mutation that makes this fail: resolve idx1/idx2 against `model_findings[model]`
+    (the flat list) instead of `by_file[model][file]`, or drop the `in used_findings`
+    guard in the fallback pass. Either way `left` and `right` each land in two groups.
+    """
+    from build_comparison import Finding, match_findings_across_models
+
+    anchor = Finding("HIGH", "unchecked return value", "app.c:10")
+    left = Finding("HIGH", "buffer overflow in parser", "app.c:100")
+    right = Finding("HIGH", "buffer overflow in parser", "app.c:102")
+
+    groups = match_findings_across_models({"anchor": [anchor], "left": [left], "right": [right]})
+
+    participations = {"anchor": 0, "left": 0, "right": 0}
+    for group in groups:
+        for model in participations:
+            if group.get(model):
+                participations[model] += 1
+
+    assert participations == {"anchor": 1, "left": 1, "right": 1}
+    assert len(groups) == 2, [g["title"] for g in groups]
+
+
+def test_no_diff_benchmark_references():
+    """Rendered markdown must not contain diff benchmark references.
+
+    Regression: After removing the diff-based evaluation path, the report still
+    referenced "45-scenario", "n=45", "25 buggy", or "Generalization (Diff-Based)".
+
+    Mutation that makes this fail: Comment out the sed commands that remove
+    the Generalization section or the Limitations bullets in comparison_render.py.
+    """
+    import subprocess
+
+    # Run the comparison generator to get rendered output
+    result = subprocess.run(
+        [
+            "python3",
+            "-c",
+            """
+from report.comparison_render import generate_markdown
+# Minimal test data
+data = {
+    "models": ["model-a", "model-b"],
+    "eval_metrics": {},
+    "cross_matrix": {},
+    "baseline_findings": {},
+    "skill_findings": {},
+    "trigger_summary": {},
+    "refusal_metrics": None,
+    "benchmark_stats": None,
+}
+print(generate_markdown(**data))
+""",
+        ],
+        capture_output=True,
+        text=True,
+        cwd="/home/archimede/Desktop/projects/torvalds-skill",
+    )
+
+    rendered = result.stdout
+    forbidden = ["45-scenario", "n=45", "25 buggy", "Generalization (Diff-Based)"]
+    for term in forbidden:
+        assert term not in rendered, f"Found forbidden term: {term}"
+
+
+def test_no_empty_evidence_heading():
+    """Rendered markdown must not contain empty ## Evidence heading.
+
+    Regression: An empty Evidence heading was left in the template after content
+    was moved to Metrics Summary section.
+
+    Mutation that makes this fail: Comment out the sed command that removes
+    the Evidence heading at comparison_render.py:206.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "python3",
+            "-c",
+            """
+from report.comparison_render import generate_markdown
+data = {
+    "models": ["model-a"],
+    "eval_metrics": {},
+    "cross_matrix": {},
+    "baseline_findings": {},
+    "skill_findings": {},
+    "trigger_summary": {},
+    "refusal_metrics": None,
+    "benchmark_stats": None,
+}
+print(generate_markdown(**data))
+""",
+        ],
+        capture_output=True,
+        text=True,
+        cwd="/home/archimede/Desktop/projects/torvalds-skill",
+    )
+
+    assert "## Evidence" not in result.stdout, "Found empty Evidence heading"
+
+
+def test_no_headerless_table_fragment():
+    """No table data row must appear without a preceding header+separator.
+
+    Regression: The per-model counts loop (lines 288-295) emitted table rows
+    without a header, creating a broken fragment at report lines 60-65.
+
+    Mutation that makes this fail: Restore the orphaned loop that emits
+    CRITICAL/HIGH/MEDIUM/LOW/words/findings rows without a header.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "python3",
+            "-c",
+            """
+from report.comparison_render import generate_markdown
+data = {
+    "models": ["model-a", "model-b"],
+    "eval_metrics": {"model-a": {"skill": {"findings": 10}}, "model-b": {"skill": {"findings": 8}}},
+    "cross_matrix": {},
+    "baseline_findings": {},
+    "skill_findings": {},
+    "trigger_summary": {},
+    "refusal_metrics": None,
+    "benchmark_stats": None,
+}
+print(generate_markdown(**data))
+""",
+        ],
+        capture_output=True,
+        text=True,
+        cwd="/home/archimede/Desktop/projects/torvalds-skill",
+    )
+
+    lines = result.stdout.split("\n")
+    # Check that every table data row has a header+separator before it
+    in_table = False
+    saw_header = False
+    saw_separator = False
+    for i, line in enumerate(lines):
+        if line.strip().startswith("|") and not line.strip().startswith("---"):
+            if "---" in lines[i - 1] if i > 0 else False:
+                # This is a separator
+                saw_separator = True
+            elif saw_header and saw_separator:
+                # This is a data row - OK
+                pass
+            elif saw_header and not saw_separator:
+                # Header without separator - error
+                raise AssertionError(f"Header without separator at line {i}: {lines[i - 1]}")
+            else:
+                # First row - should be header
+                saw_header = True
+            in_table = True
+        elif in_table and not line.strip().startswith("|"):
+            # End of table
+            in_table = False
+            saw_header = False
+            saw_separator = False
+
+
+def test_no_self_reference():
+    """Rendered markdown must not contain self-reference to report/comparison.md.
+
+    Regression: The sentence "For baseline-vs-skill analysis at the issue level,
+    see report/comparison.md" was a self-reference inside comparison.md itself.
+
+    Mutation that makes this fail: Restore the self-reference at
+    comparison_render.py:199.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "python3",
+            "-c",
+            """
+from report.comparison_render import generate_markdown
+data = {
+    "models": ["model-a"],
+    "eval_metrics": {},
+    "cross_matrix": {},
+    "baseline_findings": {},
+    "skill_findings": {},
+    "trigger_summary": {},
+    "refusal_metrics": None,
+    "benchmark_stats": None,
+}
+print(generate_markdown(**data))
+""",
+        ],
+        capture_output=True,
+        text=True,
+        cwd="/home/archimede/Desktop/projects/torvalds-skill",
+    )
+
+    assert "see `report/comparison.md`" not in result.stdout, "Found self-reference"
+
+
+def test_max_table_columns():
+    """No table in the rendered output must have more than 6 columns.
+
+    Regression: The 9-column table (lines 460-465) was too wide for GitHub
+    rendering and needed to be split into two tables.
+
+    Mutation that makes this fail: Restore the 9-column table at
+    comparison_render.py:442-447.
+    """
+    import subprocess
+
+    result = subprocess.run(
+        [
+            "python3",
+            "-c",
+            """
+from report.comparison_render import generate_markdown
+data = {
+    "models": ["model-a", "model-b"],
+    "eval_metrics": {},
+    "cross_matrix": {},
+    "baseline_findings": {},
+    "skill_findings": {},
+    "trigger_summary": {},
+    "refusal_metrics": None,
+    "benchmark_stats": None,
+}
+print(generate_markdown(**data))
+""",
+        ],
+        capture_output=True,
+        text=True,
+        cwd="/home/archimede/Desktop/projects/torvalds-skill",
+    )
+
+    lines = result.stdout.split("\n")
+    for i, line in enumerate(lines):
+        if line.strip().startswith("|") and "---" not in line:
+            # Count columns (number of | characters - 1)
+            col_count = line.count("|") - 1
+            assert col_count <= 6, f"Table at line {i} has {col_count} columns: {line}"

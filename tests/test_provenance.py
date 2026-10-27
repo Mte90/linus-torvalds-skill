@@ -361,9 +361,6 @@ class TestComparisonProvenance:
             trigger_coverage={},
             skill_vs_baseline=[],
             missing_files=[],
-            diff_eval_metrics={
-                "gpt-oss-120b_skill": {"total_benchmark": 45, "total_findings": 10, "ds": 0.2},
-            },
         )
         assert "DS is the primary metric" in comparison
         assert "not to rank" in comparison

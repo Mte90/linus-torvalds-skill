@@ -129,7 +129,6 @@ def generate_markdown(
     trigger_effectiveness: dict | None = None,
     benchmark_records: list[dict] | None = None,
     benchmark_metrics: dict | None = None,
-    diff_eval_metrics: dict | None = None,
     refusal_metrics: dict | None = None,
     repetitions: int = 1,
     eval_provenance: EvalProvenance = "decontaminated",
@@ -195,21 +194,18 @@ def generate_markdown(
     lines.append(
         "**Three roles:** (1) **reviewer model** — the LLM reviewing code; "
         "(2) **skill** — the language-agnostic Linus Torvalds skill; "
-        "(3) **judge model** — GLM5.2 scoring review quality. "
-        "For baseline-vs-skill analysis at the issue level, see `report/comparison.md`."
+        "(3) **judge model** — GLM5.2 scoring review quality."
     )
     lines.append("")
     # Insert scorecard table directly
     lines.append(scorecard)
 
     # Metrics Summary table
-    lines.append("## Evidence")
-    lines.append("")
     lines.append("## Metrics Summary")
     lines.append("")
     header = "| Metric | " + " | ".join(model_names) + " |"
     lines.append(header)
-    lines.append("|" + "|".join(["--------"] + [":---:"] * len(model_names)) + "|")
+    lines.append("|" + " | ".join(["--------"] + [":---:"] * len(model_names)) + "|")
 
     # Findings (raw) row - before deduplication
     lines.append(
@@ -218,7 +214,7 @@ def generate_markdown(
             str(metrics.get(model_key, {}).get("skill", {}).get("unique_findings_raw", "N/A"))
             for model_key in model_names
         )
-        + "|"
+        + " |"
     )
 
     # Findings (dedup) row - after deduplication
@@ -228,7 +224,14 @@ def generate_markdown(
             str(metrics.get(model_key, {}).get("skill", {}).get("unique_findings", "N/A"))
             for model_key in model_names
         )
-        + "|"
+        + " |"
+    )
+
+    lines.append("")
+    lines.append(
+        "**DS is the primary metric.** Detection Score combines precision and recall against "
+        "ground-truth bug matches, so it drives every ranking in this report. Judge scores "
+        "reflect one model's opinion of review quality: use them to break ties, not to rank.\n"
     )
 
     # Skill Generation Per Model section moved under Evidence (after Metrics Summary)
@@ -250,10 +253,10 @@ def generate_markdown(
 
     # Generate table from runtime profiles
     skill_files = {
-        "gpt-oss-120b": "`linus-torvalds-skill/SKILL.md`",
-        "glm5.2": "`linus-torvalds-skill/SKILL-GLM.md`",
-        "mistral": "`linus-torvalds-skill/SKILL-Mistral.md`",
-        "qwen3.8-27b": "`linus-torvalds-skill/SKILL-Qwen.md`",
+        "gpt-oss-120b": "[linus-torvalds-skill/SKILL.md](linus-torvalds-skill/SKILL.md)",
+        "glm5.2": "[linus-torvalds-skill/SKILL-GLM.md](linus-torvalds-skill/SKILL-GLM.md)",
+        "mistral": "[linus-torvalds-skill/SKILL-Mistral.md](linus-torvalds-skill/SKILL-Mistral.md)",
+        "qwen3.8-27b": "[linus-torvalds-skill/SKILL-Qwen.md](linus-torvalds-skill/SKILL-Qwen.md)",
     }
     severity_calib = {
         "gpt-oss-120b": "balanced",
@@ -275,26 +278,10 @@ def generate_markdown(
         lines.append(f"| {model} | {skill_file} | {distill_mode} | {review_budget} | {sev_calib} |")
     lines.append("")
     lines.append(
-        "**Source:** `src/torvalds_skill/profiles.py`. Regenerate per `docs/CONTRIBUTING.md`."
+        "**Source:** [src/torvalds_skill/profiles.py](src/torvalds_skill/profiles.py). Regenerate per [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)."
     )
     lines.append("")
 
-    # Populate "findings" key for backward compatibility (Change 4)
-    for model_key in model_names:
-        if model_key in metrics and "skill" in metrics[model_key]:
-            raw_count = metrics[model_key]["skill"].get("unique_findings_raw", "N/A")
-            metrics[model_key]["skill"]["findings"] = raw_count
-
-    for metric_name in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "words", "findings"]:
-        row = [metric_name.replace("_", " ").title()]
-        for model_key in model_names:
-            m = metrics.get(model_key, {})
-            skill_metrics = m.get("skill", {})
-            val = skill_metrics.get(metric_name, "N/A")
-            row.append(str(val))
-        lines.append(f"| {' | '.join(row)} |")
-
-    lines.append("")
     lines.append(
         "**Key insight:** Finding count is a poor quality signal. The consensus matrix below shows which models caught which bugs — and that is where the real signal lives."
     )
@@ -371,6 +358,10 @@ def generate_markdown(
             lines.append(f"| {row_num} | {title} | {' | '.join(marks)} | {consensus} |")
             row_num += 1
 
+        lines.append("")
+        lines.append(
+            "*Severity: reject = critical bug, request-changes = important bug, nitpick = minor issue.*"
+        )
         lines.append("")
 
     # Severity Disagreement Table
@@ -457,20 +448,16 @@ def generate_markdown(
     lines.append("For each model, comparing findings with the skill vs without (baseline):")
     lines.append("")
 
-    lines.append(
-        "| Model | Baseline Total | With-Skill Total | Baseline CRITICAL | With-Skill CRITICAL | Critical Overlap | Skill-Only CRITICAL | Baseline-Only CRITICAL | Skill Added Value |"
-    )
-    lines.append(
-        "|-------|----------------|------------------|-------------------|---------------------|------------------|---------------------|------------------------|-------------------|"
-    )
+    # Table 1: Totals and Skill Added Value
+    lines.append("### Critical Impact Summary")
+    lines.append("")
+    lines.append("| Model | Baseline Total | With-Skill Total | Skill Added Value |")
+    lines.append("|-------|----------------|------------------|-------------------|")
 
     for comparison in skill_vs_baseline:
         model = comparison["model"]
         baseline_total = comparison["baseline_total"]
         skill_total = comparison["skill_total"]
-        baseline_crit = comparison["baseline_critical"]
-        skill_crit = comparison["skill_critical"]
-        overlap = comparison["critical_overlap"]
         skill_only = comparison["skill_only_critical"]
         baseline_only = comparison["baseline_only_critical"]
 
@@ -487,8 +474,30 @@ def generate_markdown(
             else:
                 value = f"no ({net} net critical: {skill_only} found, {baseline_only} lost)"
 
+        lines.append(f"| {model} | {baseline_total} | {skill_total} | {value} |")
+
+    lines.append("")
+
+    # Table 2: Critical details
+    lines.append("### Critical Findings Breakdown")
+    lines.append("")
+    lines.append(
+        "| Model | Baseline CRITICAL | With-Skill CRITICAL | Critical Overlap | Skill-Only CRITICAL | Baseline-Only CRITICAL |"
+    )
+    lines.append(
+        "|-------|-------------------|---------------------|------------------|---------------------|------------------------|"
+    )
+
+    for comparison in skill_vs_baseline:
+        model = comparison["model"]
+        baseline_crit = comparison["baseline_critical"]
+        skill_crit = comparison["skill_critical"]
+        overlap = comparison["critical_overlap"]
+        skill_only = comparison["skill_only_critical"]
+        baseline_only = comparison["baseline_only_critical"]
+
         lines.append(
-            f"| {model} | {baseline_total} | {skill_total} | {baseline_crit} | {skill_crit} | {overlap} | {skill_only} | {baseline_only} | {value} |"
+            f"| {model} | {baseline_crit} | {skill_crit} | {overlap} | {skill_only} | {baseline_only} |"
         )
 
     lines.append("")
@@ -969,8 +978,8 @@ def generate_markdown(
         lines.append("")
         # Change 8: Benchmark provenance - state arm and dedup usage
         lines.append(
-            f"Skill impact on the curated SmallChat dataset ({len(benchmark_records)} records in `data/benchmark.jsonl`) — "
-            "separate ground truth from the 45-scenario generalization set below. "
+            f"Skill impact on the curated SmallChat dataset ({len(benchmark_records)} records in [data/benchmark.jsonl](data/benchmark.jsonl)) — "
+            ""
             "Arm: with-skill reviews. Counts use deduped findings."
         )
         lines.append("")
@@ -1009,62 +1018,6 @@ def generate_markdown(
         lines.append("")
 
     lines.append("")
-
-    # Diff-Based Evaluation Metrics Section
-    if diff_eval_metrics:
-        lines.append("---")
-        lines.append("")
-        lines.append("## Generalization (Diff-Based)")
-        lines.append("")
-        lines.append(
-            f"Evaluation against ground-truth diffs ({len([r for r in diff_eval_metrics.values() if r.get('total_benchmark', 0) > 0])} models with benchmark data). "
-            "Same 45-scenario dataset and matching as `report/cross_matrix.md`."
-        )
-        lines.append("")
-        # Change 10: Recall denominator uses only buggy diffs (expected=="findings")
-        lines.append(
-            "Metrics computed by matching model findings to benchmark bugs (file basename + line ±5). "
-            'Recall denominator = 25 buggy diffs only (expected=="findings"); findings on clean or refusal '
-            "scenarios count as false positives. DS = harmonic mean of precision and recall."
-        )
-        lines.append("")
-        lines.append(
-            "| Model | Precision | Recall | DS | Accuracy | Prioritization | Justification | Actionability | Overall |"
-        )
-        lines.append(
-            "|-------|-----------|--------|------|----------|----------------|---------------|---------------|---------|"
-        )
-        # Change 11b: Overall column disclaimer
-        lines.append("")
-        lines.append(
-            "> **Note:** Overall = LLM judge (GLM5.2), which also participates as a reviewer: may reflect self-preference. "
-            "**DS is the primary metric** — it is computed against ground truth and reproducible from the "
-            "committed eval data. Overall is a quality opinion on a 0-2 scale from a single judge with no "
-            "inter-rater check: use it to break ties, not to rank."
-        )
-        lines.append("")
-
-        for model_name in model_names:
-            # Eval data uses full profile keys (e.g. mistral-small-4-119b)
-            eval_name = profile_name_map.get(model_name, model_name)
-            skill_key = f"{eval_name}_skill"
-            metrics = diff_eval_metrics.get(skill_key, {})
-
-            precision = metrics.get("precision", 0.0)
-            recall = metrics.get("recall", 0.0)
-            ds = metrics.get("ds", 0.0)
-            # Judge axes use a 0-2 scale; normalize to 0-1 for percent display
-            accuracy = metrics.get("avg_accuracy", 0.0) / 2.0
-            prioritization = metrics.get("avg_prioritization", 0.0) / 2.0
-            justification = metrics.get("avg_justification", 0.0) / 2.0
-            actionability = metrics.get("avg_actionability", 0.0) / 2.0
-            overall = metrics.get("overall_score", 0.0) / 2.0
-
-            lines.append(
-                f"| {model_name} | {precision:.1%} | {recall:.1%} | {ds:.1%} | {accuracy:.1%} | {prioritization:.1%} | {justification:.1%} | {actionability:.1%} | {overall:.1%} |"
-            )
-
-        lines.append("")
 
     # Calibration (Refusal) Section
     if refusal_metrics:
@@ -1121,9 +1074,7 @@ def generate_markdown(
     # Phase 4: Add Limitations section (skeleton part 4)
     lines.append("## Limitations")
     lines.append("")
-    lines.append(
-        "- **n=45 (25 buggy)**: Evaluation based on 45 diff scenarios, of which 25 contain ground-truth bugs."
-    )
+    lines.append("")
     lines.append(
         f"- **Repetitions**: each model+skill pairing was evaluated {repetitions}x per diff scenario."
     )
@@ -1142,7 +1093,68 @@ def generate_markdown(
     )
     lines.append("")
     lines.append("")
+    lines.append("")
 
+    # Executive Summary
+    lines.append("## Executive Summary")
+    lines.append("")
+
+    # Compute summary statistics from available data
+    # Find best/worst performing models by bug count (from matched_groups)
+    model_bug_counts = {
+        mk: confirmed_per_model[mk] + unverified_per_model[mk] for mk in model_names
+    }
+    best_model = max(model_bug_counts.items(), key=lambda x: x[1])
+    worst_model = min(model_bug_counts.items(), key=lambda x: x[1])
+
+    # Calculate union of bugs found (unique findings across all models)
+    total_unique_bugs = len(matched_groups)
+
+    # Check if native skills outperformed cross-skill pairings
+    # (comparing skill-only criticals vs baseline-only criticals across all models)
+    total_skill_only = sum(
+        svb["skill_only_critical"]
+        for svb in skill_vs_baseline
+        if isinstance(svb["skill_only_critical"], int)
+    )
+    total_baseline_only = sum(
+        svb["baseline_only_critical"]
+        for svb in skill_vs_baseline
+        if isinstance(svb["baseline_only_critical"], int)
+    )
+    native_wins = total_skill_only > total_baseline_only
+
+    # Build executive summary paragraph
+    if best_model[1] > 0:
+        summary_parts = [
+            f"Across all models, {total_unique_bugs} unique issue(s) were identified, "
+            f"with {best_model[0]} performing best ({best_model[1]} finding(s)) and "
+            f"{worst_model[0]} performing worst ({worst_model[1]} finding(s)). "
+        ]
+    else:
+        summary_parts = [
+            f"Across all models, {total_unique_bugs} unique issue(s) were identified. "
+        ]
+
+    summary_parts.append(
+        f"The skill-only approach identified {total_skill_only} critical bug(s) the baseline missed, "
+        f"while the baseline found {total_baseline_only} critical bug(s) the skill missed. "
+    )
+
+    if native_wins:
+        summary_parts.append(
+            "Native skill configurations outperformed cross-skill pairings on critical coverage."
+        )
+    elif total_skill_only == total_baseline_only:
+        summary_parts.append(
+            "Native and cross-skill configurations achieved equivalent critical coverage."
+        )
+    else:
+        summary_parts.append(
+            "Cross-skill pairings outperformed native skill configurations on critical coverage."
+        )
+
+    lines.append(" ".join(summary_parts))
     lines.append("")
 
     return "\n".join(lines)

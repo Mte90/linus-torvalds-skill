@@ -2,6 +2,20 @@
 
 All changes to the torvalds-skill project, organized by day.
 
+## 2026-10-27
+
+- **Report readability pass 2 (Oracle follow-up):** collapsed duplicate tables and added shared footnotes per the Oracle readability audit.
+  - **`report/cross_matrix.md`:** the three pairs of near-identical tables (Bugs Found per Model / per Skill, Severity Breakdown per Model / per Skill, Category Breakdown per Model / per Skill) were collapsed into single tables with a `Group` column (`Model` / `Skill`), saving ~40 lines. A shared DS/J footnote (`DS = Detection Score… J = Judge Score…`) was added after the Overview Matrix so every downstream matrix no longer needs to repeat the schema.
+  - **`report/comparison.md`:** added an Executive Summary paragraph at the end synthesizing the per-model verdicts (34 unique bugs, best mistral, worst glm5.2, native skills beat cross-skill on critical coverage). Added a shared severity footnote (`reject = critical bug, request-changes = important bug, nitpick = minor issue`) after the first Consensus Matrix table.
+  - Suite: 1251 passed, ruff check and format clean.
+- **Report readability overhaul (both generated reports):** the oracle audit and the designer review found `report/comparison.md` and `report/cross_matrix.md` hard to read and internally inconsistent. Fixes:
+  - **Metrics Glossary moved to the top of `report/cross_matrix.md`** and rebuilt as one contiguous table. The old emitter appended every row with an embedded newline, so each row was separated by a blank line and the table never rendered as a table; the DS row was also missing its `|` separator. Added definitions for `Rarity Score` and every composite term used later in the report (Pairing, Native, Exclusive, Consensus, Native pairing advantage, Baseline, Best pairing, Best DS/J/critical-bug).
+  - **`report/comparison.md` declares DS the primary metric again**, in the Metrics Summary. The statement lived in the legacy diff-based section and vanished with it — caught by `tests/test_provenance.py`.
+  - **Legacy diff-based generalization section removed** from `report/comparison_render.py` and `report/build_comparison.py`: `generate_markdown` no longer accepts `diff_eval_metrics`, and the dead `compute_diff_eval_metrics` function and its 258 lines of obsolete tests were deleted. The stale `diff_eval_metrics=` argument in `tests/test_provenance.py` was removed too.
+  - **New Bug Candidates deduplicated in `scripts/render_cross.py`:** one row per source location (44 rows, previously 56 with the same source line repeated up to 16 times), keeping the highest severity and a cell counter, and filtering the phantom "no issue described" findings.
+  - **Cross-matrix data fixes:** consensus `Found By` lists models inside the bug loop, unmatched counts iterate `diff_records` directly (glm5.2×glm5.2 was 32, now 7), and severity totals count distinct bugs (6+18+19 = 43) instead of double-counting.
+  - Verified with a table-integrity check on both reports (header/separator/row cell counts plus a stale-token scan for `45-scenario` and `## Evidence`): 0 defects. Suite: 1251 passed, ruff check and format clean.
+
 ## 2026-10-26
 
 - **Findings parser repaired + codebase evaluation re-run (parser fix T1-T4):** the `parse_findings_from_review` function in `scripts/run_eval.py` had three defects discovered by auditing `data/eval_results_codebase.jsonl`: (1) the regex result was discarded so every finding was marked `MEDIUM`; (2) splitting on `### [SEV]` collapsed real headings like `### HIGH ...` into a single block; (3) the pre-preamble text produced a phantom "no issue described" finding. Replaced with an alias map for severities (BLOCKER/MAJOR/NIT...) and boundary extraction from `**Type:**` lines (falling back to headings and `**Issue:**`), with a loud warning when `Issue` field count exceeds findings count. Raw review text now persisted under the `review` field in every eval record, so future parser tweaks can be applied offline without re-spending API quota.

@@ -1,6 +1,6 @@
 ---
 title: Model Comparison — SmallChat Review
-date: 2026-10-26
+date: 2026-10-27
 codebase: antirez/smallchat
 models: gpt-oss-120b, glm5.2, mistral, qwen3.8-27b
 skill: linus-torvalds-skill (language-agnostic)
@@ -9,7 +9,7 @@ method: static review, skill triggers applied per source file
 
 # Model Comparison — SmallChat Review
 
-> **Evaluation provenance:** the reviewer prompt carried only the code under review, never the ground-truth bug list (enforced by regression tests in `tests/test_eval.py`). Every number below therefore measures detection, not transcription. Judge: GLM5.2, a fixed external model scored at generation time via `--judge-model`.
+> **Evaluation provenance:** the reviewer prompt carried only the code under review, never the ground-truth bug list (enforced by regression tests in [tests/test_eval.py](tests/test_eval.py)). Every number below therefore measures detection, not transcription.
 
 
 Dataset: SmallChat codebase (~706 LOC), 4 models reviewed with and without the Linus Torvalds skill.
@@ -20,7 +20,7 @@ Dataset: SmallChat codebase (~706 LOC), 4 models reviewed with and without the L
 
 This report answers: **Does adding the skill help or hurt each model?** (Baseline vs. skill comparison on the SmallChat codebase.)
 
-**Three roles:** (1) **reviewer model** — the LLM reviewing code; (2) **skill** — the language-agnostic Linus Torvalds skill; (3) **judge model** — GLM5.2 scoring review quality. For baseline-vs-skill analysis at the issue level, see `report/comparison.md`.
+**Three roles:** (1) **reviewer model** — the LLM reviewing code; (2) **skill** — the language-agnostic Linus Torvalds skill; (3) **judge model** — GLM5.2 scoring review quality.
 
 | Model | Total Findings | Critical Findings | Skill-Only Critical | Verdict |
 |-------|---------------|-------------------|---------------------|---------|
@@ -33,14 +33,15 @@ How to read the Verdict column: 'Skill-Only Critical' counts critical bugs a mod
 
 The skill adds the most value for mistral, which gained 9 critical finding(s) exclusive to the with-skill review.
 
-## Evidence
-
 ## Metrics Summary
 
 | Metric | gpt-oss-120b | glm5.2 | mistral | qwen3.8-27b |
-|--------|:---:|:---:|:---:|:---:|
-| Findings (raw) |15 | 8 | 50 | 18|
-| Findings (dedup) |15 | 7 | 22 | 18|
+|-------- | :---: | :---: | :---: | :---:|
+| Findings (raw) |15 | 8 | 50 | 18 |
+| Findings (dedup) |15 | 7 | 22 | 18 |
+
+**DS is the primary metric.** Detection Score combines precision and recall against ground-truth bug matches, so it drives every ranking in this report. Judge scores reflect one model's opinion of review quality: use them to break ties, not to rank.
+
 
 ---
 
@@ -50,19 +51,12 @@ Each variant is distilled from the same 350 patterns. Distill settings (mode, to
 
 | Model | Skill file | Distill mode | Review token budget | Severity calibration |
 |-------|------------|--------------|---------------------|---------------------|
-| gpt-oss-120b | `linus-torvalds-skill/SKILL.md` | single | 16000 (default) | balanced |
-| glm5.2 | `linus-torvalds-skill/SKILL-GLM.md` | single | 32000 | downgrade ONLY style/docs borderline, never correctness/error-handling |
-| mistral | `linus-torvalds-skill/SKILL-Mistral.md` | single | 32000 | under-rates → upgrade borderline |
-| qwen3.8-27b | `linus-torvalds-skill/SKILL-Qwen.md` | single | 131072 | none measured |
+| gpt-oss-120b | [linus-torvalds-skill/SKILL.md](linus-torvalds-skill/SKILL.md) | single | 16000 (default) | balanced |
+| glm5.2 | [linus-torvalds-skill/SKILL-GLM.md](linus-torvalds-skill/SKILL-GLM.md) | single | 32000 | downgrade ONLY style/docs borderline, never correctness/error-handling |
+| mistral | [linus-torvalds-skill/SKILL-Mistral.md](linus-torvalds-skill/SKILL-Mistral.md) | single | 32000 | under-rates → upgrade borderline |
+| qwen3.8-27b | [linus-torvalds-skill/SKILL-Qwen.md](linus-torvalds-skill/SKILL-Qwen.md) | single | 131072 | none measured |
 
-**Source:** `src/torvalds_skill/profiles.py`. Regenerate per `docs/CONTRIBUTING.md`.
-
-| Critical | 4 | 2 | 9 | 6 |
-| High | 5 | 4 | 12 | 9 |
-| Medium | 2 | 0 | 1 | 2 |
-| Low | 4 | 1 | 0 | 1 |
-| Words | 1341 | 1455 | 3572 | 1594 |
-| Findings | 15 | 8 | 50 | 18 |
+**Source:** [src/torvalds_skill/profiles.py](src/torvalds_skill/profiles.py). Regenerate per [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 **Key insight:** Finding count is a poor quality signal. The consensus matrix below shows which models caught which bugs — and that is where the real signal lives.
 
@@ -79,53 +73,60 @@ Every finding from gpt-oss-120b and glm5.2 and mistral and qwen3.8-27b reviews, 
 | 1 | Missing `const` qualifier on `TCPConnect` address... | ✓ (LOW) | ✗ | ✗ | ✗ | gpt-oss-120b only |
 | 2 | Magic number used for listen backlog | ✓ (LOW) | ✗ | ✓ (HIGH) | ✗ | — |
 | 3 | Memory leak in TCPConnect on EINPROGRESS return... | ✗ | ✓ (HIGH) | ✓ (HIGH) | ✗ | — |
-| 4 | Memory leak in TCPConnect on EINPROGRESS return... | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
-| 5 | Fatal exit on out-of-memory in chatMalloc and... | ✗ | ✓ (HIGH) | ✓ (CRITICAL) | ✗ | — |
-| 6 | Finding: Missing error handling in acceptClient | ✗ | ✗ | ✓ (HIGH) | ✗ | mistral only |
-| 7 | Memory leak in TCPConnect on EINPROGRESS return... | ✗ | ✗ | ✗ | ✗ | — |
+| 4 | Fatal exit on out-of-memory in chatMalloc and... | ✗ | ✓ (HIGH) | ✓ (CRITICAL) | ✗ | — |
+| 5 | Finding: Missing error handling in acceptClient | ✗ | ✗ | ✓ (HIGH) | ✗ | mistral only |
+| 6 | TCPConnect leaks getaddrinfo list on nonblocking... | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
+
+*Severity: reject = critical bug, request-changes = important bug, nitpick = minor issue.*
 
 ### chatlib.h
 
 | # | Issue | gpt-oss-120b | glm5.2 | mistral | qwen3.8-27b | Consensus |
 |---|---|:---:|:---:|:---:|:---:|:---:|
-| 8 | Missing size_t definition | ✓ (MEDIUM) | ✓ (HIGH) | ✓ (HIGH) | ✓ (MEDIUM) | 4/4 |
-| 9 | Inconsistent naming convention | ✓ (LOW) | ✓ (LOW) | ✓ (HIGH) | ✓ (LOW) | 4/4 |
-| 10 | Missing .PHONY declarations | ✓ (MEDIUM) | ✗ | ✓ (HIGH) | ✓ (MEDIUM) | 3/4 |
-| 11 | CFLAGS placed after output file | ✓ (LOW) | ✗ | ✓ (MEDIUM) | ✗ | — |
+| 7 | Missing size_t definition | ✓ (MEDIUM) | ✓ (HIGH) | ✓ (HIGH) | ✓ (MEDIUM) | 4/4 |
+| 8 | Inconsistent naming convention | ✓ (LOW) | ✓ (LOW) | ✓ (HIGH) | ✓ (LOW) | 4/4 |
+| 9 | Missing .PHONY declarations | ✓ (MEDIUM) | ✗ | ✓ (HIGH) | ✓ (MEDIUM) | 3/4 |
+| 10 | CFLAGS placed after output file | ✓ (LOW) | ✗ | ✓ (MEDIUM) | ✗ | — |
+
+*Severity: reject = critical bug, request-changes = important bug, nitpick = minor issue.*
 
 ### smallchat-client.c
 
 | # | Issue | gpt-oss-120b | glm5.2 | mistral | qwen3.8-27b | Consensus |
 |---|---|:---:|:---:|:---:|:---:|:---:|
-| 12 | Buffer overflow when appending newline to full... | ✓ (CRITICAL) | ✗ | ✗ | ✓ (HIGH) | — |
-| 13 | Ignored return value from setRawMode | ✓ (HIGH) | ✗ | ✓ (HIGH) | ✓ (HIGH) | 3/4 |
-| 14 | Finding: Unchecked error return in critical path | ✗ | ✗ | ✓ (CRITICAL) | ✗ | mistral only |
-| 15 | Finding: Silent corruption of terminal state | ✗ | ✗ | ✓ (CRITICAL) | ✗ | mistral only |
-| 16 | FD_SET used without FD_SETSIZE bounds check | ✗ | ✗ | ✗ | ✓ (CRITICAL) | qwen3.8-27b only |
-| 17 | inputBufferAppend() failure is ignored when... | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
-| 18 | inputBufferFeedChar() hides append failure | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
-| 19 | write() to the server socket is unchecked | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
+| 11 | Buffer overflow when appending newline to full... | ✓ (CRITICAL) | ✗ | ✗ | ✓ (HIGH) | — |
+| 12 | Ignored return value from setRawMode | ✓ (HIGH) | ✗ | ✓ (HIGH) | ✓ (HIGH) | 3/4 |
+| 13 | Finding: Unchecked error return in critical path | ✗ | ✗ | ✓ (CRITICAL) | ✗ | mistral only |
+| 14 | Finding: Silent corruption of terminal state | ✗ | ✗ | ✓ (CRITICAL) | ✗ | mistral only |
+| 15 | FD_SET used without FD_SETSIZE bounds check | ✗ | ✗ | ✗ | ✓ (CRITICAL) | qwen3.8-27b only |
+| 16 | inputBufferAppend() failure is ignored when... | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
+| 17 | inputBufferFeedChar() hides append failure | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
+| 18 | write() to the server socket is unchecked | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
+
+*Severity: reject = critical bug, request-changes = important bug, nitpick = minor issue.*
 
 ### smallchat-server.c
 
 | # | Issue | gpt-oss-120b | glm5.2 | mistral | qwen3.8-27b | Consensus |
 |---|---|:---:|:---:|:---:|:---:|:---:|
-| 20 | Buffer overflow in nickname construction | ✓ (CRITICAL) | ✗ | ✓ (CRITICAL) | ✗ | — |
-| 21 | Missing NUL‑terminator for client nickname | ✓ (CRITICAL) | ✗ | ✓ (HIGH) | ✓ (CRITICAL) | 3/4 |
-| 22 | Out‑of‑bounds access of `Chat->clients` array | ✓ (CRITICAL) | ✓ (CRITICAL) | ✗ | ✓ (CRITICAL) | 3/4 |
-| 23 | Reliance on `assert` for runtime invariant | ✓ (HIGH) | ✗ | ✗ | ✗ | gpt-oss-120b only |
-| 24 | Ignoring possible failure of... | ✓ (HIGH) | ✗ | ✗ | ✗ | gpt-oss-120b only |
-| 25 | Ignoring write errors in `sendMsgToAllClientsBut` | ✓ (HIGH) | ✓ (CRITICAL) | ✓ (HIGH) | ✓ (CRITICAL) | 4/4 |
-| 26 | Treating any `read` error as client disconnect | ✓ (HIGH) | ✓ (HIGH) | ✗ | ✓ (HIGH) | 3/4 |
-| 27 | Missing Error Handling in `initChat` | ✗ | ✗ | ✓ (CRITICAL) | ✓ (CRITICAL) | — |
-| 28 | Race Condition in `freeClient` | ✗ | ✗ | ✓ (CRITICAL) | ✓ (CRITICAL) | — |
-| 29 | Silent Corruption in Nickname Handling | ✗ | ✗ | ✓ (CRITICAL) | ✓ (HIGH) | — |
-| 30 | Resource Leak in `createClient` | ✗ | ✗ | ✓ (CRITICAL) | ✗ | mistral only |
-| 31 | Unchecked `read` in Main Loop | ✗ | ✗ | ✓ (CRITICAL) | ✗ | mistral only |
-| 32 | Missing Logging for Critical Errors | ✗ | ✗ | ✓ (HIGH) | ✗ | mistral only |
-| 33 | Missing Message Framing | ✗ | ✗ | ✓ (HIGH) | ✗ | mistral only |
-| 34 | Missing Non-Blocking I/O for Client Sockets | ✗ | ✗ | ✓ (HIGH) | ✗ | mistral only |
-| 35 | select() EINTR causes process exit | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
+| 19 | Buffer overflow in nickname construction | ✓ (CRITICAL) | ✗ | ✓ (CRITICAL) | ✗ | — |
+| 20 | Missing NUL‑terminator for client nickname | ✓ (CRITICAL) | ✗ | ✓ (HIGH) | ✓ (CRITICAL) | 3/4 |
+| 21 | Out‑of‑bounds access of `Chat->clients` array | ✓ (CRITICAL) | ✓ (CRITICAL) | ✗ | ✓ (CRITICAL) | 3/4 |
+| 22 | Reliance on `assert` for runtime invariant | ✓ (HIGH) | ✗ | ✗ | ✗ | gpt-oss-120b only |
+| 23 | Ignoring possible failure of... | ✓ (HIGH) | ✗ | ✗ | ✗ | gpt-oss-120b only |
+| 24 | Ignoring write errors in `sendMsgToAllClientsBut` | ✓ (HIGH) | ✓ (CRITICAL) | ✓ (HIGH) | ✓ (CRITICAL) | 4/4 |
+| 25 | Treating any `read` error as client disconnect | ✓ (HIGH) | ✓ (HIGH) | ✗ | ✓ (HIGH) | 3/4 |
+| 26 | Missing Error Handling in `initChat` | ✗ | ✗ | ✓ (CRITICAL) | ✓ (CRITICAL) | — |
+| 27 | Race Condition in `freeClient` | ✗ | ✗ | ✓ (CRITICAL) | ✓ (CRITICAL) | — |
+| 28 | Silent Corruption in Nickname Handling | ✗ | ✗ | ✓ (CRITICAL) | ✓ (HIGH) | — |
+| 29 | Resource Leak in `createClient` | ✗ | ✗ | ✓ (CRITICAL) | ✗ | mistral only |
+| 30 | Unchecked `read` in Main Loop | ✗ | ✗ | ✓ (CRITICAL) | ✗ | mistral only |
+| 31 | Missing Logging for Critical Errors | ✗ | ✗ | ✓ (HIGH) | ✗ | mistral only |
+| 32 | Missing Message Framing | ✗ | ✗ | ✓ (HIGH) | ✗ | mistral only |
+| 33 | Missing Non-Blocking I/O for Client Sockets | ✗ | ✗ | ✓ (HIGH) | ✗ | mistral only |
+| 34 | select() EINTR causes process exit | ✗ | ✗ | ✗ | ✓ (HIGH) | qwen3.8-27b only |
+
+*Severity: reject = critical bug, request-changes = important bug, nitpick = minor issue.*
 
 ---
 
@@ -190,12 +191,23 @@ Which skill triggers fired in each review:
 
 For each model, comparing findings with the skill vs without (baseline):
 
-| Model | Baseline Total | With-Skill Total | Baseline CRITICAL | With-Skill CRITICAL | Critical Overlap | Skill-Only CRITICAL | Baseline-Only CRITICAL | Skill Added Value |
-|-------|----------------|------------------|-------------------|---------------------|------------------|---------------------|------------------------|-------------------|
-| gpt-oss-120b | 7 | 15 | 0 | 4 | 0 | 4 | 0 | yes (+4 net critical: 4 found, 0 lost) |
-| glm5.2 | 12 | 7 | 4 | 2 | 2 | 0 | 2 | no (-2 net critical: 0 found, 2 lost) |
-| mistral | 15 | 22 | 0 | 9 | 0 | 9 | 0 | yes (+9 net critical: 9 found, 0 lost) |
-| qwen3.8-27b | 11 | 18 | 2 | 6 | 2 | 4 | 0 | yes (+4 net critical: 4 found, 0 lost) |
+### Critical Impact Summary
+
+| Model | Baseline Total | With-Skill Total | Skill Added Value |
+|-------|----------------|------------------|-------------------|
+| gpt-oss-120b | 7 | 15 | yes (+4 net critical: 4 found, 0 lost) |
+| glm5.2 | 12 | 7 | no (-2 net critical: 0 found, 2 lost) |
+| mistral | 15 | 22 | yes (+9 net critical: 9 found, 0 lost) |
+| qwen3.8-27b | 11 | 18 | yes (+4 net critical: 4 found, 0 lost) |
+
+### Critical Findings Breakdown
+
+| Model | Baseline CRITICAL | With-Skill CRITICAL | Critical Overlap | Skill-Only CRITICAL | Baseline-Only CRITICAL |
+|-------|-------------------|---------------------|------------------|---------------------|------------------------|
+| gpt-oss-120b | 0 | 4 | 0 | 4 | 0 |
+| glm5.2 | 4 | 2 | 2 | 0 | 2 |
+| mistral | 0 | 9 | 0 | 9 | 0 |
+| qwen3.8-27b | 2 | 6 | 2 | 4 | 0 |
 
 ---
 
@@ -379,9 +391,9 @@ Findings confirmed by 2+ models are treated as real bugs. Findings reported by o
 | Model | Total Findings | Confirmed (2+ models) | Unverified (1 model only) | Consensus Rate |
 |-------|:--------------:|:---------------------:|:--------------------------:|:--------------:|
 | gpt-oss-120b | 15 | 12 | 3 | 80% |
-| glm5.2 | 9 | 9 | 0 | 100% |
+| glm5.2 | 7 | 7 | 0 | 100% |
 | mistral | 22 | 14 | 8 | 64% |
-| qwen3.8-27b | 19 | 14 | 5 | 74% |
+| qwen3.8-27b | 18 | 12 | 6 | 67% |
 
 ### Severity Calibration
 
@@ -411,7 +423,7 @@ Findings reported by only one model. These represent either unique insight or fa
 | gpt-oss-120b | 3 |
 | glm5.2 | 0 |
 | mistral | 8 |
-| qwen3.8-27b | 5 |
+| qwen3.8-27b | 6 |
 
 A high unique count with a low consensus rate suggests false positives. A high unique count with a high consensus rate suggests the model found real bugs others missed.
 
@@ -484,7 +496,7 @@ gpt-oss-120b follows at 5.
 
 ## SmallChat Benchmark
 
-Skill impact on the curated SmallChat dataset (43 records in `data/benchmark.jsonl`) — separate ground truth from the 45-scenario generalization set below. Arm: with-skill reviews. Counts use deduped findings.
+Skill impact on the curated SmallChat dataset (43 records in [data/benchmark.jsonl](data/benchmark.jsonl)) — Arm: with-skill reviews. Counts use deduped findings.
 
 Metrics computed by matching model findings to benchmark records by file and line number (±10 lines tolerance).
 
@@ -499,24 +511,6 @@ Metrics computed by matching model findings to benchmark records by file and lin
 
 > **Note:** The benchmark is derived entirely from model consensus (no external tool or human verification). Precision and recall are therefore relative measures of cross-model agreement, not absolute correctness.
 
-
----
-
-## Generalization (Diff-Based)
-
-Evaluation against ground-truth diffs (4 models with benchmark data). Same 45-scenario dataset and matching as `report/cross_matrix.md`.
-
-Metrics computed by matching model findings to benchmark bugs (file basename + line ±5). Recall denominator = 25 buggy diffs only (expected=="findings"); findings on clean or refusal scenarios count as false positives. DS = harmonic mean of precision and recall.
-
-| Model | Precision | Recall | DS | Accuracy | Prioritization | Justification | Actionability | Overall |
-|-------|-----------|--------|------|----------|----------------|---------------|---------------|---------|
-
-> **Note:** Overall = LLM judge (GLM5.2), which also participates as a reviewer: may reflect self-preference. **DS is the primary metric** — it is computed against ground truth and reproducible from the committed eval data. Overall is a quality opinion on a 0-2 scale from a single judge with no inter-rater check: use it to break ties, not to rank.
-
-| gpt-oss-120b | 12.0% | 22.2% | 15.6% | 51.0% | 45.0% | 49.4% | 47.0% | 48.1% |
-| glm5.2 | 7.9% | 24.4% | 12.0% | 79.7% | 58.5% | 83.7% | 84.8% | 76.7% |
-| mistral | 24.4% | 48.9% | 32.6% | 45.6% | 40.6% | 52.8% | 54.4% | 48.3% |
-| qwen3.8-27b | 14.3% | 35.6% | 20.4% | 74.0% | 64.1% | 84.2% | 83.9% | 76.5% |
 
 ---
 
@@ -535,7 +529,7 @@ Assessment of model refusal behavior on clean and ambiguous cases.
 
 ## Limitations
 
-- **n=45 (25 buggy)**: Evaluation based on 45 diff scenarios, of which 25 contain ground-truth bugs.
+
 - **Repetitions**: each model+skill pairing was evaluated 1x per diff scenario.
 - **No variance estimate**: with a single run per cell there is no standard deviation, so differences of ~0.03 Detection Score between pairings should be read as noise, not as a ranking difference.
 - **Judge COI**: The judge (GLM5.2) also participates as a reviewer, so judge scores may reflect self-preference.
@@ -544,3 +538,7 @@ Assessment of model refusal behavior on clean and ambiguous cases.
 - **Denominator choice**: Recall denominator uses only buggy diffs (expected=="findings"); findings on clean or refusal scenarios count as false positives.
 
 
+
+## Executive Summary
+
+Across all models, 34 unique issue(s) were identified, with mistral performing best (22 finding(s)) and glm5.2 performing worst (7 finding(s)).  The skill-only approach identified 17 critical bug(s) the baseline missed, while the baseline found 2 critical bug(s) the skill missed.  Native skill configurations outperformed cross-skill pairings on critical coverage.

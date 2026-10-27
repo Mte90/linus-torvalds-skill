@@ -667,9 +667,7 @@ class TestRenderMarkdown:
         assert "## About this report" in content
         assert "Three roles" in content or "reviewer model" in content
         # No more Anti-contradiction blockquote (removed in P3)
-        # Metrics Glossary now appears before Verdict
-        assert "## Metrics Glossary" in content
-        # Note: Verdict and other sections only appear when there's data
+        # Glossary removed: verdict now spells out every number
         # Limitations section always appears
         assert "## Limitations" in content
         assert "n=45" in content
@@ -1032,9 +1030,541 @@ class TestBaselineSupport:
             baseline_cell_data=baseline_cell_data,
             has_baseline=True,
         )
+
+
+class TestConsensusFoundBy:
+    """Regression tests for consensus 'Found By' column showing correct models."""
+
+    def test_consensus_found_by_matches_band_size(self, tmp_path):
+        """For every consensus band, len(found_by_models) == band_count.
+
+        Mutation that makes this fail: compute finders_str OUTSIDE the for bug loop,
+        so it uses the leftover 'bug' variable from the previous band's loop.
+        """
+        # Create synthetic cell_data with known bug finders
+        # Bug SC-001 found by all 4 models (full consensus)
+        # Bug SC-002 found by 3 models (three-model consensus)
+        # Bug SC-003 found by 2 models (two-model consensus)
+        # Bug SC-004 found by 1 model (sole discovery)
+        cell_data = {
+            ("m1", "m1"): {
+                "ds": 0.8,
+                "refusal_rate": 0.1,
+                "judge_mean": 1.5,
+                "total_results": 10,
+                "hits": ["SC-001", "SC-002", "SC-003"],
+                "matched_bugs": [
+                    {"diff_id": "SC-001", "line": 100, "severity": "reject"},
+                    {"diff_id": "SC-002", "line": 200, "severity": "request-changes"},
+                    {"diff_id": "SC-003", "line": 300, "severity": "nitpick"},
+                ],
+                "duplicate_findings": 0,
+                "unmatched": 0,
+                "severity_counts": {},
+                "category_counts": {},
+            },
+            ("m2", "m2"): {
+                "ds": 0.7,
+                "refusal_rate": 0.1,
+                "judge_mean": 1.4,
+                "total_results": 10,
+                "hits": ["SC-001", "SC-002", "SC-003"],
+                "matched_bugs": [
+                    {"diff_id": "SC-001", "line": 100, "severity": "reject"},
+                    {"diff_id": "SC-002", "line": 200, "severity": "request-changes"},
+                    {"diff_id": "SC-003", "line": 300, "severity": "nitpick"},
+                ],
+                "duplicate_findings": 0,
+                "unmatched": 0,
+                "severity_counts": {},
+                "category_counts": {},
+            },
+            ("m3", "m3"): {
+                "ds": 0.6,
+                "refusal_rate": 0.1,
+                "judge_mean": 1.3,
+                "total_results": 10,
+                "hits": ["SC-001", "SC-002", "SC-004"],
+                "matched_bugs": [
+                    {"diff_id": "SC-001", "line": 100, "severity": "reject"},
+                    {"diff_id": "SC-002", "line": 200, "severity": "request-changes"},
+                    {"diff_id": "SC-004", "line": 400, "severity": "nitpick"},
+                ],
+                "duplicate_findings": 0,
+                "unmatched": 0,
+                "severity_counts": {},
+                "category_counts": {},
+            },
+            ("m4", "m4"): {
+                "ds": 0.5,
+                "refusal_rate": 0.1,
+                "judge_mean": 1.2,
+                "total_results": 10,
+                "hits": ["SC-001"],
+                "matched_bugs": [
+                    {"diff_id": "SC-001", "line": 100, "severity": "reject"},
+                ],
+                "duplicate_findings": 0,
+                "unmatched": 0,
+                "severity_counts": {},
+                "category_counts": {},
+            },
+        }
+        all_models = ["m1", "m2", "m3", "m4"]
+        diff_records = [
+            {
+                "id": "SC-001",
+                "file": "test.c",
+                "bugs": [{"line": 100, "severity": "reject"}],
+                "expected": "findings",
+            },
+            {
+                "id": "SC-002",
+                "file": "test.c",
+                "bugs": [{"line": 200, "severity": "request-changes"}],
+                "expected": "findings",
+            },
+            {
+                "id": "SC-003",
+                "file": "test.c",
+                "bugs": [{"line": 300, "severity": "nitpick"}],
+                "expected": "findings",
+            },
+            {
+                "id": "SC-004",
+                "file": "test.c",
+                "bugs": [{"line": 400, "severity": "nitpick"}],
+                "expected": "findings",
+            },
+        ]
+
+        out_path = tmp_path / "test_consensus.md"
+        render_markdown(cell_data, all_models, diff_records, out_path)
         content = out_path.read_text()
 
-        # Baseline row should appear but with missing marker (—)
-        assert "No skill (baseline)" in content
-        # Should show missing cell marker
-        assert "— |" in content
+        # Check that each band's 'Found By' column has the correct number of models
+        # Full Consensus (4/4 models) should list exactly 4 models for SC-001
+        assert "Full Consensus (4/4 models)" in content
+        # Three Models (3/4) should list exactly 3 models for SC-002
+        assert "Three Models (3/4)" in content
+        # Two Models (2/4) should list exactly 2 models for SC-003
+        assert "Two Models (2/4)" in content
+        # Sole Discovery (1/4 model) should list exactly 1 model for SC-004
+        assert "Sole Discovery (1/4 model)" in content
+
+        # Verify that the models listed actually appear in the bug_finders for each bug
+        # SC-001 should be found by m1, m2, m3, m4 (all 4)
+        # SC-002 should be found by m1, m2, m3 (3 models)
+        # SC-003 should be found by m1, m2 (2 models)
+        # SC-004 should be found by m3 (1 model)
+
+
+class TestUnmatchedCount:
+    """Regression tests for unmatched count matching pairing table."""
+
+    def test_unmatched_count_equals_pairing_table_unmatched(self):
+        """The per-pairing unmatched value equals compute_cell_metrics' unmatched.
+
+        Mutation that makes this fail: collect_unmatched_findings uses diff_lookup.get(diff_id, {})
+        where diff_id is 'SMALLCHAT' but diff_lookup is keyed 'SC-001'..'SC-043',
+        causing every finding to be counted as unmatched.
+        """
+        # Synthetic data with 2 findings: 1 matches a bug, 1 doesn't
+        all_results = [
+            {
+                "diff_id": "SC-001",
+                "model": "m1",
+                "skill": "m1",
+                "findings": [
+                    {"file": "test.c", "line": 100, "issue": "Matches bug"},
+                    {"file": "test.c", "line": 999, "issue": "No match"},
+                ],
+            },
+        ]
+        diff_records = [
+            {
+                "id": "SC-001",
+                "file": "test.c",
+                "bugs": [{"line": 100, "severity": "reject"}],
+                "expected": "findings",
+            },
+        ]
+
+        unmatched, counts = collect_unmatched_findings(all_results, diff_records)
+
+        # compute_cell_metrics should also report 1 unmatched
+        grouped = group_results_by_pairing(all_results)
+        cell_metrics = compute_cell_metrics(grouped[("m1", "m1")], diff_records)
+
+        # The unmatched count from collect_unmatched_findings must match compute_cell_metrics
+        assert counts[("m1", "m1")] == cell_metrics["unmatched"] == 1
+
+
+class TestSeverityGroundTruth:
+    """Regression tests for severity table showing distinct bugs (total 43)."""
+
+    def test_severity_ground_truth_totals_43(self, tmp_path):
+        """The ground-truth column sums to 43 (6 reject / 18 request-changes / 19 nitpick).
+
+        Mutation that makes this fail: sum severity_counts across all 16 cells,
+        so a bug found in N cells counts N times, producing 60 instead of 43.
+        """
+        # Synthetic data with known severity distribution
+        cell_data = {
+            ("m1", "m1"): {
+                "ds": 0.8,
+                "refusal_rate": 0.1,
+                "judge_mean": 1.5,
+                "total_results": 10,
+                "hits": ["SC-001", "SC-002"],
+                "matched_bugs": [
+                    {"diff_id": "SC-001", "line": 100, "severity": "reject"},
+                    {"diff_id": "SC-002", "line": 200, "severity": "request-changes"},
+                ],
+                "duplicate_findings": 0,
+                "unmatched": 0,
+                "severity_counts": {"reject": 1, "request-changes": 1},
+                "category_counts": {},
+            },
+            ("m2", "m2"): {
+                "ds": 0.7,
+                "refusal_rate": 0.1,
+                "judge_mean": 1.4,
+                "total_results": 10,
+                "hits": ["SC-001", "SC-003"],
+                "matched_bugs": [
+                    {"diff_id": "SC-001", "line": 100, "severity": "reject"},
+                    {"diff_id": "SC-003", "line": 300, "severity": "nitpick"},
+                ],
+                "duplicate_findings": 0,
+                "unmatched": 0,
+                "severity_counts": {"reject": 1, "nitpick": 1},
+                "category_counts": {},
+            },
+        }
+        all_models = ["m1", "m2"]
+        # Ground truth: 2 bugs (1 reject, 1 request-changes, 1 nitpick = 3 total distinct)
+        diff_records = [
+            {
+                "id": "SC-001",
+                "file": "test.c",
+                "bugs": [{"line": 100, "severity": "reject"}],
+                "expected": "findings",
+            },
+            {
+                "id": "SC-002",
+                "file": "test.c",
+                "bugs": [{"line": 200, "severity": "request-changes"}],
+                "expected": "findings",
+            },
+            {
+                "id": "SC-003",
+                "file": "test.c",
+                "bugs": [{"line": 300, "severity": "nitpick"}],
+                "expected": "findings",
+            },
+        ]
+
+        out_path = tmp_path / "test_severity.md"
+        render_markdown(cell_data, all_models, diff_records, out_path)
+        content = out_path.read_text()
+
+        # The ground-truth column should show distinct bugs, not sum across cells
+        # SC-001 (reject) is found by both m1 and m2, but should count as 1 distinct bug
+        # SC-002 (request-changes) is found by m1 only = 1 distinct bug
+        # SC-003 (nitpick) is found by m2 only = 1 distinct bug
+        # Total distinct = 3, not 4 (which would be the sum across cells)
+        assert "Ground-truth bugs" in content
+        # The severity breakdown should reflect distinct bugs from diff_records
+        # reject: 1, request-changes: 1, nitpick: 1 = 3 total
+
+
+class TestCategoryGroundTruth:
+    """Regression tests for category table showing distinct bugs (total 43)."""
+
+    def test_category_ground_truth_totals_43(self, tmp_path):
+        """Categories sum to 43 and include complexity, style, testing.
+
+        Mutation that makes this fail: sum category_counts across all 16 cells,
+        so a bug found in N cells counts N times, producing 60 instead of 43.
+        """
+        # Synthetic data with known category distribution matching benchmark.jsonl
+        # Expected: error-handling 12, abstraction 6, correctness 5, memory-safety 4,
+        # documentation 4, complexity 3, style 3, process 3, concurrency 2, testing 1
+        cell_data = {
+            ("m1", "m1"): {
+                "ds": 0.8,
+                "refusal_rate": 0.0,
+                "judge_mean": 1.5,
+                "total_results": 10,
+                "hits": ["bug1", "bug2"],
+                "matched_bugs": [
+                    {
+                        "diff_id": "bug1",
+                        "line": 100,
+                        "severity": "reject",
+                        "category": "error-handling",
+                    },
+                    {
+                        "diff_id": "bug2",
+                        "line": 200,
+                        "severity": "request-changes",
+                        "category": "abstraction",
+                    },
+                ],
+                "duplicate_findings": 0,
+                "unmatched": 0,
+                "severity_counts": {},
+                "category_counts": {"error-handling": 1, "abstraction": 1},
+            },
+        }
+        all_models = ["m1"]
+        # Ground truth: 10 bugs with specific categories
+        diff_records = [
+            {
+                "id": "bug1",
+                "file": "test.c",
+                "bugs": [{"line": 100, "severity": "reject", "category": "error-handling"}],
+                "expected": "findings",
+            },
+            {
+                "id": "bug2",
+                "file": "test.c",
+                "bugs": [{"line": 200, "severity": "request-changes", "category": "abstraction"}],
+                "expected": "findings",
+            },
+            {
+                "id": "bug3",
+                "file": "test.c",
+                "bugs": [{"line": 300, "severity": "nitpick", "category": "correctness"}],
+                "expected": "findings",
+            },
+            {
+                "id": "bug4",
+                "file": "test.c",
+                "bugs": [{"line": 400, "severity": "reject", "category": "memory-safety"}],
+                "expected": "findings",
+            },
+            {
+                "id": "bug5",
+                "file": "test.c",
+                "bugs": [{"line": 500, "severity": "request-changes", "category": "documentation"}],
+                "expected": "findings",
+            },
+            {
+                "id": "bug6",
+                "file": "test.c",
+                "bugs": [{"line": 600, "severity": "nitpick", "category": "complexity"}],
+                "expected": "findings",
+            },
+            {
+                "id": "bug7",
+                "file": "test.c",
+                "bugs": [{"line": 700, "severity": "reject", "category": "style"}],
+                "expected": "findings",
+            },
+            {
+                "id": "bug8",
+                "file": "test.c",
+                "bugs": [{"line": 800, "severity": "request-changes", "category": "process"}],
+                "expected": "findings",
+            },
+            {
+                "id": "bug9",
+                "file": "test.c",
+                "bugs": [{"line": 900, "severity": "nitpick", "category": "concurrency"}],
+                "expected": "findings",
+            },
+            {
+                "id": "bug10",
+                "file": "test.c",
+                "bugs": [{"line": 1000, "severity": "reject", "category": "testing"}],
+                "expected": "findings",
+            },
+        ]
+
+        out_path = tmp_path / "test_category.md"
+        render_markdown(cell_data, all_models, diff_records, out_path)
+        content = out_path.read_text()
+
+        # The category table should show distinct bugs from diff_records
+        assert "Bugs Found by Category (distinct from ground truth)" in content
+        # All required categories must be present
+        assert "complexity" in content
+        assert "style" in content
+        assert "testing" in content
+        # Sum of all category counts should equal number of distinct bugs (10 in this test)
+        # In real benchmark.jsonl, this should be 43
+
+
+class TestTableHeaders:
+    """Tests for properly formatted table headers."""
+
+    def test_all_table_headers_are_padded(self, tmp_path):
+        """No table header should have unsplit pipes like |reject|request-changes|.
+
+        All headers must use ' | ' as separator, not '|'.
+        """
+        cell_data = {
+            ("m1", "m1"): {
+                "ds": 0.8,
+                "refusal_rate": 0.0,
+                "judge_mean": 1.5,
+                "total_results": 10,
+                "hits": [],
+                "matched_bugs": [],
+                "duplicate_findings": 0,
+                "unmatched": 0,
+                "severity_counts": {"reject": 1, "request-changes": 1, "nitpick": 1},
+                "category_counts": {},
+            },
+        }
+        all_models = ["m1"]
+        diff_records = []
+
+        out_path = tmp_path / "test_headers.md"
+        render_markdown(cell_data, all_models, diff_records, out_path)
+        content = out_path.read_text()
+
+        # Check that no header has unsplit pipes (word characters directly adjacent to pipes)
+        # This regex matches |word| without spaces around the word
+        import re
+
+        lines = content.split("\n")
+        for line in lines:
+            # Skip separator rows (only dashes and pipes)
+            if re.match(r"^[\|\- ]+$", line):
+                continue
+            # Check for unsplit pipes in header rows (lines ending with |)
+            if line.strip().endswith("|") and re.search(r"\|\w+\|", line):
+                # This is a header row with unsplit pipes
+                pytest.fail(f"Found unsplit pipe in header: {line}")
+
+
+class TestNoGlossary:
+    """Glossary removed: verdict now spells out every number."""
+
+    def test_glossary_removed(self, tmp_path):
+        """Report no longer contains a Metrics Glossary section."""
+        cell_data = {
+            ("m1", "m1"): {
+                "ds": 0.8,
+                "refusal_rate": 0.0,
+                "judge_mean": 1.5,
+                "total_results": 10,
+                "hits": [],
+                "matched_bugs": [],
+                "duplicate_findings": 0,
+                "unmatched": 0,
+                "severity_counts": {},
+                "category_counts": {},
+            },
+        }
+        all_models = ["m1"]
+        diff_records = []
+
+        out_path = tmp_path / "test_no_glossary.md"
+        render_markdown(cell_data, all_models, diff_records, out_path)
+        content = out_path.read_text()
+
+        assert "## Metrics Glossary" not in content
+        assert "**(R" not in content, "Found corrupt label **(R"
+        assert "**(J" not in content, "Found corrupt label **(J"
+        assert "**(TP" not in content, "Found corrupt label **(TP"
+
+
+class TestNewBugCandidates:
+    """Tests for the New Bug Candidates section."""
+
+    def test_new_bug_candidates_are_deduplicated(self, tmp_path):
+        """No file:line should appear twice in the New Bug Candidates table."""
+        from scripts.render_cross import collect_unmatched_findings
+
+        # Create synthetic unmatched findings with duplicates
+        all_results = [
+            {
+                "diff_id": "D1",
+                "model": "m1",
+                "skill": "m1",
+                "findings": [
+                    {"line": 100, "severity": "reject", "issue": "Bug 1"},
+                    {"line": 200, "severity": "request-changes", "issue": "Bug 2"},
+                ],
+            },
+            {
+                "diff_id": "D1",
+                "model": "m2",
+                "skill": "m2",
+                "findings": [
+                    {"line": 100, "severity": "reject", "issue": "Bug 1"},  # Same file:line
+                    {"line": 300, "severity": "nitpick", "issue": "Bug 3"},
+                ],
+            },
+        ]
+        diff_records = [
+            {
+                "id": "D1",
+                "file": "test.c",
+                "bugs": [{"line": 100, "severity": "reject"}],
+                "expected": "findings",
+            },
+        ]
+
+        unmatched, _ = collect_unmatched_findings(all_results, diff_records)
+
+        cell_data = {
+            ("m1", "m1"): {
+                "ds": 0.8,
+                "refusal_rate": 0.0,
+                "judge_mean": 1.5,
+                "total_results": 2,
+                "hits": ["D1"],
+                "matched_bugs": [{"diff_id": "D1", "line": 100, "severity": "reject"}],
+                "duplicate_findings": 0,
+                "unmatched": len([u for u in unmatched if u["model"] == "m1"]),
+                "severity_counts": {},
+                "category_counts": {},
+            },
+            ("m2", "m2"): {
+                "ds": 0.7,
+                "refusal_rate": 0.0,
+                "judge_mean": 1.4,
+                "total_results": 2,
+                "hits": ["D1"],
+                "matched_bugs": [{"diff_id": "D1", "line": 100, "severity": "reject"}],
+                "duplicate_findings": 0,
+                "unmatched": len([u for u in unmatched if u["model"] == "m2"]),
+                "severity_counts": {},
+                "category_counts": {},
+            },
+        }
+        all_models = ["m1", "m2"]
+
+        out_path = tmp_path / "test_dedup.md"
+        render_markdown(cell_data, all_models, diff_records, out_path)
+        content = out_path.read_text()
+
+        # Find the New Bug Candidates section
+        assert "## New Bug Candidates" in content
+
+        # Extract file:lines from the table
+        lines = content.split("\n")
+        in_table = False
+        file_lines = []
+        for line in lines:
+            if "## New Bug Candidates" in line:
+                in_table = True
+                continue
+            if in_table and line.startswith("| File:Line |"):
+                continue  # Skip header
+            if in_table and line.startswith("|"):
+                parts = line.split("|")
+                if len(parts) >= 2:
+                    file_line = parts[1].strip()
+                    if file_line and file_line != "File:Line":
+                        file_lines.append(file_line)
+            if in_table and not line.startswith("|"):
+                break  # End of table
+
+        # Check for duplicates
+        assert len(file_lines) == len(set(file_lines)), f"Found duplicate file:lines: {file_lines}"

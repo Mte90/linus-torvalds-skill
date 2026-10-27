@@ -30,8 +30,6 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 from torvalds_skill.matching import (  # noqa: E402
     dedupe_records,
-    finding_identity,
-    match_finding_to_bug,
 )
 
 # Models and their review files
@@ -470,6 +468,11 @@ def match_findings_across_models(
                 for other_model2 in model_names[1:]:
                     if other_model2 == other_model:
                         continue
+                    # other_f is consumed as soon as it joins a group. The inner
+                    # `break` only exits the `for k` loop, so without this check the
+                    # next other_model2 would add the same finding to a second group.
+                    if (file, j, other_model) in used_findings:
+                        break
                     other_file_findings2 = by_file[other_model2].get(file, [])
                     for k, other_f2 in enumerate(other_file_findings2):
                         if (file, k, other_model2) in used_findings:
@@ -518,17 +521,36 @@ def match_findings_across_models(
                     used_findings.add((file, j, model_name))
 
     # Cross-file fallback pass: match unmatched findings across models using title similarity
+    # Track which findings have been consumed in THIS fallback pass
+    # Key format matches main pass: (file, index, model)
+    fallback_used = set()
+
     for model_name in model_names:
         for file1, finding1 in unmatched_by_model[model_name]:
             if not finding1.title:
+                continue
+            # used_findings is keyed by (file, index within that file's group, model),
+            # so the index must come from by_file, not from the flat per-model list.
+            try:
+                idx1 = by_file[model_name][file1].index(finding1)
+            except (KeyError, ValueError):
+                continue
+            fallback_key1 = (file1, idx1, model_name)
+            # unmatched_by_model is snapshotted before the second pass, so findings that
+            # the second pass consumed are still listed here; both guards are required.
+            if fallback_key1 in used_findings or fallback_key1 in fallback_used:
                 continue
             # Try to match against other models' unmatched findings
             for other_model in model_names:
                 if other_model == model_name:
                     continue
                 for file2, finding2 in unmatched_by_model[other_model]:
-                    # Skip if already matched
-                    if (file2, finding2, other_model) in used_findings:
+                    try:
+                        idx2 = by_file[other_model][file2].index(finding2)
+                    except (KeyError, ValueError):
+                        continue
+                    fallback_key2 = (file2, idx2, other_model)
+                    if fallback_key2 in used_findings or fallback_key2 in fallback_used:
                         continue
                     # Match by title similarity (cross-file fallback)
                     if _title_similarity(finding1.title, finding2.title) >= 0.30:
@@ -540,9 +562,37 @@ def match_findings_across_models(
                             "title": finding1.title,
                         }
                         matched_groups.append(group)
-                        used_findings.add((file1, finding1, model_name))
-                        used_findings.add((file2, finding2, other_model))
+                        # Mark both as used in fallback pass
+                        fallback_used.add(fallback_key1)
+                        fallback_used.add(fallback_key2)
                         break
+
+    # Assert invariant: for every model, consensus participations <= deduped finding count
+    # Count consensus participations per model
+    consensus_counts = {m: 0 for m in model_names}
+    for group in matched_groups:
+        for model_name in model_names:
+            if group.get(model_name):
+                consensus_counts[model_name] += 1
+
+    # Each finding belongs to at most one group per model. A violation means the
+    # consensus table would credit a model with more issues than it reported.
+    occurrences: dict[tuple[str, int], int] = defaultdict(int)
+    duplicate_examples: list[str] = []
+    for group in matched_groups:
+        for model_name in model_names:
+            finding = group.get(model_name)
+            if finding is None:
+                continue
+            key = (model_name, id(finding))
+            occurrences[key] += 1
+            if occurrences[key] == 2:
+                duplicate_examples.append(f"{model_name} {finding!r}")
+    if duplicate_examples:
+        raise ValueError(
+            "a finding was assigned to more than one consensus group: "
+            + "; ".join(duplicate_examples[:3])
+        )
 
     return matched_groups
 
@@ -1293,147 +1343,6 @@ def compute_benchmark_metrics(
     return result
 
 
-def compute_diff_eval_metrics(eval_results: list[dict], diff_records: list[dict]) -> dict:
-    """Compute diff-based evaluation metrics (precision/recall/DS) for model findings.
-
-    Matches findings to benchmark bugs with the shared matcher
-    (torvalds_skill.matching: basename + aliases, line ±5). All diff scenarios
-    count: recall is hits/total scenarios, and findings on clean or refusal
-    scenarios count as false positives — identical semantics to the
-    cross-evaluation matrix (report/cross_matrix.md).
-
-    Args:
-        eval_results: List of eval result records with structure:
-            {diff_id, model, expected, findings:[{file,line,severity,title}],
-             scores:{accuracy,prioritization,justification,actionability}}
-        diff_records: List of benchmark diff records (same as benchmark_records)
-
-    Returns:
-        Dict with keys:
-        - precision, recall, ds: standard metrics
-        - hits, misses: matched/unmatched benchmark IDs
-        - avg_accuracy, avg_prioritization, avg_justification, avg_actionability
-        - overall_score: weighted average of all score dimensions
-        - total_findings: total findings across all models
-        - total_benchmark: total benchmark records
-    """
-    if not eval_results or not diff_records:
-        return {
-            "precision": 0.0,
-            "recall": 0.0,
-            "ds": 0.0,
-            "hits": [],
-            "misses": [r["id"] for r in diff_records],
-            "avg_accuracy": 0.0,
-            "avg_prioritization": 0.0,
-            "avg_justification": 0.0,
-            "avg_actionability": 0.0,
-            "overall_score": 0.0,
-            "total_findings": 0,
-            "total_benchmark": len(diff_records),
-        }
-
-    score_sums = {
-        "accuracy": 0.0,
-        "prioritization": 0.0,
-        "justification": 0.0,
-        "actionability": 0.0,
-    }
-    score_counts = {"accuracy": 0, "prioritization": 0, "justification": 0, "actionability": 0}
-
-    matched_benchmark_ids = set()
-    seen_findings: set[tuple[object, ...]] = set()
-
-    for result in eval_results:
-        findings = result.get("findings", [])
-
-        # Aggregate scores
-        scores = result.get("scores", {})
-        for key in score_sums:
-            if key in scores and scores[key] is not None:
-                score_sums[key] += scores[key]
-                score_counts[key] += 1
-
-        # Shared matcher: basename + aliases, line ±5 (same as cross_matrix.md).
-        # Deduplicated across repetitions so precision does not depend on how
-        # many times the same diff was re-run.
-        for finding in findings:
-            for record in diff_records:
-                if match_finding_to_bug(finding, record.get("bugs", []), record.get("file", "")):
-                    bid = record.get("id")
-                    identity = finding_identity(finding, bid)
-                    if identity in seen_findings:
-                        break
-                    seen_findings.add(identity)
-                    if bid:
-                        matched_benchmark_ids.add(bid)
-                    break
-            else:
-                unmatched_identity = finding_identity(finding, None)
-                if unmatched_identity not in seen_findings:
-                    seen_findings.add(unmatched_identity)
-
-    total_findings = len(seen_findings)
-
-    hits = sorted(matched_benchmark_ids)
-    misses = sorted(
-        [
-            r["id"]
-            for r in diff_records
-            if r.get("expected") == "findings" and r.get("id") not in matched_benchmark_ids
-        ]
-    )
-
-    # Precision: hits / all findings across every scenario (clean-diff findings = FP)
-    precision = len(hits) / total_findings if total_findings > 0 else 0.0
-
-    # Recall: hits / total diff scenarios (buggy + clean)
-    recall = len(hits) / len(diff_records) if diff_records else 0.0
-
-    # Detection Score (DS)
-    ds = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-
-    # Average scores
-    avg_accuracy = (
-        score_sums["accuracy"] / score_counts["accuracy"] if score_counts["accuracy"] > 0 else 0.0
-    )
-    avg_prioritization = (
-        score_sums["prioritization"] / score_counts["prioritization"]
-        if score_counts["prioritization"] > 0
-        else 0.0
-    )
-    avg_justification = (
-        score_sums["justification"] / score_counts["justification"]
-        if score_counts["justification"] > 0
-        else 0.0
-    )
-    avg_actionability = (
-        score_sums["actionability"] / score_counts["actionability"]
-        if score_counts["actionability"] > 0
-        else 0.0
-    )
-
-    # Overall score: average of all dimensions
-    overall_score = (
-        avg_accuracy + avg_prioritization + avg_justification + avg_actionability
-    ) / 4.0
-
-    return {
-        "precision": precision,
-        "recall": recall,
-        "ds": ds,
-        "hits": hits,
-        "misses": misses,
-        "avg_accuracy": avg_accuracy,
-        "avg_prioritization": avg_prioritization,
-        "avg_justification": avg_justification,
-        "avg_actionability": avg_actionability,
-        "overall_score": overall_score,
-        "total_findings": total_findings,
-        "total_benchmark": len(diff_records),
-    }
-
-
 def compute_refusal_metrics(eval_results: list[dict], diff_records: list[dict]) -> dict:
     """Compute calibration metrics for model refusal behavior.
 
@@ -1644,7 +1553,6 @@ def main():
     # Load eval results for diff-based metrics (graceful skip if files missing)
     eval_diffs_path = repo_root / "data" / "eval_diffs.jsonl"
     eval_results_path = repo_root / "data" / "eval_results.jsonl"
-    diff_eval_metrics = {}
     refusal_metrics = {}
 
     if eval_diffs_path.exists() and eval_results_path.exists():
@@ -1690,7 +1598,6 @@ def main():
 
         # Compute diff-based metrics per model
         for model, results in results_by_model.items():
-            diff_eval_metrics[f"{model}_skill"] = compute_diff_eval_metrics(results, eval_diffs)
             refusal_metrics[f"{model}_skill"] = compute_refusal_metrics(results, eval_diffs)
     else:
         if not eval_diffs_path.exists():
@@ -1712,7 +1619,6 @@ def main():
         trigger_effectiveness=trigger_effectiveness,
         benchmark_records=benchmark_records,
         benchmark_metrics=benchmark_metrics,
-        diff_eval_metrics=diff_eval_metrics or None,
         refusal_metrics=refusal_metrics or None,
         repetitions=eval_repetitions,
         # data/eval_results.jsonl is written only by the decontaminated eval prompt;

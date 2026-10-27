@@ -152,18 +152,10 @@ class TestSectionOrder:
         content = cross_path.read_text(encoding="utf-8")
         lines = content.split("\n")
 
-        metrics_glossary_line = None
         verdict_line = None
 
         for i, line in enumerate(lines):
-            if line.strip() == "## Metrics Glossary":
-                metrics_glossary_line = i
             if line.strip() == "## Verdict":
                 verdict_line = i
 
-        assert metrics_glossary_line is not None, "## Metrics Glossary heading not found"
         assert verdict_line is not None, "## Verdict heading not found"
-        assert verdict_line > metrics_glossary_line, (
-            f"Verdict (line {verdict_line + 1}) should appear after "
-            f"Metrics Glossary (line {metrics_glossary_line + 1})"
-        )

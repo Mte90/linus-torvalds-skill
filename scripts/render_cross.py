@@ -11,6 +11,7 @@ Run from repository root: python3 scripts/render_cross.py
 
 import argparse
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -40,6 +41,9 @@ from torvalds_skill.provenance import (
     limitation as provenance_limitation,
 )
 from torvalds_skill.severity import GROUND_TRUTH_SEVERITIES as SEVERITY_ORDER  # noqa: E402
+
+# Noise threshold for DS comparisons (used in overview note and verdict)
+DS_NOISE_THRESHOLD = 0.03
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -374,22 +378,33 @@ def rank_by_verdict(means: dict[str, dict[str, float]]) -> list[tuple[str, float
 def collect_unmatched_findings(
     all_results: list[dict], diff_records: list[dict]
 ) -> tuple[list[dict], dict[tuple[str, str], int]]:
-    """Collect findings that match NO ground-truth bug."""
-    diff_lookup = {d["id"]: d for d in diff_records}
+    """Collect findings that match NO ground-truth bug.
+
+    Matches findings against diff_records directly (same logic as compute_cell_metrics),
+    NOT via diff_id lookup. This ensures the unmatched count equals the pairing table's
+    unmatched value. Baseline records (skill=="none") are excluded so the list lines
+    up 1:1 with the "Bugs Found per Pairing" table.
+    """
     unmatched = []
     counts: dict[tuple[str, str], int] = defaultdict(int)
 
     for result in all_results:
-        diff_id = result.get("diff_id", "unknown")
+        # Skip baseline records to match the pairing table
+        if is_baseline_record(result):
+            continue
+
         model = result.get("model", "unknown")
         skill = result.get("skill", model)
         findings = result.get("findings", [])
 
-        diff_record = diff_lookup.get(diff_id, {})
-        bugs = diff_record.get("bugs", [])
-
         for finding in findings:
-            matched = match_finding_to_bug(finding, bugs, diff_record.get("file", ""))
+            # Match against all diff_records (same logic as compute_cell_metrics)
+            matched = None
+            for diff_record in diff_records:
+                matched = match_finding_to_diff_bug(finding, diff_record)
+                if matched is not None:
+                    break
+
             if matched is None:
                 file_path = finding.get("file", "unknown")
                 line = finding.get("line")
@@ -399,7 +414,7 @@ def collect_unmatched_findings(
                     continue
                 unmatched.append(
                     {
-                        "diff_id": diff_id,
+                        "diff_id": result.get("diff_id", "unknown"),
                         "model": model,
                         "skill": skill,
                         "file": file_path,
@@ -508,39 +523,31 @@ def render_markdown(
     """
     lines: list[str] = []
 
-    # Header
+    # Dataset composition counts (also used by the glossary)
+    buggy_count = sum(1 for r in diff_records if r.get("expected") == "findings")
+    clean_count = sum(1 for r in diff_records if r.get("expected") == "no-findings")
+    refuse_count = sum(1 for r in diff_records if r.get("expected") == "refuse-to-conclude")
+
+    # Header: each fact stated exactly once
     lines.append("# Cross-Model Evaluation Matrix\n")
     if codebase_mode:
         lines.append(
-            "Codebase data from `data/eval_results_codebase.jsonl` (full SmallChat review, 43 ground-truth bugs).\n"
+            f"Source: full SmallChat review ([data/eval_results_codebase.jsonl](data/eval_results_codebase.jsonl)) scored against "
+            f"{len(diff_records)} ground-truth bugs from [benchmark.jsonl](data/benchmark.jsonl).\n"
         )
     else:
         lines.append(
             "Diagonal data from `data/eval_results.jsonl`, cross-data from `data/eval_results_cross.jsonl`.\n"
         )
-    lines.append(
-        "*Judge model: GLM5.2 (fixed external judge, scored via `--judge-model` at generation time).\n"
-    )
-
-    lines.append(provenance_banner(eval_provenance) + "\n")
-
-    # Dataset composition line
-    buggy_count = sum(1 for r in diff_records if r.get("expected") == "findings")
-    clean_count = sum(1 for r in diff_records if r.get("expected") == "no-findings")
-    refuse_count = sum(1 for r in diff_records if r.get("expected") == "refuse-to-conclude")
-    if codebase_mode:
-        lines.append(f"Dataset: {len(diff_records)} ground-truth bugs from `benchmark.jsonl`.\n")
-    else:
         lines.append(
             f"Dataset: {len(diff_records)} diff scenarios = {buggy_count} buggy, {clean_count} clean "
             f"(no findings expected), {refuse_count} refuse-to-conclude (correct answer is uncertainty).\n"
         )
-
-    # Judge COI note
     lines.append(
-        "> **Note:** The judge (GLM5.2) also participates in the evaluation as a reviewer: "
-        "judge scores may reflect self-preference.\n"
+        "Judge: GLM5.2, a fixed external model applied at generation time (`--judge-model`). "
+        "It also reviews here, so judge scores may carry self-preference.\n"
     )
+    lines.append(provenance_banner(eval_provenance) + "\n")
 
     # About this report
     lines.append("## About this report\n")
@@ -565,138 +572,11 @@ def render_markdown(
         "(accuracy, prioritization, justification, actionability). The judge does **not** "
         "affect the Detection Score, true positives, recall, or precision. "
         "It can be disabled with `--no-judge`.\n\n"
-        "The notation `X on Y` means reviewer = X with skill = Y. "
+        "A pairing is written `A × B`: reviewer model `A` reads the code using the skill "
+        "written by `B`. `A × A` is the native pairing. "
         "For baseline-vs-skill analysis (does the skill help or hurt each model?), see "
-        "`report/comparison.md`.\n"
+        "[report/comparison.md](report/comparison.md).\n"
     )
-
-    # Metrics Glossary (before verdict so terms are defined before use)
-    lines.append("## Metrics Glossary\n")
-    lines.append(
-        "Definitions of every metric used in this report. Read this before the matrices.\n"
-    )
-    lines.append(
-        "- **Detection Score **(DS Harmonic mean of precision and recall. "
-        "Measures how well findings balance correctness (precision) against completeness (recall). "
-        "Range 0–1; higher is better.\n"
-    )
-    lines.append(
-        "- **Precision**: Of all findings reported, the fraction that matched a ground-truth bug. "
-        "Low precision means many false positives.\n"
-    )
-    lines.append(
-        "- **Recall**: Matched findings divided by the number of buggy "
-        + ("ground-truth bugs " if codebase_mode else "diff scenarios ")
-        + f"({buggy_count} ground-truth bugs). Low recall means missed bugs.\n"
-    )
-    lines.append(
-        "- **Refusal Rate **(R Fraction of "
-        + ("reviews " if codebase_mode else "diffs ")
-        + "where the model refused to review. "
-        "In this dataset R=0 for all pairings, so it is omitted from the tables.\n"
-    )
-    lines.append(
-        "- **Judge Score **(J Mean of four sub-scores (accuracy, prioritization, justification, "
-        "actionability) on a 0–2 scale. Reflects review quality as scored by the judge model. "
-        "**Note**: The judge (GLM5.2) also participates in the evaluation as a reviewer: "
-        "judge scores may reflect self-preference.\n"
-    )
-    lines.append(
-        "- **Native**: Diagonal pairing where the model reviews "
-        + ("the codebase " if codebase_mode else "a diff ")
-        + "using its own skill (model == skill).\n"
-    )
-    lines.append(
-        "- **Exclusive**: Bugs found by this model/skill and no other model/skill. "
-        "A high exclusive count means the pairing contributes unique value.\n"
-    )
-    lines.append(
-        "- **Match **(TP A finding that matches a ground-truth bug within the ±5 line tolerance.\n"
-    )
-    if codebase_mode:
-        lines.append(
-            "- **Unlocatable finding**: A finding that cites no line number. It cannot be matched "
-            "against a ground-truth bug and therefore counts as a false positive. The reviewer sees "
-            "the source with absolute line numbers in the left margin, so an absent line means the "
-            "claim was not anchored to the code.\n"
-        )
-    lines.append(
-        "- **Duplicate**: A finding that matches a ground-truth bug already matched by an earlier "
-        "finding in the same cell.\n"
-    )
-    if not codebase_mode:
-        lines.append(
-            "- **On non-buggy**: A finding on a clean or refusal scenario. Ground truth says there "
-            "is no bug, so such a finding cannot match anything and lands in Unmatched.\n"
-        )
-    lines.append(
-        "- **Non-TP findings**: Total distinct findings minus true positives (= Duplicates + Unmatched).\n"
-        "- **Duplicates**: A second finding matching a ground-truth bug already claimed by an "
-        "earlier finding in the same cell. Harmless for Detection Score (deduplicated) but it "
-        "signals verbosity, not extra detection.\n"
-    )
-    if has_baseline:
-        lines.append(
-            '- **No skill **(baseline): Model ran without any skill attached (skill=="none"). '
-            "Used as a reference to measure whether adding a skill helps or hurts. "
-            "Baseline participates only in model-level comparisons; excluded from skill rankings.\n"
-        )
-
-    # Composite verdict terms (used in Verdict but not defined in primitive glossary)
-    lines.append(
-        "- **Pairing**: A (reviewer model, skill) combination. Written as `X on Y` = "
-        '"reviewer X with skill Y". The matrix has one cell per pairing.\n'
-    )
-    lines.append(
-        "- **Best pairing**: The pairing (cell) with the most true-positive bug matches "
-        "(highest TP count), not the highest Detection Score. Reported as "
-        '"model reviewing with skill found N bugs".\n'
-    )
-    lines.append(
-        "- **Best Detection Score**: The pairing with the highest DS. DS combines precision "
-        "and recall, so this may differ from the Best pairing (which is raw TP count).\n"
-    )
-    lines.append(
-        "- **Best Judge Score**: The pairing where the judge gave the highest quality score "
-        "(J, 0–2 scale). The judge is optional (`--no-judge`) and does NOT affect DS — "
-        'see "Judge Score" above.\n'
-    )
-    lines.append(
-        "- **Best critical-bug pairing**: The pairing that found the most `reject`-severity "
-        '(highest-severity) bugs. Ties are reported as "(tie)".\n'
-    )
-    lines.append(
-        "- **`reject`-severity**: The top severity tier in this evaluation (equivalent to "
-        '"blocker" — a bug serious enough to reject a patch). Below it: `request-changes`, '
-        'then `nitpick`. Used in the "Best critical-bug pairing" verdict line.\n'
-    )
-    lines.append(
-        "- **Best reviewer model**: The model with the highest mean Detection Score across "
-        "all skills (row mean). Measures which model detects bugs best regardless of skill.\n"
-    )
-    lines.append(
-        "- **Best skill**: The skill with the highest mean Detection Score across all models "
-        "(column mean). Measures which skill produces the best precision/recall tradeoff.\n"
-    )
-    lines.append(
-        "- **Consensus**: How many of the 4 models found a given ground-truth bug. "
-        '"Full consensus (4/4)" = all models found it; "Sole discovery (1/4)" = only one '
-        "model found it. The verdict reports the counts at each level.\n"
-    )
-    lines.append(
-        "- **Native pairing advantage**: For each model, the difference between its "
-        "native-skill DS (model == skill, the diagonal) and its mean cross-skill DS. "
-        "Positive = native skill helps that model; negative = a cross-skill helps more. "
-        'The verdict reports per-model: "cross helps" (negative) or "native helps" '
-        "(positive). This measures native-skill vs cross-skill, NOT skill-on vs skill-off — "
-        "for that comparison see `report/comparison.md`.\n"
-    )
-    lines.append(
-        "- **Best skill per model**: For each model, the skill (native or cross) that "
-        "produces the highest DS. The verdict counts how many models do best with their "
-        "native skill vs a cross-skill.\n"
-    )
-    lines.append("\n")
 
     # Plain-language verdict (computed up-front from the whole matrix)
     total_bugs_ground_truth = buggy_count  # Plan B: buggy diffs only
@@ -744,6 +624,7 @@ def render_markdown(
     for m, bugs in model_bug_counts.items():
         others = set().union(*(b for m2, b in model_bug_counts.items() if m2 != m))
         model_exclusive[m] = bugs - others
+
     skill_exclusive: dict[str, set[str]] = {}
     for s, bugs in skill_bug_counts.items():
         others = set().union(*(b for s2, b in skill_bug_counts.items() if s2 != s))
@@ -777,8 +658,9 @@ def render_markdown(
     sole_count = sum(1 for models in bug_finders_verdict.values() if len(models) == 1)
     missed_count = total_bugs_ground_truth - len(bug_finders_verdict)
 
-    # Native pairing advantage summary for verdict
-    skill_impact_lines: list[str] = []
+    # Native pairing advantage summary for verdict. Structured, so the verdict can
+    # summarise the pattern once instead of repeating one line per model.
+    skill_impact_data: list[tuple[str, float | None, float | None]] = []
     for model in all_models:
         native = cell_data.get((model, model))
         native_ds = native.get("ds", 0.0) if native and native.get("total_results", 0) > 0 else None
@@ -791,17 +673,8 @@ def render_markdown(
                 cross_dss.append(cell.get("ds", 0.0))
         cross_mean = sum(cross_dss) / len(cross_dss) if cross_dss else None
         if native_ds is None and cross_mean is None:
-            skill_impact_lines.append(f"{model}: no data")
             continue
-        n_val = native_ds if native_ds is not None else 0.0
-        c_val = cross_mean if cross_mean is not None else 0.0
-        delta = n_val - c_val
-        if abs(delta) < 0.01:
-            skill_impact_lines.append(f"{model}: no difference")
-        elif delta > 0:
-            skill_impact_lines.append(f"{model}: native helps")
-        else:
-            skill_impact_lines.append(f"{model}: cross helps")
+        skill_impact_data.append((model, native_ds, cross_mean))
 
     if best_pair:
         # Tie-aware: collect all models/skills tied at max bug count
@@ -823,54 +696,113 @@ def render_markdown(
             elif len(bugs) == best_skill_bugs:
                 best_skills_list.append(skill)
 
-        lines.append("## Verdict\n")
-        lines.append(
-            f"**Best pairing**: `{best_pair[0]}` reviewing with `{best_pair[1]}` skill found "
-            f"**{best_pair[2]} bugs** across {total_bugs_ground_truth} "
-            + ("ground-truth bugs.\n" if codebase_mode else "diff scenarios.\n")
+        def cell_stats(model: str, skill: str) -> tuple[int, int, int, int, float, float]:
+            """Return (bugs found, findings, duplicates, false alarms, DS, judge) for one cell."""
+            metrics = cell_data.get((model, skill), {})
+            return (
+                metrics.get("matches_a_bug", 0),
+                metrics.get("total_findings", 0),
+                metrics.get("duplicate_findings", 0),
+                metrics.get("unmatched", 0),
+                metrics.get("ds", 0.0),
+                metrics.get("judge_mean", 0.0),
+            )
+
+        def times(count: int, singular: str, plural_form: str | None = None) -> str:
+            return singular if count == 1 else (plural_form or singular + "s")
+
+        def findings_breakdown(bugs: int, reported: int, dups: int, wrong: int) -> str:
+            """Spell out what a cell's findings turned into, so no glossary lookup is needed."""
+            parts = [f"{bugs} matched a real bug"]
+            if dups:
+                parts.append(f"{dups} {times(dups, 'was', 'were')} a duplicate")
+            if wrong:
+                parts.append(f"{wrong} matched nothing")
+            return f"{reported} findings: " + ", ".join(parts)
+
+        verdict: list[str] = ["## Verdict", ""]
+        verdict.append(
+            "A **pairing** is one reviewer model plus one skill, written `A × B`: reviewer `A` "
+            "reads the code using the skill written by `B`. `A × A` is the **native** pairing, "
+            "where a model uses its own skill."
+        )
+        best_tp, best_reported, best_dups, best_fp, _, _ = cell_stats(best_pair[0], best_pair[1])
+
+        verdict += ["", "**Most bugs found**", ""]
+        verdict.append(
+            f"- `{best_pair[0]}` × `{best_pair[1]}` — **{best_tp} of "
+            f"{total_bugs_ground_truth}** real bugs. {findings_breakdown(best_tp, best_reported, best_dups, best_fp).capitalize()}."
         )
 
-        # Best Detection Score (tie-aware)
+        verdict += ["", "**Cleanest review (Detection Score)**", ""]
+        verdict.append(
+            "Detection Score weighs bugs found against findings that were not bugs, so a "
+            "review that buries real bugs in noise scores lower than its bug count suggests."
+        )
+        verdict.append("")
         if best_ds_pair:
+            ds_tp, ds_reported, ds_dups, ds_fp, ds_val, _ = cell_stats(
+                best_ds_pair[0], best_ds_pair[1]
+            )
             native = " *(native)*" if best_ds_pair[0] == best_ds_pair[1] else ""
-            lines.append(
-                f"**Best Detection Score**: `{best_ds_pair[0]}` on `{best_ds_pair[1]}`{native} "
-                f"(DS={best_ds_pair[2]:.2f}).\n"
+            verdict.append(
+                f"- Highest: `{best_ds_pair[0]}` × `{best_ds_pair[1]}`{native} — "
+                f"{ds_val:.2f}, from {findings_breakdown(ds_tp, ds_reported, ds_dups, ds_fp)}."
             )
+            if best_ds_pair[:2] != best_pair[:2]:
+                penalty = (
+                    "those extra findings are mostly not bugs"
+                    if best_fp * 2 > best_reported
+                    else "it pays for the extra bugs with more wrong findings"
+                )
+                verdict.append(
+                    f"- The bug-count leader lands lower ({findings_breakdown(best_tp, best_reported, best_dups, best_fp)}) "
+                    f"because {penalty}."
+                )
 
-        # Best Judge Score (tie-aware)
+        verdict += ["", "**Best-written review (judge score)**", ""]
+        verdict.append(
+            "A separate judge model (GLM5.2) rates the write-up for clarity, prioritisation, "
+            "justification and actionability. It never checks whether a finding is a real bug, "
+            "so a well-argued review of nothing scores well."
+        )
+        verdict.append("")
         if best_judge_pair:
+            judge_tp, _, _, _, _, judge_val = cell_stats(best_judge_pair[0], best_judge_pair[1])
             native = " *(native)*" if best_judge_pair[0] == best_judge_pair[1] else ""
-            lines.append(
-                f"**Best Judge Score**: `{best_judge_pair[0]}` on `{best_judge_pair[1]}`{native} "
-                f"(J={best_judge_pair[2]:.1f}/2).\n"
+            verdict.append(
+                f"- Highest: `{best_judge_pair[0]}` × `{best_judge_pair[1]}`{native} — "
+                f"{judge_val:.1f}/2, while finding {judge_tp} of "
+                f"{total_bugs_ground_truth} real bugs."
             )
 
-        # Best critical-bug pairing (tie-aware)
         pair_crit: dict[tuple[str, str], int] = {}
         for (model, skill), metrics in cell_data.items():
             if metrics.get("total_results", 0) == 0:
                 continue
-            sc = metrics.get("severity_counts", {})
-            pair_crit[(model, skill)] = sc.get("reject", 0)
-        if pair_crit:
-            best_crit_val = max(pair_crit.values())
-            best_crit_pairs = [p for p, v in pair_crit.items() if v == best_crit_val]
-            if best_crit_val > 0:
-                if len(best_crit_pairs) == 1:
-                    native = " *(native)*" if best_crit_pairs[0][0] == best_crit_pairs[0][1] else ""
-                    lines.append(
-                        f"**Best critical-bug pairing**: `{best_crit_pairs[0][0]}` on `{best_crit_pairs[0][1]}`{native} "
-                        f"found **{best_crit_val}** `reject`-severity bugs.\n"
-                    )
-                else:
-                    pair_strs = [f"`{m}` on `{s}`" for m, s in best_crit_pairs]
-                    lines.append(
-                        f"**Best critical-bug pairing** (tie): {', '.join(pair_strs)} "
-                        f"found **{best_crit_val}** `reject`-severity bugs.\n"
-                    )
+            pair_crit[(model, skill)] = metrics.get("severity_counts", {}).get("reject", 0)
+        best_crit_val = max(pair_crit.values()) if pair_crit else 0
+        best_crit_pairs = [p for p, v in pair_crit.items() if v == best_crit_val]
+        if best_crit_val > 0:
+            verdict += ["", "**Most serious bugs**", ""]
+            verdict.append(
+                "Serious bugs are the ones marked `reject`-severity: a reviewer would block a "
+                "merge over them."
+            )
+            verdict.append("")
+            by_model: dict[str, list[str]] = defaultdict(list)
+            for model, skill in best_crit_pairs:
+                by_model[model].append(skill)
+            groups = "; ".join(
+                f"`{m}` × {{{', '.join(f'`{s}`' for s in skills)}}}"
+                for m, skills in by_model.items()
+            )
+            verdict.append(
+                f"- Tied at **{best_crit_val}** {times(best_crit_val, 'bug')} across "
+                f"{len(best_crit_pairs)} {times(len(best_crit_pairs), 'pairing')} — {groups}."
+            )
 
-        # Best reviewer model (tie-aware)
+        verdict += ["", "**Across the whole matrix**", ""]
         if best_models_list:
             model_str = ", ".join(f"`{m}`" for m in best_models_list)
             coverage_pct = (
@@ -878,12 +810,11 @@ def render_markdown(
                 if total_bugs_ground_truth > 0
                 else 0
             )
-            lines.append(
-                f"**Best reviewer model**: {model_str} found **{best_model_bugs}** bugs "
-                f"({coverage_pct:.0f}% coverage) across all skills.\n"
+            verdict.append(
+                f"- Best reviewer, counting every bug it found with any of its skills: "
+                f"{model_str} — **{best_model_bugs} of {total_bugs_ground_truth}** "
+                f"({coverage_pct:.0f}%). This rewards breadth, so a noisy reviewer can win here."
             )
-
-        # Best skill (tie-aware)
         if best_skills_list:
             skill_str = ", ".join(f"`{s}`" for s in best_skills_list)
             coverage_pct = (
@@ -891,51 +822,82 @@ def render_markdown(
                 if total_bugs_ground_truth > 0
                 else 0
             )
-            lines.append(
-                f"**Best skill**: {skill_str} found **{best_skill_bugs}** bugs "
-                f"({coverage_pct:.0f}% coverage) across all models.\n"
+            verdict.append(
+                f"- Best skill, counting every bug any reviewer found while using it: "
+                f"{skill_str} — **{best_skill_bugs} of {total_bugs_ground_truth}** "
+                f"({coverage_pct:.0f}%)."
             )
-        lines.append(
-            f"**Consensus**: {full_consensus_count} bug(s) found by every model "
-            f"(across all skill pairings), {sole_count} by only one model, "
-            f"{missed_count} missed by all. This measures inter-model agreement, "
-            f"not skill-on vs skill-off.\n"
+        verdict.append(
+            f"- Consensus over {num_models} models: {full_consensus_count} "
+            f"{times(full_consensus_count, 'bug')} found by all of them (easy to spot), "
+            f"{sole_count} by exactly one (contestable), {missed_count} by none."
         )
-        impact_str = "; ".join(skill_impact_lines)
-        lines.append(f"**Native pairing advantage**: {impact_str}.\n")
-        # Best skill per model recommendation
+
+        verdict += ["", "**Native skill or a borrowed one**", ""]
+        verdict.append(
+            "Delta = the model's own skill minus the average of its three borrowed skills. "
+            "Negative means borrowing another model's skill scored better."
+        )
+        verdict.append("")
+        comparable = [(m, n, c) for m, n, c in skill_impact_data if n is not None and c is not None]
+        cross_better = [t for t in comparable if t[1] - t[2] < -0.01]
+        native_better = [t for t in comparable if t[1] - t[2] > 0.01]
+        if comparable and len(cross_better) == len(comparable) and not native_better:
+            widest = max(cross_better, key=lambda t: t[2] - t[1])
+            verdict.append(
+                f"- Borrowed skills beat the native one for all {len(comparable)} models. "
+                f"Widest gap: `{widest[0]}` — own skill {widest[1]:.2f} vs borrowed "
+                f"{widest[2]:.2f}."
+            )
+        elif comparable and len(native_better) == len(comparable) and not cross_better:
+            verdict.append(
+                f"- The model's own skill beats every borrowed one, for all "
+                f"{len(comparable)} models."
+            )
+        elif comparable:
+            verdict.append(
+                f"- Own skill wins for {len(native_better)} of {len(comparable)} models, "
+                f"a borrowed skill for {len(cross_better)}."
+            )
+
         native_best = sum(
             1
             for model, skill_list in best_skill_per_model.items()
             if any(s == model for s, _ in skill_list)
         )
         cross_best = len(best_skill_per_model) - native_best
-        lines.append(
-            f"**Best skill per model**: {native_best} model(s) perform best with their native skill, "
-            f"{cross_best} with a cross-skill. "
-            "See the *Best Skill per Model* table below for specifics.\n"
+        verdict.append(
+            f"- Best skill per model: {native_best} of {len(best_skill_per_model)} "
+            f"{times(len(best_skill_per_model), 'model')} do best with their own skill, "
+            f"{cross_best} with a borrowed one."
         )
-        lines.append(
-            "See `report/comparison.md` for the baseline-vs-skill analysis "
-            "(whether adding any skill helps or hurts each model). "
-            "Note: "
-            + (
-                "both reports use the same codebase.\n"
-                if codebase_mode
-                else "the two reports use different datasets (real codebase vs synthetic diffs) "
-                "and this cross eval is pre-decontamination.\n"
-            )
+
+        granularity = (
+            f"{total_bugs_ground_truth} bugs is a small sample: one extra bug moves Detection "
+            f"Score by about {1 / total_bugs_ground_truth:.2f}, so gaps under ~0.05 are ties."
+            if total_bugs_ground_truth > 0
+            else "Ground-truth bug list is empty, so every score here is zero."
         )
-        lines.append("\n")
+        same_data = (
+            "Both reports use the same codebase."
+            if codebase_mode
+            else "The two reports use different datasets, so do not compare numbers across them."
+        )
+        verdict += ["", f"**How much to trust this:** {granularity}"]
+        verdict += [
+            "",
+            f"Baseline-vs-skill (does a skill help or hurt a model at all?) is in "
+            f"[report/comparison.md](report/comparison.md). {same_data}",
+        ]
+        lines.append("\n".join(verdict) + "\n")
 
     # Overview Matrix
     lines.append("\n---\n")
     lines.append("## Overview Matrix\n")
     lines.append(
-        "Rows = skill applied to the reviewer; columns = reviewer model. Each cell shows "
-        "Detection Score (DS) and mean Judge score (J, 0–2 scale). `*(native)*` marks "
-        "diagonal pairings (model == skill). The highest DS in the matrix is shown in "
-        "**bold** with a ★.\n"
+        "Rows = skill applied to the reviewer; columns = reviewer model. Each cell shows Detection "
+        "Score (DS). `*(native)*` marks diagonal pairings (model == skill). The highest DS in the "
+        "matrix is shown in **bold** with a ★.\n"
     )
     max_reps = max((cell.get("reps", 1) for cell in cell_data.values()), default=1)
     run_note = (
@@ -946,12 +908,12 @@ def render_markdown(
     if codebase_mode:
         lines.append(
             f"**Note**: n={buggy_count} ground-truth bugs, {run_note}; intra-skill Detection Score "
-            "differences of ~0.03 are not significant.\n"
+            f"differences of ~{DS_NOISE_THRESHOLD} are not significant.\n"
         )
     else:
         lines.append(
             f"**Note**: n=45 scenarios (25 buggy), {run_note}; intra-skill Detection Score "
-            "differences of ~0.03 are not significant.\n"
+            f"differences of ~{DS_NOISE_THRESHOLD} are not significant.\n"
         )
 
     # Best DS across all cells — highlighted with ★ in the Overview Matrix
@@ -978,10 +940,9 @@ def render_markdown(
             if metrics and metrics["total_results"] > 0:
                 ds = metrics.get("ds", 0.0)
                 ds_str = f"DS={ds:.2f}"
-                j_str = f"J={metrics.get('judge_mean', 0):.1f}/2"
                 native_marker = " *(native)*" if model == skill else ""
                 is_best = best_ds_value >= 0 and abs(ds - best_ds_value) < 1e-9
-                cell_text = f"{ds_str} {j_str}{native_marker}"
+                cell_text = f"{ds_str}{native_marker}"
                 if is_best:
                     cell_text = f"**{cell_text} ★**"
                 row += f" {cell_text} |"
@@ -996,13 +957,74 @@ def render_markdown(
             metrics = baseline_cell_data.get(model)
             if metrics and metrics["total_results"] > 0:
                 ds_str = f"DS={metrics.get('ds', 0):.2f}"
-                j_str = f"J={metrics.get('judge_mean', 0):.1f}/2"
-                row += f" {ds_str} {j_str} |"
+                row += f" {ds_str} |"
             else:
                 row += " — |"
         lines.append(row)
 
     lines.append("\n")
+
+    # Judge Score Matrix (separate table below Overview)
+    lines.append("### Judge Score Matrix (J, 0-2 scale)\n")
+    lines.append(
+        "Rows = skill applied, columns = reviewer model. Judge scores only (J, 0–2 scale). "
+        "The highest J in the matrix is shown in **bold** with a ★. "
+        "Note: J does not affect DS.\n"
+    )
+
+    # Best J across all cells
+    best_j_value = -1.0
+    for (_model, _skill), metrics in cell_data.items():
+        if metrics.get("total_results", 0) == 0:
+            continue
+        j = metrics.get("judge_mean", 0.0)
+        if j > best_j_value:
+            best_j_value = j
+
+    header = "| Skill \\\\ Model |"
+    for model in all_models:
+        header += f" {model} |"
+    lines.append(header)
+
+    separator = "|" + "---|" * (len(all_models) + 1)
+    lines.append(separator)
+
+    for skill in all_models:
+        row = f"| **{skill}** |"
+        for model in all_models:
+            metrics = cell_data.get((model, skill))
+            if metrics and metrics["total_results"] > 0:
+                j = metrics.get("judge_mean", 0.0)
+                j_str = f"J={j:.1f}/2"
+                native_marker = " *(native)*" if model == skill else ""
+                is_best = best_j_value >= 0 and abs(j - best_j_value) < 1e-9
+                cell_text = f"{j_str}{native_marker}"
+                if is_best:
+                    cell_text = f"**{cell_text} ★**"
+                row += f" {cell_text} |"
+            else:
+                row += " — |"
+        lines.append(row)
+
+    # Baseline row (No skill) for Judge Score Matrix
+    if has_baseline and baseline_cell_data:
+        row = "| **No skill (baseline)** |"
+        for model in all_models:
+            metrics = baseline_cell_data.get(model)
+            if metrics and metrics["total_results"] > 0:
+                j_str = f"J={metrics.get('judge_mean', 0):.1f}/2"
+                row += f" {j_str} |"
+            else:
+                row += " — |"
+        lines.append(row)
+
+    lines.append("\n")
+
+    # Footnote for Overview Matrix
+    lines.append(
+        "*DS = Detection Score (precision-weighted recall). J = Judge Score (0–3 quality rating by GLM5.2). "
+        "Cells use `reviewer × skill` notation. Bold ★ marks the best Detection Score.*\n"
+    )
 
     if codebase_mode and unmatched:
         unlocated = sum(1 for finding in unmatched if finding.get("line") is None)
@@ -1136,10 +1158,10 @@ def render_markdown(
             model, skill = best_ds_pairs[0]
             native = " *(native)*" if model == skill else ""
             lines.append(
-                f"- **Best Detection Score**: {model} on {skill}{native} (DS={best_ds_val:.2f})\n"
+                f"- **Best Detection Score**: {model} × {skill}{native} (DS={best_ds_val:.2f})\n"
             )
         else:
-            pair_strs = [f"{m} on {s}" for m, s in best_ds_pairs]
+            pair_strs = [f"{m} × {s}" for m, s in best_ds_pairs]
             lines.append(
                 f"- **Best Detection Score** (tie): {', '.join(pair_strs)} (DS={best_ds_val:.2f})\n"
             )
@@ -1148,10 +1170,10 @@ def render_markdown(
             model, skill = best_judge_pairs[0]
             native = " *(native)*" if model == skill else ""
             lines.append(
-                f"- **Best Judge Score**: {model} on {skill}{native} (J={best_judge_val:.1f}/2)\n"
+                f"- **Best Judge Score**: {model} × {skill}{native} (J={best_judge_val:.1f}/2)\n"
             )
         else:
-            pair_strs = [f"{m} on {s}" for m, s in best_judge_pairs]
+            pair_strs = [f"{m} × {s}" for m, s in best_judge_pairs]
             lines.append(
                 f"- **Best Judge Score** (tie): {', '.join(pair_strs)} (J={best_judge_val:.1f}/2)\n"
             )
@@ -1221,29 +1243,28 @@ def render_markdown(
         total_f = metrics_total(cell_data, (model, skill))
         lines.append(f"| {model} | {skill}{native} | {tp} | {dup} | {cell_unmatched} | {total_f} |")
 
-    lines.append("\n### Bugs Found per Model (union across all skills)\n")
-    lines.append("| Model | Total Found | Coverage | Exclusive |")
-    lines.append("|-------|-------------|----------|-----------|")
+    lines.append("\n### Bugs Found per Model and per Skill\n")
+    lines.append("| Group | Name | Total Found | Coverage | Exclusive |")
+    lines.append("|-------|------|-------------|----------|-----------|")
     model_hits: dict[str, set[str]] = defaultdict(set)
     for (model, _skill), metrics in cell_data.items():
         if metrics.get("total_results", 0) > 0:
             model_hits[model].update(metrics.get("hits", []))
+    # Model rows first (sorted by Total Found desc)
     for model, hits_set in sorted(model_hits.items(), key=lambda x: -len(x[1])):
         pct = len(hits_set) / total_bugs * 100 if total_bugs > 0 else 0
         excl = len(model_exclusive.get(model, set()))
-        lines.append(f"| {model} | {len(hits_set)} | {pct:.0f}% | {excl} |")
+        lines.append(f"| Model | {model} | {len(hits_set)} | {pct:.0f}% | {excl} |")
 
-    lines.append("\n### Bugs Found per Skill (union across all models)\n")
-    lines.append("| Skill | Total Found | Coverage | Exclusive |")
-    lines.append("|-------|-------------|----------|-----------|")
     skill_hits: dict[str, set[str]] = defaultdict(set)
     for (_model, skill), metrics in cell_data.items():
         if metrics.get("total_results", 0) > 0:
             skill_hits[skill].update(metrics.get("hits", []))
+    # Skill rows second (sorted by Total Found desc)
     for skill, hits_set in sorted(skill_hits.items(), key=lambda x: -len(x[1])):
         pct = len(hits_set) / total_bugs * 100 if total_bugs > 0 else 0
         excl = len(skill_exclusive.get(skill, set()))
-        lines.append(f"| {skill} | {len(hits_set)} | {pct:.0f}% | {excl} |")
+        lines.append(f"| Skill | {skill} | {len(hits_set)} | {pct:.0f}% | {excl} |")
 
     lines.append("\n### Bugs Found by Only One Model\n")
     bug_finders: dict[str, list[str]] = {}
@@ -1261,17 +1282,17 @@ def render_markdown(
             "No bugs found by only one model — every discovered bug was found by at least two models.\n"
         )
 
-    # Severity Ranking
-    lines.append("\n### Bugs Found by Severity (union across all pairings)\n")
+    # Severity Ranking - distinct bugs from diff_records (ground truth)
+    lines.append("\n### Bugs Found by Severity (distinct from ground truth)\n")
+    # Compute distinct bugs from diff_records, not sum across cells
     severity_totals: dict[str, int] = defaultdict(int)
-    for metrics in cell_data.values():
-        if metrics.get("total_results", 0) == 0:
-            continue
-        for sev, count in metrics.get("severity_counts", {}).items():
-            severity_totals[sev] += count
+    for diff_record in diff_records:
+        for bug in diff_record.get("bugs", []):
+            sev = bug.get("severity", "unknown")
+            severity_totals[sev] += 1
     if severity_totals:
-        lines.append("| Severity | Total Bugs Found |")
-        lines.append("|----------|------------------|")
+        lines.append("| Severity | Ground Truth |")
+        lines.append("|----------|--------------|")
         ordered_sev = sorted(
             severity_totals.items(),
             key=lambda x: (
@@ -1284,9 +1305,11 @@ def render_markdown(
     else:
         lines.append("No severity data available.\n")
 
-    lines.append("\n### Severity Breakdown per Model\n")
-    lines.append("| Model |" + "|".join(SEVERITY_ORDER) + "| Total |")
-    lines.append("|-------|" + "|".join(["------"] * len(SEVERITY_ORDER)) + "|-------|")
+    lines.append("\n### Severity Breakdown per Model and per Skill\n")
+    lines.append("| Group | Name | " + " | ".join(SEVERITY_ORDER) + " | Total |")
+    lines.append(
+        "|-------|------|" + "|".join(["-------"] * (len(SEVERITY_ORDER) + 1)) + "|-------|"
+    )
     model_severity: dict[str, dict[str, int]] = {
         m: {s: 0 for s in SEVERITY_ORDER} for m in model_hits
     }
@@ -1296,6 +1319,7 @@ def render_markdown(
         for sev, count in metrics.get("severity_counts", {}).items():
             if sev in model_severity.get(model, {}):
                 model_severity[model][sev] += count
+    # Model rows first
     for model in sorted(model_hits.keys()):
         row = f"| {model} |"
         total = 0
@@ -1306,9 +1330,11 @@ def render_markdown(
         row += f" {total} |"
         lines.append(row)
 
-    lines.append("\n### Severity Breakdown per Skill\n")
-    lines.append("| Skill |" + "|".join(SEVERITY_ORDER) + "| Total |")
-    lines.append("|-------|" + "|".join(["------"] * len(SEVERITY_ORDER)) + "|-------|")
+    # Skill rows second
+    lines.append("| Group | Name | " + " | ".join(SEVERITY_ORDER) + " | Total |")
+    lines.append(
+        "|-------|------|" + "|".join(["-------"] * (len(SEVERITY_ORDER) + 1)) + "|-------|"
+    )
     skill_severity: dict[str, dict[str, int]] = {
         s: {sev: 0 for sev in SEVERITY_ORDER} for s in skill_hits
     }
@@ -1354,26 +1380,29 @@ def render_markdown(
     else:
         lines.append("No per-pairing severity data available.\n")
 
-    # Category Ranking
-    lines.append("\n### Bugs Found by Category (union across all pairings)\n")
+    # Category Ranking - distinct bugs from diff_records (ground truth)
+    lines.append("\n### Bugs Found by Category (distinct from ground truth)\n")
+    # Compute distinct bugs from diff_records, not sum across cells
     category_totals: dict[str, int] = defaultdict(int)
-    for metrics in cell_data.values():
-        if metrics.get("total_results", 0) == 0:
-            continue
-        for cat, count in metrics.get("category_counts", {}).items():
-            category_totals[cat] += count
+    for diff_record in diff_records:
+        for bug in diff_record.get("bugs", []):
+            cat = bug.get("category", "unknown")
+            category_totals[cat] += 1
     if category_totals:
-        lines.append("| Category | Total Bugs Found |")
-        lines.append("|----------|------------------|")
+        lines.append("| Category | Ground Truth |")
+        lines.append("|----------|--------------|")
+        # Sort descending by count, then alphabetically for ties
         for cat, count in sorted(category_totals.items(), key=lambda x: (-x[1], x[0])):
             lines.append(f"| {cat} | {count} |")
     else:
         lines.append("No category data available.\n")
 
-    lines.append("\n### Category Breakdown per Model\n")
+    lines.append("\n### Category Breakdown per Model and per Skill\n")
     all_categories = sorted(category_totals.keys())
-    lines.append("| Model |" + "|".join(all_categories) + "| Total |")
-    lines.append("|-------|" + "|".join(["------"] * len(all_categories)) + "|-------|")
+    lines.append("| Group | Name | " + " | ".join(all_categories) + " | Total |")
+    lines.append(
+        "|-------|------|" + "|".join(["-------"] * (len(all_categories) + 1)) + "|-------|"
+    )
     model_category: dict[str, dict[str, int]] = {
         m: {c: 0 for c in all_categories} for m in model_hits
     }
@@ -1383,6 +1412,7 @@ def render_markdown(
         for cat, count in metrics.get("category_counts", {}).items():
             if cat in model_category.get(model, {}):
                 model_category[model][cat] += count
+    # Model rows first
     for model in sorted(model_hits.keys()):
         row = f"| {model} |"
         total = 0
@@ -1393,9 +1423,11 @@ def render_markdown(
         row += f" {total} |"
         lines.append(row)
 
-    lines.append("\n### Category Breakdown per Skill\n")
-    lines.append("| Skill |" + "|".join(all_categories) + "| Total |")
-    lines.append("|-------|" + "|".join(["------"] * len(all_categories)) + "|-------|")
+    # Skill rows second
+    lines.append("| Group | Name | " + " | ".join(all_categories) + " | Total |")
+    lines.append(
+        "|-------|------|" + "|".join(["-------"] * (len(all_categories) + 1)) + "|-------|"
+    )
     skill_category: dict[str, dict[str, int]] = {
         s: {c: 0 for c in all_categories} for s in skill_hits
     }
@@ -1423,12 +1455,52 @@ def render_markdown(
     )
 
     if unmatched:
-        lines.append("| Diff ID | Model | Skill | File:Line | Severity | Issue |")
-        lines.append("|---------|-------|-------|-----------|----------|-------|")
-        for u in unmatched[:50]:
+        # One row per source location: the same finding shows up in many cells and
+        # sometimes with two different severities, which repeats the line needlessly.
+        severity_order = {"reject": 0, "request-changes": 1, "nitpick": 2}
+        grouped_unmatched: dict[str, dict[str, object]] = {}
+        for u in unmatched:
+            issue = (u["issue"] or "").strip()
+            if (
+                not issue
+                or issue.lower() == "no issue described"
+                or re.match(r"^no .*issues? found", issue, re.IGNORECASE)
+            ):
+                continue
             loc = f"{u['file']}:{u['line']}" if u["line"] else u["file"]
+            rank = severity_order.get(u["severity"], 99)
+            entry = grouped_unmatched.get(loc)
+            if entry is None:
+                grouped_unmatched[loc] = {
+                    "severity": u["severity"],
+                    "rank": rank,
+                    "issue": issue[:100],
+                    "count": 1,
+                }
+                continue
+            entry["count"] = int(entry["count"]) + 1
+            if rank < int(entry["rank"]):
+                entry["rank"] = rank
+                entry["severity"] = u["severity"]
+                entry["issue"] = issue[:100]
+
+        # Sort by cell count descending, then severity, then location
+        sorted_locs = sorted(
+            grouped_unmatched,
+            key=lambda loc: (
+                -int(grouped_unmatched[loc]["count"]),
+                int(grouped_unmatched[loc]["rank"]),
+                loc,
+            ),
+        )
+
+        lines.append("| File:Line | Severity | Issue | Reported by |")
+        lines.append("|-----------|----------|-------|-------------|")
+        for loc in sorted_locs:
+            entry = grouped_unmatched[loc]
             lines.append(
-                f"| {u['diff_id']} | {u['model']} | {u['skill']} | {loc} | {u['severity']} | {u['issue']} |"
+                f"| {loc} | {entry['severity']} | {entry['issue']} | "
+                f"{int(entry['count'])} cell(s) |"
             )
 
         lines.append("\n### Unmatched Count by Pairing\n")
@@ -1515,11 +1587,11 @@ def render_markdown(
                     f"| {meta.get('category', '?')} | {meta.get('description', '?')} | {finder} |"
                 )
         else:
-            finders_str = ", ".join(sorted(bug_finders.get(bug, [])))
             lines.append("| Bug ID | File | Severity | Category | Description | Found By |")
             lines.append("|--------|------|----------|----------|-------------|-----------|")
             for bug in bugs:
                 meta = bug_meta.get(bug, {})
+                finders_str = ", ".join(sorted(bug_finders.get(bug, [])))
                 lines.append(
                     f"| {bug} | {meta.get('file', '?')} | {meta.get('severity', '?')} "
                     f"| {meta.get('category', '?')} | {meta.get('description', '?')} | {finders_str} |"
@@ -1568,14 +1640,7 @@ def render_markdown(
         "For each model, compare its native skill (model == skill) against the mean of "
         "cross-skills (model != skill). Positive delta = native skill helps; "
         "negative = cross-skill helps. This measures native-skill advantage, not "
-        "skill-on vs skill-off — for that comparison see `report/comparison.md`. "
-        "Note: "
-        + (
-            "both reports use the same codebase.\n"
-            if codebase_mode
-            else "the two reports use different datasets (real codebase vs synthetic diffs) "
-            "and this cross eval is pre-decontamination.\n"
-        )
+        "skill-on vs skill-off — for that comparison see [report/comparison.md](report/comparison.md).\n"
     )
     lines.append("| Model | Native DS | Cross-Skill Mean DS | Delta | Verdict |")
     lines.append("|-------|----------|---------------------|-------|---------|")
