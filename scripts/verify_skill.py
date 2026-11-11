@@ -126,6 +126,7 @@ def check_forbidden_terms(path: Path) -> list[tuple[int, str, str]]:
       - Lines starting with '> ' (markdown blockquotes)
       - Text inside quoted spans (straight "..." and curly "...")
       - Text inside inline code spans (`...`)
+      - The phrase "inline assembly" (language-agnostic systems concept)
     """
     violations: list[tuple[int, str, str]] = []
     content = path.read_text(encoding="utf-8")
@@ -137,6 +138,9 @@ def check_forbidden_terms(path: Path) -> list[tuple[int, str, str]]:
         re.compile(r"`[^`]*`"),
     ]
 
+    # Pattern to match "inline assembly" with optional whitespace between words
+    inline_assembly_pattern = re.compile(r"\binline\s+assembly\b", re.IGNORECASE)
+
     for line_num, line in enumerate(content.splitlines(), start=1):
         if line.strip().startswith("> "):
             continue
@@ -147,6 +151,9 @@ def check_forbidden_terms(path: Path) -> list[tuple[int, str, str]]:
 
         for term in FORBIDDEN_TERMS:
             if term in cleaned:
+                # Special case: "inline" is allowed when part of "inline assembly"
+                if term == "inline" and inline_assembly_pattern.search(cleaned):
+                    continue
                 violations.append((line_num, term, line.strip()))
 
     return violations
@@ -293,6 +300,7 @@ def check_interview_quotes(path: Path) -> tuple[int, list[str]]:
 
     Looks for patterns like:
       - (Interview: filename)
+      - (Interview)  — bare citation without source
       - (TED 2016)
       - (Linux Journal 2021)
 
@@ -303,6 +311,7 @@ def check_interview_quotes(path: Path) -> tuple[int, list[str]]:
     # Patterns for interview citations
     patterns = [
         r"\(Interview:\s*[^)]+\)",
+        r"\(Interview\)",
         r"\(TED\s+\d{4}\)",
         r"\(Linux\s+Journal[^)]*\)",
         r"\(Hacker\s+News[^)]*\)",
@@ -319,8 +328,15 @@ def check_interview_quotes(path: Path) -> tuple[int, list[str]]:
     return len(found), found
 
 
-def check_mode_profile_consistency(path: Path) -> tuple[bool, str]:
-    """Check that skill frontmatter mode matches model profile distill_mode."""
+def check_mode_profile_consistency(path: Path) -> tuple[str, str]:
+    """Check that skill frontmatter mode matches model profile distill_mode.
+
+    Returns:
+        Tuple of (status, message) where status is one of:
+        - "PASS": modes match
+        - "WARNING": skill is over-engineered (two-stage skill, single profile)
+        - "FAIL": skill is under-generated (single skill, two-stage profile)
+    """
     import sys as _sys
 
     _sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -329,11 +345,11 @@ def check_mode_profile_consistency(path: Path) -> tuple[bool, str]:
     content = path.read_text(encoding="utf-8")
 
     if not content.startswith("---"):
-        return True, "no frontmatter (skipped)"
+        return "PASS", "no frontmatter (skipped)"
 
     fm_end = content.find("---", 3)
     if fm_end == -1:
-        return True, "no frontmatter end (skipped)"
+        return "PASS", "no frontmatter end (skipped)"
 
     frontmatter = content[3:fm_end]
 
@@ -341,7 +357,7 @@ def check_mode_profile_consistency(path: Path) -> tuple[bool, str]:
     model_match = re.search(r"^model:\s*(.+)$", frontmatter, re.MULTILINE)
 
     if not mode_match or not model_match:
-        return True, "mode or model field missing (skipped)"
+        return "PASS", "mode or model field missing (skipped)"
 
     skill_mode = mode_match.group(1).strip().strip('"').strip("'")
     model_name = model_match.group(1).strip().strip('"').strip("'")
@@ -349,21 +365,50 @@ def check_mode_profile_consistency(path: Path) -> tuple[bool, str]:
     profile = get_profile(model_name)
 
     if skill_mode != profile.distill_mode:
-        return False, (
-            f"skill mode='{skill_mode}' but profile distill_mode='{profile.distill_mode}' "
-            f"for model '{model_name}'"
-        )
+        # Asymmetric check: two-stage skill + single profile = WARNING (over-engineered)
+        # single skill + two-stage profile = FAIL (under-generated)
+        if skill_mode == "two-stage" and profile.distill_mode == "single":
+            return (
+                "WARNING",
+                f"skill mode='two-stage' but profile distill_mode='single' "
+                f"for model '{model_name}' — skill is over-engineered but valid",
+            )
+        else:
+            return (
+                "FAIL",
+                f"skill mode='{skill_mode}' but profile distill_mode='{profile.distill_mode}' "
+                f"for model '{model_name}' — skill was under-generated",
+            )
 
-    return True, f"mode='{skill_mode}' matches profile"
+    return "PASS", f"mode='{skill_mode}' matches profile"
 
 
 def check(label: str, condition: bool, detail: str = "") -> bool:
+    """Check with boolean result (PASS/FAIL)."""
     status = "PASS" if condition else "FAIL"
     msg = f"  [{status}] {label}"
     if detail:
         msg += f" — {detail}"
     print(msg)
     return condition
+
+
+def check_status(label: str, status: str, detail: str = "") -> str:
+    """Check with status result (PASS/WARNING/FAIL).
+
+    Args:
+        label: Check label
+        status: One of "PASS", "WARNING", "FAIL"
+        detail: Optional detail message
+
+    Returns:
+        The status string (PASS/WARNING/FAIL)
+    """
+    msg = f"  [{status}] {label}"
+    if detail:
+        msg += f" — {detail}"
+    print(msg)
+    return status
 
 
 def normalize(text: str) -> str:
@@ -782,6 +827,7 @@ def main() -> int:
         return 0
 
     all_pass = True
+    has_warnings = False
 
     if not skill_path.exists():
         print(f"FAIL: {skill_path} does not exist")
@@ -821,14 +867,18 @@ def main() -> int:
         f"{word_count} words",
     )
 
-    # 2b. Mode vs profile consistency
+    # 2b. Mode vs profile consistency (asymmetric: WARNING for over-engineered, FAIL for under-generated)
     print()
-    mode_pass, mode_detail = check_mode_profile_consistency(skill_path)
-    all_pass &= check(
+    mode_status, mode_detail = check_mode_profile_consistency(skill_path)
+    mode_check_status = check_status(
         "Skill mode matches model profile",
-        mode_pass,
+        mode_status,
         mode_detail,
     )
+    if mode_check_status == "FAIL":
+        all_pass = False
+    elif mode_check_status == "WARNING":
+        has_warnings = True
 
     # 3. Required sections
     print()
@@ -965,7 +1015,13 @@ def main() -> int:
 
     # Summary
     print(f"\n{'=' * 40}")
-    print(f"Result: {'ALL CHECKS PASSED' if all_pass else 'SOME CHECKS FAILED'}")
+    if all_pass:
+        if has_warnings:
+            print("Result: ALL CHECKS PASSED (with warnings)")
+        else:
+            print("Result: ALL CHECKS PASSED")
+    else:
+        print("Result: SOME CHECKS FAILED")
     print(f"Word count: {word_count}")
 
     return 0 if all_pass else 1

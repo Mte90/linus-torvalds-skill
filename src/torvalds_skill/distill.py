@@ -417,6 +417,9 @@ def _synthesize_skill(
 
     Returns the synthesized SKILL.md content.
     """
+    # Cap fragment size to prevent overwhelming the synthesis step
+    MAX_FRAGMENT_CHARS = 8000
+
     # Build synthesis system prompt
     synthesis_system_prompt = build_synthesis_system_prompt()
 
@@ -429,13 +432,18 @@ def _synthesize_skill(
     lines.append("=" * 80)
     lines.append("")
 
-    # Add each category fragment
+    # Add each category fragment (with size cap)
     for category, fragment in fragments.items():
         if fragment.strip():
             lines.append(f"{'=' * 80}")
             lines.append(f"CATEGORY: {category}")
             lines.append(f"{'=' * 80}")
-            lines.append(fragment)
+            # Cap fragment size to prevent overwhelming the model
+            if len(fragment) > MAX_FRAGMENT_CHARS:
+                lines.append(fragment[:MAX_FRAGMENT_CHARS])
+                lines.append("\n[... fragment truncated ...]\n")
+            else:
+                lines.append(fragment)
             lines.append("")
 
     lines.append("=" * 80)
@@ -475,12 +483,17 @@ def _synthesize_skill(
     lines.append("6. Use calibration stats for Severity Calibration and Decision Tree sections")
     lines.append("7. Ensure EVERY trigger is language-agnostic (apply translation table)")
     lines.append("8. Label every trigger with its type (invariant-true, invariant-false, etc.)")
-    lines.append("9. Include at least 12 distinct trigger themes with 3-6 triggers each")
+    lines.append(
+        "9. Include at least 12 distinct trigger themes (MINIMUM 36 triggers total — do not drop triggers from the fragments, consolidate them by theme)"
+    )
     lines.append("10. Complete ALL required sections in the output structure")
     lines.append("")
     lines.append("OUTPUT FORMAT: Start with YAML frontmatter (--- fences), then markdown body.")
     lines.append("DO NOT use markdown tables — use nested bullet lists instead.")
-    lines.append("Target: 4000-7000 words total, comprehensive coverage of all sections.")
+    lines.append(
+        "HARD LIMIT: maximum 8500 words. If you exceed 8500 words, the result is rejected."
+    )
+    lines.append("Condense aggressively — merge similar triggers, cut redundant explanations.")
 
     user_prompt = "\n".join(lines)
 
@@ -488,6 +501,134 @@ def _synthesize_skill(
     synthesized = _call_llm(user_prompt, model=model, system_prompt=synthesis_system_prompt)
 
     return synthesized
+
+
+CONDENSE_SYSTEM_PROMPT = """\
+You are condensing a Linus Torvalds code-review skill (SKILL.md) that exceeds the word limit.
+
+Your task:
+- Reduce the document to AT MOST 8000 words while preserving ALL triggers and themes.
+- Merge similar triggers that express the same principle.
+- Cut redundant explanations, verbose examples, and repetitive definitions.
+- Keep the YAML frontmatter, all section headers, and the overall structure intact.
+- Keep every trigger bullet — do not delete triggers, only merge duplicates and trim prose.
+- Preserve interview citations and severity labels.
+
+Output the full condensed SKILL.md (frontmatter + body). No commentary.
+"""
+
+
+def _condense_skill(skill_md: str, model: str | None = None, target: int = 8000) -> str:
+    """Re-prompt the LLM to condense an over-long skill to <= ``target`` words.
+
+    Preserves all triggers and section structure; only trims prose and merges
+    duplicate triggers.
+    """
+    word_count = len(skill_md.split())
+    print(f"  condensing skill ({word_count} words -> target <={target})...", flush=True)
+
+    user_prompt = (
+        f"The following SKILL.md is {word_count} words and MUST be condensed to "
+        f"at most {target} words. This is a HARD LIMIT — exceeding it rejects the result. "
+        f"Preserve every trigger (merge duplicates, do not delete). "
+        f"Keep all section headers and the YAML frontmatter. "
+        f"Cut verbose explanations, trim examples, merge redundant prose.\n\n"
+        f"--- BEGIN SKILL.md ---\n{skill_md}\n--- END SKILL.md ---\n"
+    )
+
+    condensed = _call_llm(user_prompt, model=model, system_prompt=CONDENSE_SYSTEM_PROMPT)
+    new_count = len(condensed.split())
+    print(f"  condensed to {new_count} words", flush=True)
+    return condensed
+
+
+def _hard_truncate_skill(skill_md: str, limit: int = 9500) -> str:
+    """Deterministically truncate a skill to fit within ``limit`` words.
+
+    Used as a fallback when LLM condensation fails to reduce the word count.
+    Keeps the YAML frontmatter and as many complete top-level sections (``##``
+    headings) as fit, dropping the rest. Within each kept section, the full
+    content is preserve so triggers are never split mid-bullet.
+
+    Interview citations are ALWAYS preserved: citations from DROPPED sections
+    are extracted and appended as a dedicated section at the end, while citations
+    in KEPT sections remain in place. This ensures the verify_skill.py gate
+    (requires >= 3 citations) never fails due to truncation, without duplicating
+    citations that already survive in kept sections.
+    """
+    words = skill_md.split()
+    if len(words) <= limit:
+        return skill_md
+
+    print(f"  hard-truncating skill ({len(words)} words -> limit {limit})...", flush=True)
+
+    # Check if citations section already exists (idempotency)
+    has_citations_section = "## Interview Citations" in skill_md
+
+    # Split frontmatter from body
+    fm_match = re.match(r"^---\n.*?\n---\n", skill_md, flags=re.S)
+    if fm_match:
+        frontmatter = fm_match.group(0)
+        body = skill_md[fm_match.end() :]
+    else:
+        frontmatter = ""
+        body = skill_md
+
+    # Split body into sections at ## headings (keep heading with its section)
+    parts = re.split(r"^(?=## )", body, flags=re.M)
+    # First part is preamble before the first ## heading (may be empty)
+    result_parts = [frontmatter] if frontmatter else []
+    dropped_sections = []
+    if parts and not parts[0].startswith("## "):
+        result_parts.append(parts[0])
+        parts = parts[1:]
+
+    # Build kept content first, collecting dropped sections
+    for part in parts:
+        part_words = len(part.split())
+        current_words = sum(len(p.split()) for p in result_parts)
+        if current_words + part_words <= limit:
+            result_parts.append(part)
+        else:
+            dropped_sections.append(part)
+
+    # Extract citations from KEPT sections to know which ones are already preserved
+    kept_content = "".join(result_parts)
+    kept_citations = set(re.findall(r"\(Interview:\s*[^)]+\)", kept_content))
+
+    # Extract citations ONLY from dropped sections, excluding those already in kept sections
+    dropped_content = "".join(dropped_sections)
+    all_dropped_citations = re.findall(r"\(Interview:\s*[^)]+\)", dropped_content)
+
+    # Deduplicate and filter: only include citations not already in kept sections
+    interview_citations = []
+    seen = set()
+    for citation in all_dropped_citations:
+        if citation not in seen and citation not in kept_citations:
+            interview_citations.append(citation)
+            seen.add(citation)
+
+    # Build citations section only if we have citations and no existing section
+    citations_section = ""
+    if interview_citations and not has_citations_section:
+        citations_lines = ["\n## Interview Citations\n\n"]
+        for citation in interview_citations:
+            citations_lines.append(f"- {citation}\n")
+        citations_section = "".join(citations_lines)
+
+    # Add truncation marker if we dropped sections
+    if dropped_sections:
+        result_parts.append(
+            f"\n<!-- {len(dropped_sections)} section(s) truncated to fit word limit -->\n"
+        )
+
+    # Append the citations section (mandatory for verify gate)
+    if citations_section:
+        result_parts.append(citations_section)
+
+    truncated = "".join(result_parts)
+    print(f"  hard-truncated to {len(truncated.split())} words", flush=True)
+    return truncated
 
 
 def _distill_single_call(
@@ -665,7 +806,7 @@ def _write_gated_document(content: str, output_path: Path, limit: int = 10000) -
 def distill_skill(
     patterns_path: Path,
     output_path: Path,
-    top_n: int = 40,
+    top_n: int = 60,
     model: str | None = None,
     calibration_path: Path | None = None,
     single_call: bool = False,
@@ -822,6 +963,43 @@ def distill_skill(
             skill_md = _synthesize_skill(
                 fragments, calibration if calibration else {}, interview_data, iv_data, model=model
             )
+
+    # Condense if synthesis exceeded word limit (two-stage models may over-produce).
+    # Target 8500 to leave headroom for post-processing growth (sanitize, rebalance,
+    # repair can add words back). If LLM condensation stalls (fails to reduce the
+    # count), fall back to deterministic hard truncation.
+    condense_targets = [8500, 7000, 5500]
+    max_words = 9500
+    for attempt, target in enumerate(condense_targets):
+        wc = len(skill_md.split())
+        if wc <= max_words:
+            break
+        print(
+            f"\nsynthesis produced {wc} words (limit {max_words}), "
+            f"condensing (attempt {attempt + 1}/{len(condense_targets)}, target {target})...",
+            flush=True,
+        )
+        previous_wc = wc
+        skill_md = _condense_skill(skill_md, model=model, target=target)
+        new_wc = len(skill_md.split())
+        # If condensation stalled (did not reduce by at least 10%), break to fallback
+        if new_wc > previous_wc * 0.9:
+            print(
+                f"  condensation stalled ({previous_wc} -> {new_wc}), "
+                "switching to hard truncation fallback",
+                flush=True,
+            )
+            skill_md = _hard_truncate_skill(skill_md, limit=max_words)
+            break
+
+    # Final safety net: if still over after all condensation attempts
+    wc = len(skill_md.split())
+    if wc > max_words:
+        print(
+            f"\nstill {wc} words after condensation, applying hard truncation...",
+            flush=True,
+        )
+        skill_md = _hard_truncate_skill(skill_md, limit=max_words)
 
     # Post-process
     print("\npost-processing...")

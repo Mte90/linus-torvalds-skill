@@ -99,12 +99,45 @@ TRIGGER_TYPES = """\nFour qualities of review rules — EVERY trigger must be ON
 UNIFIED_TRIGGER_FORMAT = """\n## TRIGGER OUTPUT FORMAT (MANDATORY)
 Every trigger MUST use this exact structure:
 
-- **Trigger**: <language-agnostic description of the pattern>
-  - **Type**: invariant-true | invariant-false | precedence-rule | general-guideline
-  - **What to look for**: concrete detection criteria
-  - **Why it's a problem**: underlying design principle being violated
-  - **Severity**: reject | request-changes | nitpick | discussion
-  - **Example**: "[verbatim Torvalds quote]"
+  - **Trigger**: <language-agnostic description of the pattern>
+    - **Type**: invariant-true | invariant-false | precedence-rule | general-guideline
+    - **What to look for**: concrete detection criteria
+    - **Why it's a problem**: underlying design principle being violated
+    - **Severity**: reject | request-changes | nitpick | discussion
+    - **Example**: "[verbatim Torvalds quote]"
+
+## HEADER FORMAT — FORBIDDEN (DO NOT USE)
+These heading forms are FORBIDDEN and will cause rejection:
+  - `### Tier N:` and `### Tier N –` headings (wrong preposition)
+  - `### Tier <Name>` without a number (missing level)
+  - `#### N. <Title>` bare numbered sub-headings without a Theme label
+  - Any heading not listed in the ALLOWED set below
+
+## HEADER FORMAT — ALLOWED (ONLY THESE PATTERN)
+These are the ONLY permitted heading forms:
+  - `### Level N – <Name>` (top-level tier heading, with en-dash or ASCII hyphen)
+  - `#### Theme: <Name>` (subsection theme heading)
+  - `#### N. <Name> (Theme: <label>)` (numbered theme with parenthetical label — gpt-oss hybrid variant)
+
+## BULLET FORMAT — FORBIDDEN (DO NOT USE)
+The following bullet pattern is FORBIDDEN:
+  - `- **<Title>** – <description>` (bold title + dash + description)
+
+## BULLET FORMAT — ALLOWED (ONLY THIS PATTERN)
+Every trigger bullet MUST start with:
+  - `- **Trigger**: <language-agnostic description>`
+
+## POSITIVE EXAMPLE
+Correct trigger block:
+
+```
+- **Trigger**: public API symbol added without a caller
+  - **Type**: general-guideline
+  - **What to look for**: a new exported function, macro, or struct with no in-tree call site
+  - **Why it's a problem**: public surface area is a maintenance burden; unused exports lock in contracts
+  - **Severity**: request-changes
+  - **Example**: "if you add a new export, you'd better have a user for it"
+```
 """
 
 SEVERITY_QUOTAS = """\n## PER-CATEGORY SEVERITY QUOTAS (BINDING CONSTRAINTS)
@@ -615,10 +648,20 @@ Output format (markdown):
   - **Severity**: [reject / request-changes / nitpick]
   - **Example**: "[Torvalds quote]"
 
-[Continue with 3-6 triggers for this category]
+[Generate all relevant triggers for this theme. Each trigger must describe a DISTINCT, SPECIFIC design problem, not a generic category label. If a theme has only 1-2 distinct triggers, merge it with an adjacent theme rather than padding with filler.]
 
 Remember: Every trigger must be language-agnostic. If it mentions C keywords or kernel
 concepts, generalize it to the underlying design problem.
+
+ANTI-FILLER RULE (CRITICAL):
+Every trigger MUST describe a specific, diagnosable design problem. The following templated patterns are FORBIDDEN because they carry no diagnostic information:
+- "Missing X" / "Missing X documentation" / "Missing X examples" (generic absence is not a trigger)
+- "Inconsistent X style" (vague — describe the actual inconsistency)
+- "X organization" / "X structure" without a specific design flaw
+
+A valid trigger answers: "When the reviewer sees THIS specific pattern, they flag it." If you can replace the theme name with any other theme name and the trigger still reads the same, it is filler — rewrite it or delete it.
+
+QUALITY OVER FILLER: Include every distinct, specific trigger the theme warrants — do not omit real triggers, and do not pad with filler. If a theme has only 1-2 genuine triggers, merge it with an adjacent theme. Filler triggers (templated patterns that carry no diagnostic information) dilute the skill and cause false positives.
 
 NON-EXHAUSTIVE CATALOG: The triggers you list are a STARTING SET, NOT A CEILING. This
 is explicitly NOT an exhaustive catalog of every possible bug — it captures recurring
@@ -681,6 +724,24 @@ OUTPUT STRUCTURE
 
 ## Quick Reference Checklist
 [15-20 concrete items grouped by theme]
+
+ANTI-FILLER RULE (CRITICAL):
+Every trigger MUST describe a specific, diagnosable design problem. The following templated patterns are FORBIDDEN because they carry no diagnostic information:
+- "Missing X" / "Missing X documentation" / "Missing X examples" (generic absence is not a trigger)
+- "Inconsistent X style" (vague — describe the actual inconsistency)
+- "X organization" / "X structure" without a specific design flaw
+
+A valid trigger answers: "When the reviewer sees THIS specific pattern, they flag it." If you can replace the theme name with any other theme name and the trigger still reads the same, it is filler — rewrite it or delete it.
+
+During synthesis, DEDUPLICATE triggers across categories. If two category fragments produced semantically equivalent triggers, merge them into one.
+
+THEME AND TRIGGER COUNT (HARD REQUIREMENT):
+- The final skill MUST contain at least 12 distinct themes organized into the three tiers.
+- Each theme MUST have 3-6 triggers (minimum 3, maximum 6).
+- Total trigger count MUST be 36-60. If you have fewer than 12 themes after deduplication, SPLIT broad themes into more specific ones to reach 12. Do NOT consolidate below 12 themes under any circumstances.
+- If you produce fewer than 36 total triggers, the skill is INCOMPLETE and will be rejected.
+
+QUALITY OVER FILLER: Include every distinct, specific trigger the theme warrants — do not omit real triggers, and do not pad with filler. If a theme has only 1-2 genuine triggers, merge it with an adjacent theme. Filler triggers (templated patterns that carry no diagnostic information) dilute the skill and cause false positives.
 
 NON-EXHAUSTIVE CATALOG: The triggers you list are a STARTING SET, NOT A CEILING. This
 is explicitly NOT an exhaustive catalog of every possible bug — it captures recurring

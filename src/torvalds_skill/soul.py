@@ -19,6 +19,7 @@ from . import config
 from .distill import _format_calibration_for_prompt, _write_gated_document
 from .distill_llm import _call_llm
 from .distill_sanitize import sanitize_skill
+from .skill_paths import soul_path as _soul_path
 
 SOUL_PIPELINE_VERSION = "soul-frontmatter-v1"
 
@@ -480,9 +481,6 @@ forbidden.]
 """
 
 
-SOUL_OUTPUT_DIR = Path(__file__).parent.parent.parent / "soul"
-
-
 def _load_interview_data(project_root: Path) -> str:
     """Load interview transcripts from data/interviews/.
 
@@ -784,7 +782,7 @@ def main() -> int:
     parser.add_argument(
         "--out",
         default=None,
-        help="Override output path (default: soul/<profile soul_variant>.md)",
+        help="Override output path (default: soul/<variant>/soul.md)",
     )
     args = parser.parse_args()
 
@@ -795,13 +793,10 @@ def main() -> int:
         print(f"ERROR: {patterns_path} not found. Run clustering first.")
         return 1
 
-    # Fetch profile to determine soul_variant for default output path
-    from .profiles import get_profile
-
+    # Determine default output path from model
     model = args.model or config.MODEL
-    profile = get_profile(model)
 
-    output_path = Path(args.out) if args.out else SOUL_OUTPUT_DIR / f"{profile.soul_variant}.md"
+    output_path = Path(args.out) if args.out else _soul_path(model)
 
     generate_soul(patterns_path, output_path, model=args.model, project_root=project_root)
     return 0

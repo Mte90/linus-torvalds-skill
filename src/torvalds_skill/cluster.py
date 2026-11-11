@@ -597,30 +597,37 @@ def cluster_moves(moves_path: Path, output_path: Path, top_n: int = SAMPLES_PER_
                 "principle": m.principle,
                 "response": m.response,
                 "severity": m.severity,
-                "date": m.email_date,
+                "email_date": m.email_date,
+                "email_message_id": m.email_message_id,
             }
             for m in sampled
         ]
 
-    output = {
-        "total_moves": total_moves,
-        "categories": {
-            cat: len(by_category.get(cat, [])) for cat in CATEGORIES if by_category.get(cat)
-        },
-        "severity_distribution": dict(Counter(m.severity for m in moves)),
-        "samples_per_category": top_n,
-        "samples_by_category": samples_by_category,
-    }
+    # Flatten into a single list of pattern dicts
+    patterns = []
+    for cat, samples in samples_by_category.items():
+        for sample in samples:
+            patterns.append(
+                {
+                    "category": cat,
+                    "severity": sample["severity"],
+                    "trigger": sample["trigger"],
+                    "principle": sample["principle"],
+                    "response": sample["response"],
+                    "quote": sample["response"],  # same field, matching cluster_interviews format
+                    "source": "email",
+                    "email_message_id": sample["email_message_id"],
+                    "email_date": sample["email_date"],
+                }
+            )
 
     output_path.write_text(
-        json.dumps(output, indent=2, ensure_ascii=False),
+        json.dumps(patterns, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
 
     print(
-        f"sampled {total_moves} moves: {sum(len(v) for v in samples_by_category.values())} samples across {len(samples_by_category)} categories"
+        f"sampled {total_moves} moves: {len(patterns)} patterns across {len(samples_by_category)} categories"
     )
-    print(f"categories: {output['categories']}")
-    print(f"severities: {output['severity_distribution']}")
 
-    return output
+    return patterns

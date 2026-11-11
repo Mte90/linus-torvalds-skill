@@ -58,10 +58,10 @@ class TestGetProfile:
         assert profile.parallel_workers == 3
 
     def test_get_mistral_profile(self):
-        """mistral-small-4-119b profile should have reasoning=True (reasoning model)."""
+        """mistral-small-4-119b profile should have reasoning=True and two-stage distill mode."""
         profile = get_profile("mistral-small-4-119b")
         assert profile.reasoning is True
-        assert profile.distill_mode == "single"
+        assert profile.distill_mode == "two-stage"  # Mistral requires two-stage to prevent overflow
         assert profile.parallel_workers == 3
 
     def test_unknown_model_returns_default(self):
@@ -145,11 +145,13 @@ slow = false
             del os.environ["LLM_PROFILE_GPT_OSS_120B__FALLBACK_MODELS"]
 
     def test_review_max_tokens_defaults(self):
-        """Reasoning models get 32000 (room for content after thinking); others None."""
+        """Each model has a tuned review_max_tokens; Mistral is capped at 16000
+        to prevent reasoning_only_response (verified: 60K exhausts the budget on
+        thinking and never emits content; 16K forces a review in ~19s)."""
         expected = {
             "gpt-oss-120b": None,
             "glm5.2": 32000,
-            "mistral-small-4-119b": 32000,
+            "mistral-small-4-119b": 16000,
             "qwen3.8-27b": 131072,
         }
         for model_name in KNOWN_PROFILES:
@@ -211,8 +213,8 @@ class TestNoHardCodedGlmReferences:
             if not line:
                 continue
             path = line.split(":")[0]
-            # Skip if it's in profiles.py or test files
-            if "profiles.py" in path or "test" in path:
+            # Skip if it's in profiles.py, skill_paths.py, or test files
+            if "profiles.py" in path or "skill_paths.py" in path or "test" in path:
                 continue
             # Check if this is an actual code reference (string comparison)
             # Patterns: "glm" in ..., 'glm' in ..., == "glm", == 'glm'
@@ -224,61 +226,3 @@ class TestNoHardCodedGlmReferences:
         assert len(code_matches) == 0, (
             f"Found 'glm' code references outside profiles.py/tests: {code_matches}"
         )
-
-
-class TestSoulVariantField:
-    """Tests for soul_variant field in ModelProfile (variant dispatch enforcement)."""
-
-    def test_soul_variant_field_exists(self):
-        """ModelProfile should have soul_variant field."""
-        from torvalds_skill.profiles import ModelProfile
-
-        profile = ModelProfile()
-        assert hasattr(profile, "soul_variant")
-        assert profile.soul_variant == "soul"  # default value
-
-    def test_all_known_profiles_have_soul_variant(self):
-        """Every profile in KNOWN_PROFILES must have a non-empty soul_variant."""
-        from torvalds_skill.profiles import KNOWN_PROFILES
-
-        for model_name, profile in KNOWN_PROFILES.items():
-            assert profile.soul_variant, f"Profile {model_name} has empty soul_variant"
-            assert profile.soul_variant in (
-                "soul",
-                "soul-glm",
-                "soul-mistral",
-                "soul-qwen",
-            ), f"Profile {model_name} has unexpected soul_variant: {profile.soul_variant}"
-
-    def test_soul_variant_mapping_gpt_oss(self):
-        """gpt-oss-120b should map to 'soul'."""
-        profile = get_profile("gpt-oss-120b")
-        assert profile.soul_variant == "soul"
-
-    def test_soul_variant_mapping_glm(self):
-        """glm5.2 should map to 'soul-glm'."""
-        profile = get_profile("glm5.2")
-        assert profile.soul_variant == "soul-glm"
-
-    def test_soul_variant_mapping_mistral(self):
-        """mistral-small-4-119b should map to 'soul-mistral'."""
-        profile = get_profile("mistral-small-4-119b")
-        assert profile.soul_variant == "soul-mistral"
-
-    def test_soul_variant_mapping_qwen(self):
-        """qwen3.8-27b should map to 'soul-qwen'."""
-        profile = get_profile("qwen3.8-27b")
-        assert profile.soul_variant == "soul-qwen"
-
-    def test_default_profile_soul_variant(self):
-        """DEFAULT_PROFILE should have soul_variant='soul'."""
-        assert DEFAULT_PROFILE.soul_variant == "soul"
-
-    def test_env_override_soul_variant(self):
-        """Environment variable should be able to override soul_variant."""
-        os.environ["LLM_PROFILE_GPT_OSS_120B__SOUL_VARIANT"] = "soul-custom"
-        try:
-            profile = get_profile("gpt-oss-120b")
-            assert profile.soul_variant == "soul-custom"
-        finally:
-            del os.environ["LLM_PROFILE_GPT_OSS_120B__SOUL_VARIANT"]

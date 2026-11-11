@@ -183,78 +183,37 @@ OK. This is minor.
     llm_review._validate_review_format(non_review)
 
 
-def test_reasoning_only_response_triggers_retry(monkeypatch):
-    """call_llm must retry with disable_thinking when reasoning-only response detected."""
+def test_reasoning_only_response_raises(monkeypatch):
+    """call_llm must raise RuntimeError on reasoning-only response (no content)."""
     monkeypatch.setattr(llm_review.project_config, "API_KEY", "sk-test")
-    call_count = 0
 
-    def fake_urlopen_first(req, timeout=None):
-        nonlocal call_count
-        call_count += 1
-        # First call: return reasoning-only (no content)
+    def fake_urlopen(req, timeout=None):
+        # Return reasoning-only (no content)
         payload = {
             "choices": [{"delta": {"reasoning_content": "Let me think about this carefully..."}}]
         }
         return _FakeResponse([f"data: {json.dumps(payload)}\n".encode(), b"data: [DONE]\n"])
 
-    def fake_urlopen_second(req, timeout=None):
-        nonlocal call_count
-        call_count += 1
-        # Second call (with disable_thinking): return valid content
-        return _FakeResponse(_sse_body("Valid review content"))
-
-    # First attempt raises RuntimeError for reasoning-only
-    monkeypatch.setattr(llm_review.urllib.request, "urlopen", fake_urlopen_first)
+    monkeypatch.setattr(llm_review.urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(RuntimeError, match="reasoning_only_response"):
         llm_review.call_llm("glm5.2", "review this", timeout=60)
 
 
-def test_disable_thinking_retry_succeeds(monkeypatch):
-    """call_llm must succeed on retry with disable_thinking=true."""
+def test_thinking_always_enabled_in_payload(monkeypatch):
+    """call_llm must always send enable_thinking=True in the payload."""
     monkeypatch.setattr(llm_review.project_config, "API_KEY", "sk-test")
-    call_count = 0
     seen_payloads = []
 
-    def fake_urlopen_first(req, timeout=None):
-        nonlocal call_count
-        call_count += 1
-        # First call: reasoning-only
-        payload = {"choices": [{"delta": {"reasoning_content": "Thinking...", "content": ""}}]}
-        return _FakeResponse([f"data: {json.dumps(payload)}\n".encode(), b"data: [DONE]\n"])
-
-    def fake_urlopen_second(req, timeout=None):
-        nonlocal call_count
-        call_count += 1
-        # Capture the payload to verify disable_thinking was sent
+    def fake_urlopen(req, timeout=None):
         seen_payloads.append(json.loads(req.data.decode("utf-8")))
-        # Second call: valid content
         return _FakeResponse(_sse_body("Valid review output"))
 
-    # Mock urlopen to alternate between reasoning-only and success
-    monkeypatch.setattr(llm_review.urllib.request, "urlopen", fake_urlopen_first)
+    monkeypatch.setattr(llm_review.urllib.request, "urlopen", fake_urlopen)
+    llm_review.call_llm("glm5.2", "review this", timeout=60)
 
-    # Simulate the retry logic from main()
-    disable_thinking = False
-    result = None
-    for attempt in range(2):
-        try:
-            # This would normally be called from main(), but we test the pattern
-            monkeypatch.setattr(
-                llm_review.urllib.request,
-                "urlopen",
-                fake_urlopen_second if attempt == 1 else fake_urlopen_first,
-            )
-            result = llm_review.call_llm(
-                "glm5.2", "review this", timeout=60, disable_thinking=disable_thinking
-            )
-        except RuntimeError as e:
-            if str(e) == "reasoning_only_response" and attempt == 0:
-                disable_thinking = True
-                continue
-            raise
-
-    assert result == "Valid review output"
-    assert disable_thinking is True
+    payload = seen_payloads[0]
+    assert payload["enable_thinking"] is True
+    assert payload["chat_template_kwargs"]["enable_thinking"] is True
 
 
 def test_validate_review_format_rejects_unbracketed_severity(monkeypatch):

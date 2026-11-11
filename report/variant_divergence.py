@@ -18,6 +18,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+# Import skill_paths for skill file locations
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from torvalds_skill.skill_paths import skill_path as _skill_path
+
 
 def read_skill_file(path: str) -> str:
     """Read a skill file and return its contents."""
@@ -134,12 +138,10 @@ def find_severity_discrepancies(
 
 def main():
     """Main entry point."""
-    base_path = Path(__file__).parent.parent / "linus-torvalds-skill"
-
     files = {
-        "gpt-oss-120b": base_path / "SKILL.md",
-        "glm5.2": base_path / "SKILL-GLM.md",
-        "mistral": base_path / "SKILL-Mistral.md",
+        "gpt-oss-120b": _skill_path("gpt-oss-120b"),
+        "glm5.2": _skill_path("glm5.2"),
+        "mistral": _skill_path("mistral-small-4-119b"),
     }
 
     # Check files exist

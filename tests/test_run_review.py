@@ -93,24 +93,28 @@ class TestModelConfig:
         assert "qwen3.8-27b" in run_review.MODELS
 
     def test_gpt_oss_skill_path(self):
-        """gpt-oss-120b should point to SKILL.md."""
-        expected = run_review.SKILL_DIR / "SKILL.md"
-        assert run_review.MODELS["gpt-oss-120b"] == expected
+        """gpt-oss-120b should point to gpt-oss/skill.md."""
+        from torvalds_skill.skill_paths import skill_path
+
+        assert run_review.MODELS["gpt-oss-120b"] == skill_path("gpt-oss-120b")
 
     def test_glm52_skill_path(self):
-        """glm5.2 should point to SKILL-GLM.md."""
-        expected = run_review.SKILL_DIR / "SKILL-GLM.md"
-        assert run_review.MODELS["glm5.2"] == expected
+        """glm5.2 should point to glm/skill.md."""
+        from torvalds_skill.skill_paths import skill_path
+
+        assert run_review.MODELS["glm5.2"] == skill_path("glm5.2")
 
     def test_mistral_skill_path(self):
-        """mistral-small-4-119b should point to SKILL-Mistral.md."""
-        expected = run_review.SKILL_DIR / "SKILL-Mistral.md"
-        assert run_review.MODELS["mistral-small-4-119b"] == expected
+        """mistral-small-4-119b should point to mistral/skill.md."""
+        from torvalds_skill.skill_paths import skill_path
+
+        assert run_review.MODELS["mistral-small-4-119b"] == skill_path("mistral-small-4-119b")
 
     def test_qwen_skill_path(self):
-        """qwen3.8-27b should point to SKILL-Qwen.md."""
-        expected = run_review.SKILL_DIR / "SKILL-Qwen.md"
-        assert run_review.MODELS["qwen3.8-27b"] == expected
+        """qwen3.8-27b should point to qwen/skill.md."""
+        from torvalds_skill.skill_paths import skill_path
+
+        assert run_review.MODELS["qwen3.8-27b"] == skill_path("qwen3.8-27b")
 
 
 class TestTimeoutConfig:
@@ -845,7 +849,7 @@ class TestCheckpointStateManagement:
         with patch.object(run_review, "STATE_FILE", report_dir / ".review_state.json"):
             skip, reason = run_review.should_skip_model("gpt-oss-120b", "with-skill", force=False)
             assert skip is False
-            assert reason == "no input_hash in output frontmatter (legacy)"
+            assert "input file missing" in reason
 
     def test_should_skip_model_force_returns_false(self, tmp_path):
         """should_skip_model should return False when force=True."""
@@ -1256,3 +1260,64 @@ class TestTwoPassRule:
             assert content.count("**Pass:** 2") == 2
             # Total findings should be 3 (1 Pass-1 + 2 Pass-2)
             assert "findings_count: 3" in content
+
+
+class TestPartialChunkMerge:
+    """Tests for partial merge when some chunks fail (rule #4006)."""
+
+    @pytest.fixture
+    def mock_skill_file(self, tmp_path):
+        """Create a mock skill file."""
+        skill_file = tmp_path / "SKILL.md"
+        skill_file.write_text("# Test Skill\n")
+        return skill_file
+
+    def test_partial_merge_when_some_chunks_fail(self, mock_skill_file, tmp_path):
+        """When some chunks fail but not all, merge_chunks should still be called."""
+        out_file = tmp_path / "review.md"
+
+        def chunk_side_effect(model, skill, src, chunk_file, timeout, force):
+            if src == "smallchat-client.c":
+                return False
+            chunk_file.write_text(f"### [HIGH] Issue in {src}\n")
+            return True
+
+        with (
+            patch.object(run_review, "REPORT_DIR", tmp_path),
+            patch.object(run_review, "should_skip_model", return_value=(False, "")),
+            patch.object(run_review, "run_chunk_review", side_effect=chunk_side_effect),
+            patch.object(run_review, "merge_chunks", return_value=True) as mock_merge,
+            patch.object(run_review, "compute_input_hash", return_value="fake-hash"),
+            patch.object(run_review, "log_model_metrics"),
+            patch.object(run_review, "record_checkpoint"),
+            patch("torvalds_skill.profiles.get_profile") as mock_profile,
+        ):
+            mock_profile.return_value.review_timeout = 300
+            result = run_review.run_review_chunked(
+                "test-model", mock_skill_file, out_file, force=False
+            )
+
+        assert result is True
+        mock_merge.assert_called_once()
+
+    def test_no_merge_when_all_chunks_fail(self, mock_skill_file, tmp_path):
+        """When all chunks fail, merge_chunks should NOT be called and return False."""
+        out_file = tmp_path / "review.md"
+
+        with (
+            patch.object(run_review, "REPORT_DIR", tmp_path),
+            patch.object(run_review, "should_skip_model", return_value=(False, "")),
+            patch.object(run_review, "run_chunk_review", return_value=False),
+            patch.object(run_review, "merge_chunks", return_value=True) as mock_merge,
+            patch.object(run_review, "compute_input_hash", return_value="fake-hash"),
+            patch.object(run_review, "log_model_metrics"),
+            patch.object(run_review, "record_checkpoint"),
+            patch("torvalds_skill.profiles.get_profile") as mock_profile,
+        ):
+            mock_profile.return_value.review_timeout = 300
+            result = run_review.run_review_chunked(
+                "test-model", mock_skill_file, out_file, force=False
+            )
+
+        assert result is False
+        mock_merge.assert_not_called()

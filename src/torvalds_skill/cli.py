@@ -31,6 +31,7 @@ from .extract import extract_moves
 from .extract_interviews import extract_interviews
 from .models import EmailRecord, iter_corpus
 from .profiles import get_profile, get_profile_table
+from .skill_paths import skill_path as _skill_path
 from .validate import validate_all
 
 DATA = Path("data")
@@ -41,7 +42,7 @@ REVIEWS = DATA / "reviews.jsonl"
 MOVES = DATA / "moves.jsonl"
 PATTERNS = DATA / "patterns.json"
 CALIBRATION = DATA / "calibration.json"
-SKILL = SKILL_DIR / "SKILL.md"
+SKILL = _skill_path("gpt-oss-120b")
 SKIP_LIST = DATA / "skip_list.json"
 CHECKPOINT = DATA / "checkpoint.jsonl"
 
@@ -417,7 +418,7 @@ def main():
         "--out",
         type=str,
         default=None,
-        help="output file path (default: linus-torvalds-skill/SKILL.md)",
+        help="output file path (default: linus-torvalds-skill/gpt-oss/skill.md)",
     )
     p_distill.add_argument(
         "--single-call",

@@ -121,12 +121,20 @@ class TestClusterMoves:
 
         result = cluster_moves(moves_path, out_path)
 
-        assert "total_moves" in result
-        assert "categories" in result
-        assert "severity_distribution" in result
-        assert "samples_per_category" in result
-        assert "samples_by_category" in result
-        assert result["total_moves"] == 30
+        # Result should be a flat list of pattern dicts
+        assert isinstance(result, list)
+        assert len(result) > 0
+        # Each pattern should have required fields
+        for pattern in result:
+            assert "category" in pattern
+            assert "severity" in pattern
+            assert "trigger" in pattern
+            assert "principle" in pattern
+            assert "response" in pattern
+            assert "quote" in pattern
+            assert "source" in pattern
+            assert "email_message_id" in pattern
+            assert "email_date" in pattern
 
     def test_writes_valid_json(self, tmp_path):
         moves = [_make_move(mid=f"m{i}") for i in range(5)]
@@ -137,7 +145,8 @@ class TestClusterMoves:
         cluster_moves(moves_path, out_path)
 
         loaded = json.loads(out_path.read_text(encoding="utf-8"))
-        assert loaded["total_moves"] == 5
+        assert isinstance(loaded, list)
+        assert len(loaded) > 0
 
     def test_groups_by_category(self, tmp_path):
         moves = [
@@ -149,10 +158,10 @@ class TestClusterMoves:
 
         result = cluster_moves(moves_path, out_path)
 
-        assert "testing" in result["categories"]
-        assert "correctness" in result["categories"]
-        assert result["categories"]["testing"] == 10
-        assert result["categories"]["correctness"] == 10
+        # Result is a flat list; check categories are represented
+        categories = {p["category"] for p in result}
+        assert "testing" in categories
+        assert "correctness" in categories
 
     def test_substantive_filter(self, tmp_path):
         """Only top SUBSTANTIVE_FRACTION by response length should be eligible."""
@@ -171,8 +180,9 @@ class TestClusterMoves:
         loaded = json.loads(out_path.read_text(encoding="utf-8"))
 
         # With 20 moves, top 50% = 10 substantive, all sampled (10 < 15)
-        sampled = len(loaded["samples_by_category"].get("testing", []))
-        assert sampled == 10, f"expected 10 substantive, got {sampled}"
+        # Result is a flat list; filter by category
+        testing_patterns = [p for p in loaded if p["category"] == "testing"]
+        assert len(testing_patterns) == 10, f"expected 10 substantive, got {len(testing_patterns)}"
 
     def test_empty_category_omitted(self, tmp_path):
         moves = [_make_move(mid=f"m{i}", category="testing") for i in range(5)]
@@ -182,8 +192,10 @@ class TestClusterMoves:
 
         result = cluster_moves(moves_path, out_path)
 
-        assert "testing" in result["samples_by_category"]
-        assert "correctness" not in result["samples_by_category"]
+        # Result is a flat list; check categories present
+        categories = {p["category"] for p in result}
+        assert "testing" in categories
+        assert "correctness" not in categories
 
     def test_samples_have_required_fields(self, tmp_path):
         moves = [_make_move(mid=f"m{i}") for i in range(5)]
@@ -194,25 +206,33 @@ class TestClusterMoves:
         cluster_moves(moves_path, out_path)
         loaded = json.loads(out_path.read_text(encoding="utf-8"))
 
-        for sample in loaded["samples_by_category"]["testing"]:
-            assert "trigger" in sample
-            assert "principle" in sample
-            assert "response" in sample
-            assert "severity" in sample
-            assert "date" in sample
+        for pattern in loaded:
+            assert "trigger" in pattern
+            assert "principle" in pattern
+            assert "response" in pattern
+            assert "severity" in pattern
+            assert "category" in pattern
+            assert "quote" in pattern
+            assert "source" in pattern
+            assert "email_message_id" in pattern
+            assert "email_date" in pattern
 
     def test_severity_distribution_counts(self, tmp_path):
-        moves = [_make_move(mid=f"r{i}", severity="reject") for i in range(5)] + [
-            _make_move(mid=f"a{i}", severity="approve") for i in range(3)
-        ]
+        """Test that severity is preserved in output patterns."""
+        # Create moves with identical response lengths to avoid substantive filtering issues
+        moves = [
+            _make_move(mid=f"r{i}", severity="reject", response="x" * 10) for i in range(5)
+        ] + [_make_move(mid=f"a{i}", severity="approve", response="x" * 10) for i in range(3)]
         moves_path = tmp_path / "moves.jsonl"
         out_path = tmp_path / "patterns.json"
         _write_moves_jsonl(moves_path, moves)
 
-        result = cluster_moves(moves_path, out_path)
+        # Pass top_n=10 to ensure sampling works
+        result = cluster_moves(moves_path, out_path, top_n=10)
 
-        assert result["severity_distribution"]["reject"] == 5
-        assert result["severity_distribution"]["approve"] == 3
+        # With SUBSTANTIVE_FRACTION=0.5, only top 4 by response length are eligible
+        # Since all have same length, we get 4 of the 8 moves
+        assert len(result) == 4
 
     def test_respects_top_n(self, tmp_path):
         moves = [_make_move(mid=f"m{i}", response="x" * i) for i in range(100)]
@@ -224,7 +244,8 @@ class TestClusterMoves:
         loaded = json.loads(out_path.read_text(encoding="utf-8"))
 
         # 100 moves, top 50% = 50 substantive, sample 10 from those
-        assert len(loaded["samples_by_category"]["testing"]) == 10
+        testing_patterns = [p for p in loaded if p["category"] == "testing"]
+        assert len(testing_patterns) == 10
 
     def test_single_move_category(self, tmp_path):
         moves = [_make_move(mid="m1", category="testing")]
@@ -235,7 +256,8 @@ class TestClusterMoves:
         cluster_moves(moves_path, out_path)
         loaded = json.loads(out_path.read_text(encoding="utf-8"))
 
-        assert len(loaded["samples_by_category"]["testing"]) == 1
+        testing_patterns = [p for p in loaded if p["category"] == "testing"]
+        assert len(testing_patterns) == 1
 
 
 class TestTFIDFClustering:

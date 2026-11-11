@@ -262,12 +262,21 @@ class TestExtractToClusterDataFlow:
         ]
         _write_moves_jsonl(moves_path, moves)
 
-        # Cluster should work
+        # Cluster should work - returns a list of patterns
         result = cluster_moves(moves_path, out_path)
 
-        assert "total_moves" in result
-        assert "samples_by_category" in result
-        assert result["total_moves"] == 1
+        assert isinstance(result, list)
+        assert len(result) == 1
+        # Each pattern should have required fields
+        assert "category" in result[0]
+        assert "severity" in result[0]
+        assert "trigger" in result[0]
+        assert "principle" in result[0]
+        assert "response" in result[0]
+        assert "quote" in result[0]
+        assert "source" in result[0]
+        assert "email_message_id" in result[0]
+        assert "email_date" in result[0]
 
 
 class TestClusterToDistillDataFlow:
@@ -283,12 +292,22 @@ class TestClusterToDistillDataFlow:
 
         result = cluster_moves(moves_path, out_path)
 
-        # Check structure matches what distill.py expects
-        assert "total_moves" in result
-        assert "categories" in result
-        assert "severity_distribution" in result
-        assert "samples_per_category" in result
-        assert "samples_by_category" in result
+        # Result should be a flat list of pattern dicts
+        assert isinstance(result, list)
+        # With 10 moves and SUBSTANTIVE_FRACTION=0.5, only 5 are eligible
+        assert len(result) == 5
+
+        # Each pattern should have required fields
+        for pattern in result:
+            assert "category" in pattern
+            assert "severity" in pattern
+            assert "trigger" in pattern
+            assert "principle" in pattern
+            assert "response" in pattern
+            assert "quote" in pattern
+            assert "source" in pattern
+            assert "email_message_id" in pattern
+            assert "email_date" in pattern
 
     def test_samples_have_distill_required_fields(self, tmp_path):
         """Clustered samples must have fields distill needs."""
@@ -300,17 +319,21 @@ class TestClusterToDistillDataFlow:
 
         cluster_moves(moves_path, out_path)
 
-        # Load and verify
+        # Load and verify - patterns is now a flat list
         with open(out_path, encoding="utf-8") as f:
             patterns = json.load(f)
 
-        for _category, samples in patterns["samples_by_category"].items():
-            for sample in samples:
-                assert "trigger" in sample
-                assert "principle" in sample
-                assert "response" in sample
-                assert "severity" in sample
-                assert "date" in sample
+        assert isinstance(patterns, list)
+        for pattern in patterns:
+            assert "trigger" in pattern
+            assert "principle" in pattern
+            assert "response" in pattern
+            assert "severity" in pattern
+            assert "category" in pattern
+            assert "quote" in pattern
+            assert "source" in pattern
+            assert "email_message_id" in pattern
+            assert "email_date" in pattern
 
     def test_patterns_json_valid_for_distill(self, tmp_path):
         """patterns.json should be valid input for distill_skill."""
@@ -328,12 +351,16 @@ class TestClusterToDistillDataFlow:
 
         cluster_moves(moves_path, out_path)
 
-        # Verify JSON is valid and has expected keys
+        # Verify JSON is valid - now a flat list of patterns
         with open(out_path, encoding="utf-8") as f:
             data = json.load(f)
 
-        assert "samples_by_category" in data
-        assert len(data["samples_by_category"]) > 0
+        assert isinstance(data, list)
+        assert len(data) > 0
+        # Verify patterns have categories from both groups
+        categories = {p["category"] for p in data}
+        assert "testing" in categories
+        assert "correctness" in categories
 
 
 class TestFullPipelineSmokeTest:
@@ -389,7 +416,8 @@ class TestFullPipelineSmokeTest:
         out_path = tmp_path / "patterns.json"
         cluster_result = cluster_moves(moves_path, out_path)
 
-        assert cluster_result["total_moves"] > 0
+        assert isinstance(cluster_result, list)
+        assert len(cluster_result) > 0
         assert out_path.exists()
 
     def test_pipeline_preserves_data_integrity(self, tmp_path):
@@ -489,9 +517,10 @@ class TestFullPipelineSmokeTest:
         with open(moves_path, "w", encoding="utf-8") as f:
             f.write('{"email_message_id": "empty-moves@example.com", "moves": []}\n')
 
-        # Should not crash
+        # Should not crash - returns empty list for no moves
         result = cluster_moves(moves_path, out_path)
-        assert result["total_moves"] == 0
+        assert isinstance(result, list)
+        assert len(result) == 0
 
 
 class TestDataFormatInvariants:
@@ -546,14 +575,26 @@ class TestDataFormatInvariants:
         with open(out_path, encoding="utf-8") as f:
             data = json.load(f)
 
-        # Distill expects these fields in samples
-        required_sample_fields = {"trigger", "principle", "response", "severity", "date"}
+        # Data is now a flat list of patterns
+        assert isinstance(data, list)
 
-        for category, samples in data["samples_by_category"].items():
-            for sample in samples:
-                assert set(sample.keys()) == required_sample_fields, (
-                    f"Category {category} sample missing fields"
-                )
+        # Each pattern should have these fields
+        required_pattern_fields = {
+            "trigger",
+            "principle",
+            "response",
+            "severity",
+            "category",
+            "quote",
+            "source",
+            "email_message_id",
+            "email_date",
+        }
+
+        for pattern in data:
+            assert set(pattern.keys()) == required_pattern_fields, (
+                f"Pattern missing fields: {required_pattern_fields - set(pattern.keys())}"
+            )
 
     def test_severity_values_are_valid(self):
         """Severity values should be from the valid set."""
@@ -621,7 +662,8 @@ class TestEdgeCases:
             f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
         cluster_result = cluster_moves(moves_path, out_path)
-        assert cluster_result["total_moves"] == 2
+        assert isinstance(cluster_result, list)
+        assert len(cluster_result) == 2
 
     def test_mixed_severity_moves(self, tmp_path):
         """Pipeline should handle moves with different severities."""
@@ -639,9 +681,13 @@ class TestEdgeCases:
 
         result = cluster_moves(moves_path, out_path)
 
-        assert result["severity_distribution"]["reject"] == 1
-        assert result["severity_distribution"]["approve"] == 1
-        assert result["severity_distribution"]["nitpick"] == 1
+        # Result is a flat list - count severities from the list
+        assert isinstance(result, list)
+        reject_count = sum(1 for p in result if p["severity"] == "reject")
+        approve_count = sum(1 for p in result if p["severity"] == "approve")
+        nitpick_count = sum(1 for p in result if p["severity"] == "nitpick")
+        # With 5 moves and SUBSTANTIVE_FRACTION=0.5, only 2 are eligible
+        assert reject_count + approve_count + nitpick_count == 2
 
     def test_large_batch_processing(self, tmp_path):
         """Pipeline should handle larger batches without issues."""

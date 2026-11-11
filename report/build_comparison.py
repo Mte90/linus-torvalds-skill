@@ -28,9 +28,15 @@ except ImportError:
 _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
-from torvalds_skill.matching import (  # noqa: E402
-    dedupe_records,
+from torvalds_skill.io_utils import (  # noqa: E402
+    load_benchmark_records,
+    load_jsonl,
 )
+from torvalds_skill.matching import (  # noqa: E402
+    match_finding_to_bug,
+    normalize_filename,
+)
+from torvalds_skill.severity import SEVERITY_MAP  # noqa: E402
 
 # Models and their review files
 MODELS = [
@@ -77,19 +83,6 @@ _TRIVIA_CATEGORIES = {"style", "build", "docs", "performance", "convention"}
 _TRIVIA_SEVERITIES = {
     "LOW"
 }  # LOW severity findings are typically trivia unless they hit core categories
-
-
-def normalize_filename(name: str) -> str:
-    """Normalize file names so 'server.c' and 'smallchat-server.c' match."""
-    name = name.strip().lower()
-    # Strip directory prefixes
-    name = name.split("/")[-1]
-    # Map short forms to canonical long forms
-    aliases = {
-        "server.c": "smallchat-server.c",
-        "client.c": "smallchat-client.c",
-    }
-    return aliases.get(name, name)
 
 
 def _extract_first_line(text: str) -> int | None:
@@ -319,7 +312,7 @@ def _dedup_findings(findings: list[Finding]) -> list[Finding]:
     - title similarity >= 0.30 (same bug, slightly different wording), or
     - title similarity >= 0.20 AND lines within ±3 (same location, similar title).
     Line proximity alone is insufficient — in small files, different bugs
-    can be within ±10 lines of each other.
+    can be within ±5 lines of each other.
     The richer finding (more populated fields) wins; ties keep the first.
     """
     if len(findings) <= 1:
@@ -439,7 +432,7 @@ def match_findings_across_models(
                 for j, other_f in enumerate(other_file_findings):
                     if (file, j, other_model) in used_findings:
                         continue
-                    if other_f.line and anchor_f.line and abs(other_f.line - anchor_f.line) <= 10:
+                    if other_f.line and anchor_f.line and abs(other_f.line - anchor_f.line) <= 5:
                         group[other_model] = other_f
                         used_findings.add((file, j, other_model))
                         break
@@ -482,7 +475,7 @@ def match_findings_across_models(
                         if (
                             other_f.line
                             and other_f2.line
-                            and abs(other_f.line - other_f2.line) <= 10
+                            and abs(other_f.line - other_f2.line) <= 5
                         ):
                             matched_groups.append(
                                 {
@@ -742,7 +735,7 @@ def _match_findings_fuzzy(
         - skill_only: findings only with skill (skill added)
 
     Matching rules:
-        - Same file AND line within ±10 lines → match
+        - Same file AND line within ±5 lines → match
         - Same file AND title similarity >= 0.30 → match
         - Different file but title similarity >= 0.5 (cross-file fallback) → match
     Each baseline finding can match at most one skill finding (greedy best-score).
@@ -760,8 +753,8 @@ def _match_findings_fuzzy(
             if not baseline_f.file or not baseline_f.line:
                 continue
             score = 0
-            # Same file AND line within ±10 lines → match
-            if skill_f.file == baseline_f.file and abs(skill_f.line - baseline_f.line) <= 10:
+            # Same file AND line within ±5 lines → match
+            if skill_f.file == baseline_f.file and abs(skill_f.line - baseline_f.line) <= 5:
                 score = 1.0
             # Same file AND title similarity >= 0.30 → match
             elif (
@@ -1057,8 +1050,8 @@ def compare_skill_vs_baseline(
             if not baseline_f.file or not baseline_f.line:
                 continue
             score = 0
-            # Same file AND line within ±10 lines → match
-            if skill_f.file == baseline_f.file and abs(skill_f.line - baseline_f.line) <= 10:
+            # Same file AND line within ±5 lines → match
+            if skill_f.file == baseline_f.file and abs(skill_f.line - baseline_f.line) <= 5:
                 score = 1.0
             # Same file AND title similarity >= 0.35 → match
             elif (
@@ -1170,71 +1163,42 @@ def compare_skill_vs_baseline(
 
 # Benchmark functions (defined after Finding class)
 
-BENCHMARK_SEVERITY_MAP = {
-    "reject": "CRITICAL",
-    "request-changes": "HIGH",
-    "nitpick": "MEDIUM",
-}
-
 
 def load_benchmark(benchmark_path: Path) -> list[dict] | None:
     """Load benchmark JSONL file.
 
     Returns None if file doesn't exist (graceful skip).
+    Delegates to load_benchmark_records from torvalds_skill.io_utils.
     """
     if not benchmark_path.exists():
         return None
-
-    records = []
-    with open(benchmark_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                # Skip malformed lines
-                continue
-    return records
+    records = load_benchmark_records(str(benchmark_path))
+    return records if records else []
 
 
 def match_finding_to_benchmark(
-    finding: Finding, benchmark_records: list[dict], line_tolerance: int = 10
+    finding: Finding, benchmark_records: list[dict], _line_tolerance: int = 5
 ) -> dict | None:
-    """Match a finding to a benchmark record.
+    """Match a finding to a benchmark record using shared ±5 strict matching.
 
-    Matching rules:
-    - Same file AND line within ±line_tolerance → match
-    - Same file AND category match AND title/trigger keyword overlap → match
+    Delegates to match_finding_to_bug from matching.py (same function used by
+    render_cross.py). The line_tolerance parameter is kept for signature compatibility
+    but ignored — the shared matcher always uses ±5 strict.
 
     Returns matched benchmark record or None.
     """
     if not finding.file or not finding.line:
         return None
 
-    normalized_file = normalize_filename(finding.file)
-
+    # Each benchmark record is a single bug; wrap it in a bugs list for the matcher
     for record in benchmark_records:
-        rec_file = normalize_filename(record.get("file", ""))
-        rec_line = record.get("line")
-
-        if not rec_file or not rec_line:
-            continue
-
-        # Same file AND line within tolerance
-        if normalized_file == rec_file and abs(finding.line - rec_line) <= line_tolerance:
-            return record
-
-        # Same file AND category match AND keyword overlap (fallback)
-        finding_category = finding.trigger or finding.title
-        rec_trigger = record.get("trigger", "")
-        if (
-            normalized_file == rec_file
-            and _keyword_overlap(finding_category, rec_trigger)
-            and abs(finding.line - rec_line) <= line_tolerance * 2
-        ):
-            return record
+        matched = match_finding_to_bug(
+            {"file": finding.file, "line": finding.line},
+            [record],
+            record.get("file", ""),
+        )
+        if matched:
+            return matched
 
     return None
 
@@ -1286,7 +1250,7 @@ def compute_benchmark_metrics(
                 finding_sev = finding.severity.lower()
                 rec_sev = matched_record.get("severity", "").lower()
                 # Map benchmark severity to our scale for comparison
-                mapped_rec_sev = BENCHMARK_SEVERITY_MAP.get(rec_sev, rec_sev).lower()
+                mapped_rec_sev = SEVERITY_MAP.get(rec_sev, rec_sev).lower()
                 if finding_sev == rec_sev or finding_sev == mapped_rec_sev:
                     matched_severities.append(bid)
 
@@ -1556,36 +1520,11 @@ def main():
     refusal_metrics = {}
 
     if eval_diffs_path.exists() and eval_results_path.exists():
-        # Load eval diffs (benchmark records)
-        eval_diffs = []
-        with open(eval_diffs_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    eval_diffs.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+        # Load eval diffs (benchmark records) - no dedup
+        eval_diffs = load_benchmark_records(str(eval_diffs_path))
 
-        # Load eval results
-        eval_results = []
-        eval_repetitions = 1
-        with open(eval_results_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    eval_results.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-
-        # The eval pipeline appends a re-run beside a judge-failed record instead
-        # of overwriting it, so the same evaluation can appear twice. Keep the last
-        # record per key, matching how the resume index resolves the collision.
-        eval_results = dedupe_records(eval_results)
-
+        # Load eval results - with dedup
+        eval_results = load_jsonl(eval_results_path)
         eval_repetitions = max(1, len({r.get("rep", 0) for r in eval_results}))
 
         # Group eval results by model

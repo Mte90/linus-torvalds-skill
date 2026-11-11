@@ -13,6 +13,8 @@ from torvalds_skill.provenance import (
 from torvalds_skill.provenance import (
     limitation as provenance_limitation,
 )
+from torvalds_skill.skill_paths import SKILL_DIR
+from torvalds_skill.skill_paths import skill_path as _skill_path
 
 
 def safe_truncate(text: str, limit: int = 40) -> str:
@@ -252,12 +254,12 @@ def generate_markdown(
     )
 
     # Generate table from runtime profiles
-    skill_files = {
-        "gpt-oss-120b": "[linus-torvalds-skill/SKILL.md](linus-torvalds-skill/SKILL.md)",
-        "glm5.2": "[linus-torvalds-skill/SKILL-GLM.md](linus-torvalds-skill/SKILL-GLM.md)",
-        "mistral": "[linus-torvalds-skill/SKILL-Mistral.md](linus-torvalds-skill/SKILL-Mistral.md)",
-        "qwen3.8-27b": "[linus-torvalds-skill/SKILL-Qwen.md](linus-torvalds-skill/SKILL-Qwen.md)",
-    }
+    skill_files = {}
+    for model_key in ("gpt-oss-120b", "glm5.2", "mistral-small-4-119b", "qwen3.8-27b"):
+        # Map model key to display key (mistral-small-4-119b -> mistral)
+        display_key = "mistral" if model_key == "mistral-small-4-119b" else model_key
+        rel = _skill_path(model_key).relative_to(SKILL_DIR.parent)
+        skill_files[display_key] = f"[{rel}]({rel})"
     severity_calib = {
         "gpt-oss-120b": "balanced",
         "glm5.2": "downgrade ONLY style/docs borderline, never correctness/error-handling",

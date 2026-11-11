@@ -142,16 +142,13 @@ def call_llm(
     timeout: int = 600,
     temperature: float = 0.3,
     max_tokens: int | None = None,
-    disable_thinking: bool = False,
 ) -> str:
     """Call OpenAI-compatible chat completions API with streaming. Returns accumulated text.
 
     Uses unified cache with key = SHA(stage + model + prompt + params).
     Cache bypass: set CACHE_ENABLED=0 env var.
 
-    When disable_thinking=True, sends chat_template_kwargs={"enable_thinking": false}
-    to suppress the thinking phase. Used as fallback when a reasoning model exhausts
-    its token budget on internal deliberation (reasoning_only_response).
+    Thinking is hardcoded on — no per-model exceptions.
     """
     from torvalds_skill.profiles import get_profile
 
@@ -165,7 +162,6 @@ def call_llm(
     params = {
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "disable_thinking": disable_thinking,
     }
     cache_key = llm_cache._compute_key("review", model, prompt, params)
 
@@ -185,44 +181,65 @@ def call_llm(
         "max_tokens": max_tokens,
         "stream": True,
     }
-    if disable_thinking:
-        # Some vLLM deployments honor chat_template_kwargs; others need the
-        # top-level flag. Send both so the suppression is picked up regardless.
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
-        payload["enable_thinking"] = False
+    # Thinking is hardcoded on — no per-model exceptions.
+    payload["chat_template_kwargs"] = {"enable_thinking": True}
+    payload["enable_thinking"] = True
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(CHAT_URL, data=body, headers=headers(), method="POST")
-
-    content_parts = []
-    reasoning_parts = []
     read_timeout = getattr(project_config, "READ_TIMEOUT", 120) if project_config else 120
-    with _WallClockTimeout(timeout):
-        with urllib.request.urlopen(req, timeout=read_timeout) as resp:
-            for raw in resp:
-                line = raw.decode("utf-8").strip()
-                if not line or not line.startswith("data: "):
-                    continue
-                data_str = line[6:]
-                if data_str == "[DONE]":
-                    break
-                chunk = json.loads(data_str)
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
-                text = delta.get("content")
-                if text:
-                    content_parts.append(text)
-                else:
-                    reasoning = delta.get("reasoning_content")
-                    if reasoning:
-                        reasoning_parts.append(reasoning)
 
-    result = "".join(content_parts)
-    if not result.strip() and reasoning_parts:
-        print(
-            "warning: reasoning-only response detected (no content produced). "
-            "Do not use chain-of-thought as review output.",
-            file=sys.stderr,
-        )
-        raise RuntimeError("reasoning_only_response")
+    inner_retries = 3
+    result = ""
+    for inner_attempt in range(inner_retries):
+        content_parts = []
+        reasoning_parts = []
+        finish_reason = None
+        req = urllib.request.Request(CHAT_URL, data=body, headers=headers(), method="POST")
+        with _WallClockTimeout(timeout):
+            with urllib.request.urlopen(req, timeout=read_timeout) as resp:
+                for raw in resp:
+                    line = raw.decode("utf-8").strip()
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    chunk = json.loads(data_str)
+                    choice = chunk.get("choices", [{}])[0]
+                    finish_reason = choice.get("finish_reason", finish_reason)
+                    delta = choice.get("delta", {})
+                    text = delta.get("content")
+                    if text:
+                        content_parts.append(text)
+                    else:
+                        reasoning = delta.get("reasoning_content")
+                        if reasoning:
+                            reasoning_parts.append(reasoning)
+
+        result = "".join(content_parts)
+
+        if result.strip():
+            break
+
+        if reasoning_parts:
+            print(
+                "warning: reasoning-only response detected (no content produced). "
+                "Do not use chain-of-thought as review output.",
+                file=sys.stderr,
+            )
+            raise RuntimeError("reasoning_only_response")
+
+        if inner_attempt < inner_retries - 1:
+            backoff = 2**inner_attempt
+            print(
+                f"empty response (finish={finish_reason}), "
+                f"retrying in {backoff}s (attempt {inner_attempt + 2}/{inner_retries})...",
+                file=sys.stderr,
+            )
+            time.sleep(backoff)
+        else:
+            raise RuntimeError(
+                f"empty_response: API returned no content after {inner_retries} attempts"
+            )
 
     try:
         _validate_review_format(result)
@@ -267,13 +284,10 @@ def main():
     else:
         timeout = profile.review_timeout
 
-    # Call API with retry. First attempt uses the model's native reasoning mode.
-    # If the model exhausts its token budget on reasoning (reasoning_only_response),
-    # the second attempt disables the thinking phase via chat_template_kwargs.
-    disable_thinking = False
+    # Call API with retry. Thinking is always on.
     for attempt in range(2):
         try:
-            response = call_llm(args.model, prompt, timeout, disable_thinking=disable_thinking)
+            response = call_llm(args.model, prompt, timeout)
             if not response.strip():
                 print(f"warning: empty response (attempt {attempt + 1})", file=sys.stderr)
                 if attempt == 0:
@@ -285,10 +299,9 @@ def main():
         except RuntimeError as e:
             if str(e) == "reasoning_only_response" and attempt == 0:
                 print(
-                    "retrying with reasoning disabled (enable_thinking=false)",
+                    "retrying (reasoning-only response on attempt 1)",
                     file=sys.stderr,
                 )
-                disable_thinking = True
                 continue
             print(f"error: API call failed (attempt {attempt + 1}): {e}", file=sys.stderr)
             if attempt == 0:

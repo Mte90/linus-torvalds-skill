@@ -147,14 +147,14 @@ class TestExtractToClusterFlow:
         output_path = tmp_path / "patterns.json"
         result = cluster_moves(moves_path, output_path, top_n=10)
 
-        # Assert: samples distributed
-        assert "samples_by_category" in result
-        assert "correctness" in result["samples_by_category"]
-        assert "performance" in result["samples_by_category"]
+        # Assert: result is a flat list of patterns
+        assert isinstance(result, list)
+        assert len(result) > 0, "Should have sampled patterns"
 
-        # Check stratified sampling distributed across severities
-        correctness_samples = result["samples_by_category"]["correctness"]
-        assert len(correctness_samples) > 0, "Should have samples from correctness category"
+        # Check that patterns have the expected categories
+        categories = {p["category"] for p in result}
+        assert "correctness" in categories
+        assert "performance" in categories
 
         # Assert: output JSON valid (already validated by cluster_moves writing it)
         assert output_path.exists(), "patterns.json should be created"
@@ -163,9 +163,8 @@ class TestExtractToClusterFlow:
         with open(output_path, encoding="utf-8") as f:
             patterns = json.load(f)
 
-        assert "total_moves" in patterns
-        assert "samples_by_category" in patterns
-        assert patterns["total_moves"] == 10
+        assert isinstance(patterns, list)
+        assert len(patterns) > 0
 
 
 class TestClusterToDistillToVerifyFlow:

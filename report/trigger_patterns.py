@@ -79,15 +79,21 @@ def extract_triggers_glm(content: str) -> Iterator[tuple[str, str]]:
         description is the trigger text.
     """
     content = _normalize_unicode(content)
-    # Extract theme headings (### Theme: X, #### Theme: X, or numbered
-    # `#### Theme N – Title` as emitted by single-call reasoning models)
+    # Extract theme headings (### Theme: X, #### Theme: X, #### Theme N: Title,
+    # `#### Theme N – Title` as emitted by single-call reasoning models,
+    # `#### N. Title (Theme: name)` as used in gpt-oss hybrid format,
+    # `#### N. Title` as bare numbered sub-headings (SKILL-Qwen.md),
+    # or `### Level N – Name` as Level headings used as themes)
     theme_pattern = re.compile(
-        r"^#{3,4}\s+Theme\s*(?::\s*(.+)|\d+\s*[\-\u2013\u2014]\s*(.+))\s*$",
+        r"^#{3,4}\s+Theme\s*(?::\s*(.+)|\d+\s*:\s*(.+)|\d+\s*[\-\u2013\u2014]\s*(.+))\s*$"
+        r"|^####\s+\d+\.\s+(.+?)\s+\(Theme:\s*(.+)\)\s*$"
+        r"|^####\s+(\d+)\.\s+(.+?)\s*$"
+        r"|^###\s+Level\s+\d+\s*[\-\u2013\u2014]\s*(.+?)\s*$",
         re.MULTILINE,
     )
 
     # Extract triggers: **Trigger**: text (no italics)
-    trigger_pattern = re.compile(r"\*\*Trigger\*\*:\s*(.+?)(?:\n|$)")
+    trigger_pattern = re.compile(r"\*\*Trigger(?:\*\*:|:\*\*)\s*(.+?)(?:\n|$)")
 
     # Pre-scan for the first theme to use as default for pre-theme triggers
     # instead of "General" — triggers before the first heading belong to the
@@ -96,7 +102,16 @@ def extract_triggers_glm(content: str) -> Iterator[tuple[str, str]]:
     for line in content.split("\n"):
         theme_match = theme_pattern.match(line.strip())
         if theme_match:
-            first_theme = (theme_match.group(1) or theme_match.group(2)).strip()
+            first_theme = (
+                theme_match.group(1)
+                or theme_match.group(2)
+                or theme_match.group(3)
+                or theme_match.group(4)
+                or theme_match.group(7)
+                or theme_match.group(8)
+            )
+            if first_theme:
+                first_theme = first_theme.strip()
             break
 
     current_theme = first_theme if first_theme else "General"
@@ -104,7 +119,16 @@ def extract_triggers_glm(content: str) -> Iterator[tuple[str, str]]:
     for line in content.split("\n"):
         theme_match = theme_pattern.match(line.strip())
         if theme_match:
-            current_theme = (theme_match.group(1) or theme_match.group(2)).strip()
+            current_theme = (
+                theme_match.group(1)
+                or theme_match.group(2)
+                or theme_match.group(3)
+                or theme_match.group(4)
+                or theme_match.group(7)
+                or theme_match.group(8)
+            )
+            if current_theme:
+                current_theme = current_theme.strip()
             continue
 
         trigger_match = trigger_pattern.search(line)
@@ -131,14 +155,17 @@ def extract_triggers_mistral(content: str) -> Iterator[tuple[str, str]]:
         (title, description) pairs where title is the bullet text and
         description is empty (Mistral format uses title as the trigger).
     """
-    # Extract level headings (### Level X: ...)
-    level_pattern = re.compile(r"^###\s+\*{0,2}\s*Level\s+\d+:\s*(.+?)\*{0,2}\s*$", re.MULTILINE)
+    # Extract level headings (## Level X: ... or ### **Level X: ... or ### Level X: ...)
+    level_pattern = re.compile(
+        r"^##\s*\*{0,2}\s*Level\s+\d+:\s*(.+?)\*{0,2}\s*$|^###\s+\*\*Level\s+\d+:\s*(.+?)\*\*\s*$",
+        re.MULTILINE,
+    )
 
     # Match trigger bullets: - **Trigger**: <description text>
     # Only the Trigger label marks an actual trigger; other bold bullets
     # (Type, Severity, Example, Correctness, Security, etc.) are field labels
     # or precedence items, not triggers.
-    bullet_pattern = re.compile(r"^-\s*\*\*Trigger\*\*:\s*(.+)")
+    bullet_pattern = re.compile(r"^-\s*\*\*Trigger(?:\*\*:|:\*\*)\s*(.+)")
 
     content = _normalize_unicode(content)
     current_level = "General"
@@ -147,16 +174,22 @@ def extract_triggers_mistral(content: str) -> Iterator[tuple[str, str]]:
     for line in content.split("\n"):
         level_match = level_pattern.match(line.strip())
         if level_match:
-            current_level = level_match.group(1).strip()
+            current_level = (level_match.group(1) or level_match.group(2)).strip()
             in_level_section = True  # C4: Entering a Level section
             continue
 
-        # Check for section end (new ### heading that's not a Level)
-        # Check for section end (exactly 3-hash heading that's not a Level)
-        if re.match(r"^###\s+\*{0,2}\s*Level", line.strip()):
+        # Check for section end (new ## heading that's not a Level; ### Theme: is inside Level)
+        if re.match(r"^##?\s+\*{0,2}\s*Level|^###\s+\*\*Level", line.strip()):
             continue  # already handled above
-        if line.strip().startswith("### ") and not line.strip().startswith("####"):
-            in_level_section = False  # C4: Exiting Level section
+        if line.strip().startswith("## ") and not line.strip().startswith("###"):
+            in_level_section = False  # C4: Exiting Level section (only ## headings, not ###)
+            continue
+        if (
+            line.strip().startswith("### ")
+            and not line.strip().startswith("####")
+            and not re.match(r"^###\s+Theme:", line.strip())
+        ):
+            in_level_section = False  # C4: Exiting Level section on non-Theme ### headings
             continue
 
         bullet_match = bullet_pattern.match(line)
@@ -166,29 +199,81 @@ def extract_triggers_mistral(content: str) -> Iterator[tuple[str, str]]:
                 yield (current_level, trigger_text)
 
 
+def extract_triggers_tier(content: str) -> Iterator[tuple[str, str]]:
+    """Extract triggers from Tier-style skill files (model non-compliance fallback).
+
+    Format: ``### Tier N: <Name>`` headings, ``#### <Subsection>`` sub-headings,
+    and ``- **<Title>** – <description>`` column-0 bullets. The unified
+    ``- **Trigger**: desc`` format is mandated in the prompt; this extractor is
+    the safety net for models that deviate (e.g. Qwen).
+    """
+    content = _normalize_unicode(content)
+    tier_pattern = re.compile(r"^###\s+Tier\s+\d+\s*:\s*(.+?)\s*$")
+    sub_pattern = re.compile(r"^####\s+(.+?)\s*$")
+    # en-dash, em-dash, or ASCII hyphen separating title from description
+    bullet_pattern = re.compile(r"^-\s*\*\*(.+?)\*\*\s*[\u2013\u2014\-]\s*(.+)$")
+
+    current_theme = "General"
+    in_tier = False
+    for line in content.split("\n"):
+        stripped = line.strip()
+        tier_match = tier_pattern.match(stripped)
+        if tier_match:
+            current_theme = tier_match.group(1).strip()
+            in_tier = True
+            continue
+        if not in_tier:
+            continue
+        sub_match = sub_pattern.match(stripped)
+        if sub_match:
+            current_theme = sub_match.group(1).strip()
+            continue
+        # Exit tier scope on a new ## (non-###) heading
+        if stripped.startswith("## ") and not stripped.startswith("###"):
+            in_tier = False
+            continue
+        # Column-0 bullets only (raw line) to skip indented field labels
+        bullet_match = bullet_pattern.match(line)
+        if bullet_match:
+            title = bullet_match.group(1).strip()
+            if title:
+                yield (current_theme, title)
+
+
 def detect_style(content: str) -> str:
     """Single auto-detect for skill trigger formats (Trigger Contract).
 
     All callers (dispatcher below, verify_skill.py) must use this — never
     reimplement detection inline. The What-to-look-for marker exists in ALL
-    variants, so it cannot discriminate; theme heading SHAPE can:
-    4-hash colon themes are gpt-oss-only, 3-hash colon themes are
-    GLM-only, numbered-dash themes are qwen-only, Level sections without
-    any Theme headings are mistral-only. Verified outcomes preserved:
-    SKILL.md→gpt-oss (54/3), GLM→glm (49/0), Mistral→mistral (18/0),
-    Qwen→glm (60/0).
+    variants, so it cannot discriminate; theme heading SHAPE can.
+    All current variants share the glm trigger format (``- **Trigger**: …``)
+    and route to the glm extractor. Level-only content without Theme headings
+    falls back to the mistral extractor. Tier-style headings (``### Tier N:``,
+    a model non-compliance fallback) route to the tier extractor. The gpt-oss
+    extractor is the final default.
     """
     text = _normalize_unicode(content)
     if re.search(r"^#{3,4}\s+Theme\s+\d+\s*[\-\u2013\u2014]", text, re.MULTILINE):
-        return "glm"  # numbered-dash themes (qwen single-call output)
-    if re.search(r"^###(?!#)\s+Theme:", text, re.MULTILINE):
-        return "glm"  # 3-hash colon themes (GLM two-stage output)
+        return "glm"  # numbered-dash themes (single-call output)
+    if re.search(r"^#{3,4}\s+Theme\s+\d+\s*:", text, re.MULTILINE):
+        return "glm"  # numbered-colon themes (Qwen single-call output)
     if re.search(r"^####\s+Theme:", text, re.MULTILINE):
-        return "gpt-oss"  # 4-hash colon themes (gpt-oss output)
-    if re.search(r"^###\s*\*{0,2}\s*Level", text, re.MULTILINE) and re.search(
-        r"^-\s*\*\*", text, re.MULTILINE
-    ):
-        return "mistral"  # Level sections (plain or bold-wrapped) + column-0 bullets
+        return "glm"  # 4-hash colon themes (GLM two-stage output)
+    if re.search(r"^###(?!#)\s+Theme:", text, re.MULTILINE):
+        return "glm"  # 3-hash colon themes (Mistral output uses glm trigger format)
+    # gpt-oss hybrid format: dash-separated Level headings + GLM trigger bullets
+    if re.search(
+        r"^###\s*\*{0,2}\s*Level\s+\d+\s*[\-\u2013\u2014]", text, re.MULTILINE
+    ) and re.search(r"\*\*Trigger(?:\*\*:|:\*\*)\s*", text):
+        return "glm"
+    # Mistral format: Level sections (colon or dash) + column-0 bullets
+    if re.search(
+        r"^###\s*\*{0,2}\s*Level\s+\d+\s*[\-\u2013\u2014:]", text, re.MULTILINE
+    ) and re.search(r"^-\s*\*\*", text, re.MULTILINE):
+        return "mistral"
+    # Tier format: ### Tier N: headings (model non-compliance fallback, e.g. Qwen)
+    if re.search(r"^###\s+Tier\s+\d+\s*:", text, re.MULTILINE):
+        return "tier"
     return "gpt-oss"  # Default
 
 
@@ -203,6 +288,7 @@ def has_known_markers(content: str) -> bool:
     return bool(
         re.search(r"^#{3,4}\s+Theme", text, re.MULTILINE)
         or re.search(r"^### Level", text, re.MULTILINE)
+        or re.search(r"^### Tier", text, re.MULTILINE)
         or "**What to look for**" in text
         or "**What to look for**:" in text
         or "**Trigger**:" in text
@@ -214,7 +300,7 @@ def extract_triggers(content: str, style: str = "auto") -> list[tuple[str, str]]
 
     Args:
         content: Skill markdown content
-        style: One of "gpt-oss", "glm", "mistral", or "auto" to auto-detect
+        style: One of "gpt-oss", "glm", "mistral", "tier", or "auto" to auto-detect
 
     Returns:
         List of (title, description) tuples
@@ -228,6 +314,8 @@ def extract_triggers(content: str, style: str = "auto") -> list[tuple[str, str]]
         return list(extract_triggers_glm(content))
     elif style == "mistral":
         return list(extract_triggers_mistral(content))
+    elif style == "tier":
+        return list(extract_triggers_tier(content))
     else:
         return []
 
@@ -235,8 +323,9 @@ def extract_triggers(content: str, style: str = "auto") -> list[tuple[str, str]]
 # Regex patterns for verification (used by verify_skill.py)
 TRIGGER_FORMAT_PATTERNS = {
     "gpt_oss": re.compile(r"\*\*What to look for\*\*:\s*(.+)", re.IGNORECASE),
-    "glm": re.compile(r"\*\*Trigger\*\*:\s*(.+)", re.IGNORECASE),
+    "glm": re.compile(r"\*\*Trigger(?:\*\*:|:\*\*)\s*(.+)", re.IGNORECASE),
     "mistral": re.compile(r"^\s*-\s*\*\*(.+?)\*\*\s*$", re.MULTILINE),
+    "tier": re.compile(r"^-\s*\*\*(.+?)\*\*\s*[\u2013\u2014\-]\s*(.+)$", re.MULTILINE),
 }
 
 # Style name mapping for verify_skill.py (C2: normalize hyphen to underscore)
@@ -244,6 +333,7 @@ STYLE_NAME_MAP = {
     "gpt-oss": "gpt_oss",
     "glm": "glm",
     "mistral": "mistral",
+    "tier": "tier",
 }
 
 # Unified trigger format for distillation output — single source of truth in distill_prompts.py

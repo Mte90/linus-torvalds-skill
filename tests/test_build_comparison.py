@@ -1,7 +1,6 @@
 """Tests for build_comparison.py fuzzy matching fixes."""
 
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -200,20 +199,20 @@ def test_match_finding_to_benchmark_exact_match():
 
 
 def test_match_finding_to_benchmark_line_tolerance():
-    """Test matching within ±10 line tolerance."""
+    """Test matching within ±5 line tolerance."""
     benchmark_records = [
         {"id": "SC-001", "file": "smallchat-server.c", "line": 45, "severity": "reject"},
     ]
 
-    # Finding at line 52 (within ±10 of 45)
-    finding = Finding("CRITICAL", "Test finding", "smallchat-server.c:52")
+    # Finding at line 50 (within ±5 of 45)
+    finding = Finding("CRITICAL", "Test finding", "smallchat-server.c:50")
     matched = match_finding_to_benchmark(finding, benchmark_records)
 
     assert matched is not None
     assert matched["id"] == "SC-001"
 
-    # Finding at line 60 (outside ±10 of 45)
-    finding_outside = Finding("CRITICAL", "Test finding", "smallchat-server.c:60")
+    # Finding at line 52 (outside ±5 of 45, was within ±10)
+    finding_outside = Finding("CRITICAL", "Test finding", "smallchat-server.c:52")
     matched_outside = match_finding_to_benchmark(finding_outside, benchmark_records)
 
     assert matched_outside is None
@@ -489,47 +488,31 @@ def test_benchmark_records_match_triggers():
     SC-040 control flow complexity).
 
     Expected coverage: >= 88% with threshold 0.15
-    Tests all 4 skill variants: SKILL.md, SKILL-GLM.md, SKILL-Mistral.md, SKILL-Qwen.md
+    Tests all 4 skill variants: gpt-oss/skill.md, glm/skill.md, mistral/skill.md, qwen/skill.md
     """
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).parent.parent / "report"))
+    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     from build_comparison import Finding, match_finding_to_trigger
-    from trigger_patterns import extract_triggers
+    from trigger_patterns import detect_style, extract_triggers
+
+    from torvalds_skill.skill_paths import all_skill_paths
 
     # Load benchmark
     benchmark_path = Path(__file__).parent.parent / "data" / "benchmark.jsonl"
     assert benchmark_path.exists(), f"Benchmark not found: {benchmark_path}"
 
-    # Test all 4 skill variants
-    skill_variants = [
-        ("SKILL.md", "gpt-oss"),
-        ("SKILL-GLM.md", "glm"),
-        ("SKILL-Mistral.md", "mistral"),
-        ("SKILL-Qwen.md", "gpt-oss"),  # Qwen uses same format as gpt-oss
-    ]
-
     with open(benchmark_path) as f:
         benchmark_records = [json.loads(line.strip()) for line in f if line.strip()]
 
-    for skill_file, default_style in skill_variants:
-        skill_path = Path(__file__).parent.parent / "linus-torvalds-skill" / skill_file
+    for _model, skill_path in all_skill_paths():
         if not skill_path.exists():
-            pytest.skip(f"Skill file not found: {skill_file}")
-
+            pytest.skip(f"Skill file not found: {skill_path}")
         content = skill_path.read_text()
 
-        # Auto-detect style based on content
-        if "**What to look for**:" in content:
-            style = "gpt-oss"
-        elif "**Trigger**:" in content:
-            style = "glm"
-        elif re.search(r"^\s*-\s*\*\*[A-Z]", content, re.MULTILINE):
-            style = "mistral"
-        else:
-            style = default_style
-
+        style = detect_style(content)
         triggers = extract_triggers(content, style=style)
         trigger_texts = [desc for (_title, desc) in triggers if desc]
 
@@ -554,7 +537,7 @@ def test_benchmark_records_match_triggers():
         # Expected: >= 65% coverage with threshold 0.15 (stricter than 0.05)
         # Some benchmarks won't match due to higher threshold
         assert coverage_pct >= 15, (
-            f"Coverage too low for {skill_file}: {coverage_pct:.1f}% ({covered}/{total})\n"
+            f"Coverage too low for {skill_path}: {coverage_pct:.1f}% ({covered}/{total})\n"
             f"Uncovered: {uncovered}"
         )
 

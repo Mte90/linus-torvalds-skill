@@ -6,40 +6,43 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Ensure torvalds_skill is importable
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
+
 
 def test_word_count_matches_wc():
     """Verify word counts match wc -w output."""
     from scripts.generate_variant_table import word_count
+    from torvalds_skill.skill_paths import skill_path
 
-    # Test SKILL.md
-    skill_path = ROOT / "linus-torvalds-skill/SKILL.md"
-    count = word_count(skill_path)
-
-    # Run wc -w and compare
+    # Test gpt-oss skill
+    skill_p = skill_path("gpt-oss-120b")
+    count = word_count(skill_p)
     result = subprocess.run(
-        ["wc", "-w", str(skill_path)],
+        ["wc", "-w", str(skill_p)],
         capture_output=True,
         text=True,
         check=True,
     )
     expected = int(result.stdout.split()[0])
-    assert count == expected, f"SKILL.md: expected {expected}, got {count}"
+    assert count == expected, f"gpt-oss skill: expected {expected}, got {count}"
 
-    # Test SKILL-GLM.md
-    glm_path = ROOT / "linus-torvalds-skill/SKILL-GLM.md"
-    count = word_count(glm_path)
-    result = subprocess.run(["wc", "-w", str(glm_path)], capture_output=True, text=True, check=True)
+    # Test glm skill
+    glm_p = skill_path("glm5.2")
+    count = word_count(glm_p)
+    result = subprocess.run(["wc", "-w", str(glm_p)], capture_output=True, text=True, check=True)
     expected = int(result.stdout.split()[0])
-    assert count == expected, f"SKILL-GLM.md: expected {expected}, got {count}"
+    assert count == expected, f"glm skill: expected {expected}, got {count}"
 
-    # Test SKILL-Mistral.md
-    mistral_path = ROOT / "linus-torvalds-skill/SKILL-Mistral.md"
-    count = word_count(mistral_path)
+    # Test mistral skill
+    mistral_p = skill_path("mistral-small-4-119b")
+    count = word_count(mistral_p)
     result = subprocess.run(
-        ["wc", "-w", str(mistral_path)], capture_output=True, text=True, check=True
+        ["wc", "-w", str(mistral_p)], capture_output=True, text=True, check=True
     )
     expected = int(result.stdout.split()[0])
-    assert count == expected, f"SKILL-Mistral.md: expected {expected}, got {count}"
+    assert count == expected, f"mistral skill: expected {expected}, got {count}"
 
 
 def test_variant_stats_populated():

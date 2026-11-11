@@ -52,15 +52,19 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
+
+# Import skill_paths for skill file locations
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from torvalds_skill.skill_paths import skill_path as _skill_path
 
 # Configuration
 ROOT = Path(__file__).resolve().parent.parent
 TARGET = Path("/tmp/smallchat")
 REPORT_DIR = ROOT / "report"
-SKILL_DIR = ROOT / "linus-torvalds-skill"
 BASELINE_DIR = REPORT_DIR / "baseline"
 
 # Source files to review
@@ -74,10 +78,8 @@ SOURCE_FILES = [
 
 # Data-driven model configuration
 MODELS = {
-    "gpt-oss-120b": SKILL_DIR / "SKILL.md",
-    "glm5.2": SKILL_DIR / "SKILL-GLM.md",
-    "mistral-small-4-119b": SKILL_DIR / "SKILL-Mistral.md",
-    "qwen3.8-27b": SKILL_DIR / "SKILL-Qwen.md",
+    model: _skill_path(model)
+    for model in ("gpt-oss-120b", "glm5.2", "mistral-small-4-119b", "qwen3.8-27b")
 }
 
 # TIMEOUTS replaced by profile.review_timeout - removed hard-coded dict
@@ -266,13 +268,7 @@ def ensure_target_exists():
 
 def verify_skill_assets():
     """Verify all skill files exist."""
-    skill_files = [
-        SKILL_DIR / "SKILL.md",
-        SKILL_DIR / "SKILL-GLM.md",
-        SKILL_DIR / "SKILL-Mistral.md",
-        SKILL_DIR / "SKILL-Qwen.md",
-    ]
-    for skill_file in skill_files:
+    for _model, skill_file in MODELS.items():
         if not skill_file.exists():
             print(f"Missing asset: {skill_file}", file=sys.stderr)
             sys.exit(1)
@@ -606,9 +602,11 @@ def run_chunk_review(
             backoff_multiplier = 2 ** (attempt - 1)
             jitter = random.randint(0, 30)
             retry_timeout = int(timeout_sec * backoff_multiplier + jitter)
+            sleep_sec = backoff_multiplier * 5
             print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file}: retrying (attempt {attempt}, timeout {retry_timeout}s)"
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label} chunk {source_file}: retrying in {sleep_sec}s (attempt {attempt}, timeout {retry_timeout}s)"
             )
+            time.sleep(sleep_sec)
             chunk_file.unlink(missing_ok=True)
         else:
             retry_timeout = timeout_sec
@@ -933,11 +931,16 @@ def run_review_chunked(
             failed_chunks += 1
 
     if failed_chunks > 0:
+        if failed_chunks == len(SOURCE_FILES):
+            print(
+                f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: all chunks failed, cannot produce review",
+                file=sys.stderr,
+            )
+            return False
         print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: {failed_chunks} chunk(s) failed, keeping chunks for retry",
+            f"[{datetime.now().strftime('%H:%M:%S')}] {model_label}: {failed_chunks} chunk(s) failed, merging partial review",
             file=sys.stderr,
         )
-        return False
 
     # Merge chunks into final output (mechanical merge, no LLM call)
     input_hash = compute_input_hash(model_label, "with-skill")

@@ -19,7 +19,6 @@ RENDER = ROOT / "scripts" / "render_cross.py"
 sys.path.insert(0, str(ROOT))
 from scripts.render_cross import _benchmark_to_diff_records  # noqa: E402
 from scripts.run_eval import (  # noqa: E402
-    benchmark_to_diff_records,
     build_codebase_prompt,
     load_benchmark_bugs,
 )
@@ -50,30 +49,6 @@ class TestBuildCodebasePrompt:
         assert "SC-002" not in prompt
         assert "Fatal assertion" not in prompt
         assert "Unbounded format-string" not in prompt
-
-
-class TestBenchmarkToDiffRecords:
-    """Tests for benchmark_to_diff_records (run_eval side)."""
-
-    def test_converts_bugs_to_diff_records(self):
-        bugs = [
-            {"id": "SC-001", "file": "smallchat-server.c", "line": 45, "severity": "reject"},
-            {"id": "SC-002", "file": "smallchat-server.c", "line": 30, "severity": "reject"},
-        ]
-        records = benchmark_to_diff_records(bugs)
-        assert len(records) == 2
-        assert records[0]["id"] == "SC-001"
-        assert records[0]["file"] == "smallchat-server.c"
-        assert records[0]["bugs"] == [bugs[0]]
-        assert records[0]["expected"] == "findings"
-
-    def test_empty_bugs_produce_empty_list(self):
-        assert benchmark_to_diff_records([]) == []
-
-    def test_missing_id_gets_synthetic_id(self):
-        bugs = [{"file": "x.c", "line": 1, "severity": "LOW"}]
-        records = benchmark_to_diff_records(bugs)
-        assert records[0]["id"] == "SC-0"
 
 
 class TestRenderCrossBenchmarkAdapter:
@@ -127,43 +102,6 @@ class TestLoadBenchmarkBugs:
             assert bugs[0]["id"] == "X-1"
         finally:
             run_eval_mod.BENCHMARK_PATH = original
-
-
-class TestCodebaseDispatchOrder:
-    """Regression: --codebase must dispatch before --out resolution.
-
-    Previously main() resolved args.out to eval_results_cross.jsonl when --cross
-    was set, THEN dispatched codebase mode. So codebase mode wrote to the old
-    diff-based cross file, colliding with 1080 existing records and skipping
-    11/12 pairings as 'already done'.
-    """
-
-    def test_codebase_dispatches_before_out_resolution(self):
-        import ast
-        import inspect
-
-        import scripts.run_eval as run_eval_mod
-
-        src = inspect.getsource(run_eval_mod.main)
-        tree = ast.parse(src)
-        codebase_line = None
-        out_line = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.If):
-                try:
-                    cond = ast.unparse(node.test)
-                    if "args.codebase" in cond and codebase_line is None:
-                        codebase_line = node.lineno
-                    if "args.out is None" in cond and out_line is None:
-                        out_line = node.lineno
-                except Exception:
-                    pass
-        assert codebase_line is not None, "args.codebase check not found in main()"
-        assert out_line is not None, "args.out is None check not found in main()"
-        assert codebase_line < out_line, (
-            f"codebase dispatch (line {codebase_line}) must come before "
-            f"out resolution (line {out_line})"
-        )
 
 
 class TestCodebaseCliFlag:

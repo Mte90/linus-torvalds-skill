@@ -11,6 +11,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Add src to path for torvalds_skill imports
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
 
 def run_stage(name: str, cmd: list[str], dry_run: bool = False) -> bool:
     """Run a single pipeline stage."""
@@ -53,13 +56,10 @@ def main():
     root = Path(__file__).parent.parent
     os.chdir(root)
 
-    # Model variants and their output paths
-    MODEL_VARIANTS = [
-        ("gpt-oss-120b", "linus-torvalds-skill/SKILL.md", "soul/soul.md"),
-        ("glm5.2", "linus-torvalds-skill/SKILL-GLM.md", "soul/soul-glm.md"),
-        ("mistral-small-4-119b", "linus-torvalds-skill/SKILL-Mistral.md", "soul/soul-mistral.md"),
-        ("qwen3.8-27b", "linus-torvalds-skill/SKILL-Qwen.md", "soul/soul-qwen.md"),
-    ]
+    # Model variants and their output paths from skill_paths.py
+    from torvalds_skill.skill_paths import all_models, skill_path, soul_path
+
+    MODEL_VARIANTS = [(m, str(skill_path(m)), str(soul_path(m))) for m in all_models()]
 
     def build_distill_commands():
         """Build distill commands for all 4 models."""

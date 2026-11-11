@@ -42,7 +42,6 @@ class ModelProfile:
         prompt_budget_chars: Max prompt length before auto-chunking triggers
         distill_mode: "single" or "two-stage" for skill generation
         strict_truncation: Stricter truncation detection for this model
-        soul_variant: Output filename variant for soul generation (soul, soul-glm, soul-mistral, soul-qwen)
         timeout: Default timeout in seconds for API calls
         max_tokens: Max tokens for generation
         parallel_workers: Max parallel workers for distill (GLM keeps parallelism due to provider rate limits)
@@ -56,7 +55,6 @@ class ModelProfile:
     prompt_budget_chars: int = 50000
     distill_mode: str = "two-stage"
     strict_truncation: bool = False
-    soul_variant: str = "soul"
     timeout: int = 120
     max_tokens: int = 16000
     parallel_workers: int = 1
@@ -74,7 +72,6 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         prompt_budget_chars=30000,
         distill_mode="single",
         strict_truncation=True,
-        soul_variant="soul",
         timeout=600,
         max_tokens=16000,
         parallel_workers=3,
@@ -88,7 +85,6 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         prompt_budget_chars=30000,  # Smaller budget due to reasoning overhead
         distill_mode="single",  # GLM requires single-call mode
         strict_truncation=True,
-        soul_variant="soul-glm",
         timeout=600,
         max_tokens=16000,  # from profiles, replaces GLM_MAX_TOKENS
         parallel_workers=3,  # GLM keeps parallelism (provider rate-limit decision, explicit per task 3.2)
@@ -100,15 +96,17 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         reasoning=True,
         slow=True,
         prompt_budget_chars=30000,
-        distill_mode="single",
+        distill_mode="two-stage",  # Mistral requires two-stage mode to prevent context overflow
         strict_truncation=True,
-        soul_variant="soul-mistral",
         timeout=600,
         max_tokens=16000,
         parallel_workers=3,
         review_timeout=2400,
         fallback_models=["gpt-oss-120b", "glm5.2"],
-        review_max_tokens=32000,
+        # Context: 120K tokens. With 60K the model spends the entire budget on
+        # reasoning and never emits content (reasoning_only_response). 16K
+        # forces it to stop thinking and produce the review (~19s, verified).
+        review_max_tokens=16000,
     ),
     "qwen3.8-27b": ModelProfile(
         # Reasoning model (verified: spends budget on thinking traces before
@@ -120,7 +118,6 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
         prompt_budget_chars=30000,
         distill_mode="single",
         strict_truncation=True,
-        soul_variant="soul-qwen",
         timeout=600,
         max_tokens=16000,
         parallel_workers=3,
@@ -136,14 +133,12 @@ KNOWN_PROFILES: dict[str, ModelProfile] = {
 # - distill_mode="two-stage": Safer default for unknown models; single-call is GLM-specific
 # - no fallback_models: Unknown models shouldn't chain to known profiles automatically
 # - timeout=120: Standard timeout; slow/reasoning models set this explicitly in their profiles
-# - soul_variant="soul": Default variant for unknown models
 DEFAULT_PROFILE = ModelProfile(
     reasoning=False,
     slow=False,
     prompt_budget_chars=50000,
     distill_mode="two-stage",
     strict_truncation=False,
-    soul_variant="soul",
     timeout=120,
     max_tokens=16000,
     parallel_workers=3,  # Match known profiles for consistent throughput
@@ -224,7 +219,6 @@ def _load_env_override(model_name: str) -> dict[str, Any]:
         "prompt_budget_chars",
         "distill_mode",
         "strict_truncation",
-        "soul_variant",
         "timeout",
         "max_tokens",
         "parallel_workers",

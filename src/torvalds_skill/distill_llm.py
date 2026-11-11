@@ -227,8 +227,11 @@ def _get_connection(host: str) -> http.client.HTTPSConnection:
     # Check if connection is still usable
     if conn is not None:
         try:
-            # Try to use the connection
-            if conn.sock is None or conn.sock._closed:
+            # Discard connections left in a non-Idle state by a previous
+            # timeout or error — reusing them raises CannotSendRequest /
+            # ResponseNotReady on the next request.
+            state = getattr(conn, "_HTTPConnection__state", None)
+            if conn.sock is None or conn.sock._closed or (state is not None and state != "Idle"):
                 conn.close()
                 conn = None
         except Exception:
@@ -362,11 +365,9 @@ def _call_llm(
             "max_tokens": call_profile.max_tokens,
             "stream": True,
         }
-        # Reasoning models must keep their thinking phase (user requirement):
-        # never disable it. Instead, give them a larger token budget so
-        # reasoning AND content both fit without truncation.
-        # Supported max_tokens per model (from profiles.py):
-        #   gpt-oss-120b: 16000, glm5.2: 16000, mistral-small-4-119b: 16000
+        # Thinking is hardcoded on for every model — no per-model exceptions.
+        payload["chat_template_kwargs"] = {"enable_thinking": True}
+        payload["enable_thinking"] = True
         if is_reasoning:
             payload["max_tokens"] = call_profile.review_max_tokens or call_profile.max_tokens
         # Caller can override max_tokens (e.g., soul generation needs more
@@ -543,37 +544,35 @@ def _call_llm(
                 return result
 
             except (
-                urllib.error.HTTPError,
+                http.client.HTTPException,
                 urllib.error.URLError,
-                TimeoutError,
-                http.client.RemoteDisconnected,
-                ConnectionResetError,
-                BrokenPipeError,
+                OSError,
             ) as e:
                 last_err = e  # type: ignore[assignment]
 
-                # Handle connection errors by discarding stale connection
-                if isinstance(
-                    e, (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError)
-                ):
-                    from urllib.parse import urlparse
+                # Always discard the stale connection on any error — a
+                # connection left in Request-sent state by a timeout or
+                # partial read raises CannotSendRequest / ResponseNotReady
+                # on reuse, which crashes the process.
+                from urllib.parse import urlparse
 
-                    parsed = urlparse(config.CHAT_URL)
-                    host_key = parsed.netloc
-                    pool = getattr(_tls, "connections", None)
-                    if pool and host_key in pool:
-                        try:
-                            pool[host_key].close()
-                        except Exception:
-                            pass
-                        del pool[host_key]
-                    # Retry once with fresh connection
-                    if attempt < model_retries - 1:
-                        print(
-                            "warning: connection error, retrying with fresh connection",
-                            file=sys.stderr,
-                        )
-                        continue
+                parsed = urlparse(config.CHAT_URL)
+                host_key = parsed.netloc
+                pool = getattr(_tls, "connections", None)
+                if pool and host_key in pool:
+                    try:
+                        pool[host_key].close()
+                    except Exception:
+                        pass
+                    del pool[host_key]
+
+                if attempt < model_retries - 1:
+                    print(
+                        f"warning: {type(e).__name__}: {e}, retrying with fresh connection (attempt {attempt + 2}/{model_retries})",
+                        file=sys.stderr,
+                    )
+                    time.sleep(config.RETRY_DELAY * (attempt + 1))
+                    continue
 
                 time.sleep(config.RETRY_DELAY * (attempt + 1))
 

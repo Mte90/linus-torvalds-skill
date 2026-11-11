@@ -10,7 +10,6 @@ Run from repository root: python3 scripts/render_cross.py
 """
 
 import argparse
-import json
 import re
 import sys
 from collections import defaultdict
@@ -26,8 +25,8 @@ ROOT = Path(__file__).resolve().parent.parent
 _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+from torvalds_skill.io_utils import load_jsonl  # noqa: E402
 from torvalds_skill.matching import (  # noqa: E402
-    dedupe_records,
     finding_identity,
     match_finding_to_bug,
 )
@@ -45,28 +44,8 @@ from torvalds_skill.severity import GROUND_TRUTH_SEVERITIES as SEVERITY_ORDER  #
 # Noise threshold for DS comparisons (used in overview note and verdict)
 DS_NOISE_THRESHOLD = 0.03
 
-
-def load_jsonl(path: Path) -> list[dict]:
-    """Load JSONL file, returning empty list if missing or empty.
-
-    Superseded records are dropped: the eval pipeline appends a re-run next to a
-    judge-failed record instead of overwriting it, so the same evaluation can
-    appear twice. The last one written wins, which is how the resume index
-    itself resolves the collision.
-    """
-    if not path.exists():
-        return []
-    records = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return dedupe_records(records)
+# Derive severity ranking from shared SEVERITY_ORDER
+SEVERITY_RANKING = {name: i for i, name in enumerate(SEVERITY_ORDER)}
 
 
 def _benchmark_to_diff_records(bugs: list[dict]) -> list[dict]:
@@ -1457,7 +1436,6 @@ def render_markdown(
     if unmatched:
         # One row per source location: the same finding shows up in many cells and
         # sometimes with two different severities, which repeats the line needlessly.
-        severity_order = {"reject": 0, "request-changes": 1, "nitpick": 2}
         grouped_unmatched: dict[str, dict[str, object]] = {}
         for u in unmatched:
             issue = (u["issue"] or "").strip()
@@ -1468,7 +1446,7 @@ def render_markdown(
             ):
                 continue
             loc = f"{u['file']}:{u['line']}" if u["line"] else u["file"]
-            rank = severity_order.get(u["severity"], 99)
+            rank = SEVERITY_RANKING.get(u["severity"], 99)
             entry = grouped_unmatched.get(loc)
             if entry is None:
                 grouped_unmatched[loc] = {

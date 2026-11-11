@@ -375,23 +375,25 @@ Reject the blocker.
 This is critical and must be fixed.
 """
         calibration = {
+            "corpus_stats": {
+                "severity_distribution": {
+                    "reject": {"count": 9110, "percentage": 23.8},
+                    "request-changes": {"count": 16162, "percentage": 42.2},
+                    "nitpick": {"count": 2614, "percentage": 6.8},
+                    "approve": {"count": 2689, "percentage": 7.0},
+                    "discussion": {"count": 7728, "percentage": 20.2},
+                }
+            },
             "severity_by_category": {
                 "correctness": {
                     "reject_rate": 20.0,
                     "request_changes_rate": 50.0,
                     "nitpick_rate": 20.0,
-                    "percentages": {
-                        "reject": 20.0,
-                        "request-changes": 50.0,
-                        "nitpick": 20.0,
-                        "approve": 5.0,
-                        "discussion": 5.0,
-                    },
                 },
-            }
+            },
         }
         result = validate_severity_consistency(skill, calibration)
-        # Should have warning about reject over-representation
+        # Should have warning about reject over-representation (100% vs 23.8% expected)
         assert any("reject" in w.lower() and "over-represented" in w.lower() for w in result)
 
     def test_underrepresented_reject(self):
@@ -402,23 +404,26 @@ Minor cosmetic issue.
 Optional improvement.
 """
         calibration = {
+            "corpus_stats": {
+                "severity_distribution": {
+                    "reject": {"count": 9110, "percentage": 23.8},
+                    "request-changes": {"count": 16162, "percentage": 42.2},
+                    "nitpick": {"count": 2614, "percentage": 6.8},
+                    "approve": {"count": 2689, "percentage": 7.0},
+                    "discussion": {"count": 7728, "percentage": 20.2},
+                }
+            },
             "severity_by_category": {
                 "correctness": {
                     "reject_rate": 40.0,
                     "request_changes_rate": 40.0,
                     "nitpick_rate": 10.0,
-                    "percentages": {
-                        "reject": 40.0,
-                        "request-changes": 40.0,
-                        "nitpick": 10.0,
-                        "approve": 5.0,
-                        "discussion": 5.0,
-                    },
                 },
-            }
+            },
         }
         result = validate_severity_consistency(skill, calibration)
         # Should have warning about either reject under-representation or nitpick over-representation
+        # (nitpick 100% vs 6.8% expected = ~14.7x deviation)
         has_reject_under = any(
             "reject" in w.lower() and "under-represented" in w.lower() for w in result
         )
@@ -1202,33 +1207,34 @@ Some intro text.
 
         Before fix: 96 triggers (over-matched nested field labels + non-Level bullets)
         After C4 fix: 18 triggers (only column-0 bullets in Level sections)
-        After regeneration: 31 triggers (new skill file with richer content)
-
-        The extractor matches - **Trigger**: <description> bullets at column 0
-        within Level sections, capturing the description text as the trigger.
+        After regeneration: the skill uses GLM-style headings (#### Theme:) and
+        auto-detects to the GLM extractor. The over-matching guard (< 65) still
+        applies; the exact count varies per regeneration so only a lower bound
+        is asserted.
         """
-        from report.trigger_patterns import extract_triggers_mistral
+        from report.trigger_patterns import extract_triggers
+        from torvalds_skill.skill_paths import skill_path
 
-        content = open("linus-torvalds-skill/SKILL-Mistral.md").read()
-        triggers = list(extract_triggers_mistral(content))
+        content = skill_path("mistral-small-4-119b").read_text()
+        triggers = extract_triggers(content)  # auto-detect routes to glm
 
-        # Count must be strictly below 65
+        # Count must be strictly below 65 (over-matching guard)
         assert len(triggers) < 65, f"Mistral count {len(triggers)} exceeds ceiling of 65"
 
-        # Actual count after regeneration
-        assert len(triggers) == 31, f"Expected 31 triggers, got {len(triggers)}"
+        # Lower bound: skill must produce a meaningful number of triggers
+        assert len(triggers) >= 20, f"Expected >= 20 triggers, got {len(triggers)}"
 
         trigger_texts = [t[1] for t in triggers]
-        levels = [t[0] for t in triggers]
+        themes = [t[0] for t in triggers]
 
         # Triggers should have real description text, not the label "Trigger"
         assert all(t != "Trigger" for t in trigger_texts), (
             "Extractor captured the label 'Trigger' instead of the description text"
         )
 
-        # All triggers should be within Level sections (not General)
-        assert all(level != "General" for level in levels), (
-            f"Found triggers outside Level sections: {levels}"
+        # All triggers should be within theme sections (not General)
+        assert all(theme != "General" for theme in themes), (
+            f"Found triggers outside theme sections: {themes}"
         )
 
         # False positives should NOT be present (nested field labels)
@@ -2038,3 +2044,139 @@ Test.
         assert "nitpick: 12.5%" in severity_stats
         assert "approve: 15.0%" in severity_stats
         assert "discussion: 10.0%" in severity_stats
+
+
+class TestHardTruncateSkill:
+    """Tests for _hard_truncate_skill() interview citation preservation."""
+
+    def test_preserves_interview_citations(self):
+        """Interview citations must ALWAYS be preserved during truncation."""
+        from torvalds_skill.distill import _hard_truncate_skill
+
+        # Build a synthetic ~12000-word skill with citations at the end
+        words_per_section = 1800
+        num_sections = 6
+        frontmatter = "---\ntitle: Test Skill\nmodel: test\n---\n"
+
+        # Build filler sections
+        filler_text = "word " * words_per_section
+        sections = []
+        for i in range(num_sections):
+            sections.append(f"## Section {i + 1}\n\n{filler_text}\n")
+
+        # Build interview citations section at the end
+        citations = [
+            "(Interview: blakecrosley-philosophy)",
+            "(Interview: business-insider 2014)",
+            "(Interview: correctness category)",
+            "(Interview: performance category)",
+            "(Interview: api-stability category)",
+        ]
+        citations_section = "## Interview Citations\n\n"
+        for citation in citations:
+            citations_section += f"- {citation}\n"
+
+        skill_md = frontmatter + "".join(sections) + citations_section
+
+        # Verify initial word count exceeds limit
+        initial_words = len(skill_md.split())
+        assert initial_words > 9500, f"Test setup failed: expected >9500 words, got {initial_words}"
+
+        # Truncate to limit
+        limit = 9500
+        truncated = _hard_truncate_skill(skill_md, limit=limit)
+
+        # Assert: interview citations section is present
+        assert "## Interview Citations" in truncated, (
+            "Interview Citations section was dropped during truncation"
+        )
+
+        # Assert: all 5 citations are present
+        for citation in citations:
+            assert citation in truncated, f"Citation '{citation}' was dropped during truncation"
+
+        # Assert: word count is within tolerance (limit + citations section)
+        truncated_words = len(truncated.split())
+        citations_words = len(citations_section.split())
+        tolerance = 100  # Allow some tolerance for the truncation marker
+        assert truncated_words <= limit + citations_words + tolerance, (
+            f"Truncated word count {truncated_words} exceeds limit {limit} + citations {citations_words} + tolerance {tolerance}"
+        )
+
+    def test_citations_section_alone_within_limit(self):
+        """If citations section alone fits, it should be preserved even with no other sections."""
+        from torvalds_skill.distill import _hard_truncate_skill
+
+        frontmatter = "---\ntitle: Test Skill\nmodel: test\n---\n"
+
+        # Build a tiny citations section
+        citations_section = "## Interview Citations\n\n"
+        citations_section += "- (Interview: test1)\n"
+        citations_section += "- (Interview: test2)\n"
+        citations_section += "- (Interview: test3)\n"
+
+        # Build one huge section that exceeds limit
+        huge_section = "## Huge Section\n\n" + ("word " * 20000) + "\n"
+
+        skill_md = frontmatter + huge_section + citations_section
+
+        # Truncate to limit
+        truncated = _hard_truncate_skill(skill_md, limit=9500)
+
+        # Citations must be preserved
+        assert "## Interview Citations" in truncated
+        assert "(Interview: test1)" in truncated
+        assert "(Interview: test2)" in truncated
+        assert "(Interview: test3)" in truncated
+
+    def test_idempotent_truncation(self):
+        """Running truncation twice should not duplicate citations or corrupt output."""
+        from torvalds_skill.distill import _hard_truncate_skill
+
+        frontmatter = "---\ntitle: Test Skill\nmodel: test\n---\n"
+
+        # Build sections exceeding limit
+        filler_text = "word " * 1800
+        sections = []
+        for i in range(6):
+            sections.append(f"## Section {i + 1}\n\n{filler_text}\n")
+
+        citations_section = "## Interview Citations\n\n"
+        citations_section += "- (Interview: test1)\n"
+        citations_section += "- (Interview: test2)\n"
+
+        skill_md = frontmatter + "".join(sections) + citations_section
+
+        # First truncation
+        truncated1 = _hard_truncate_skill(skill_md, limit=9500)
+
+        # Second truncation (should be no-op since already under limit)
+        truncated2 = _hard_truncate_skill(truncated1, limit=9500)
+
+        # Both should be identical
+        assert truncated1 == truncated2, "Second truncation changed the output"
+
+        # Citations should appear exactly once
+        assert truncated1.count("## Interview Citations") == 1
+        assert truncated1.count("(Interview: test1)") == 1
+        assert truncated1.count("(Interview: test2)") == 1
+
+    def test_no_citations_no_section_created(self):
+        """If no citations exist, no empty section should be created."""
+        from torvalds_skill.distill import _hard_truncate_skill
+
+        frontmatter = "---\ntitle: Test Skill\nmodel: test\n---\n"
+
+        # Build sections exceeding limit with no citations
+        filler_text = "word " * 1800
+        sections = []
+        for i in range(6):
+            sections.append(f"## Section {i + 1}\n\n{filler_text}\n")
+
+        skill_md = frontmatter + "".join(sections)
+
+        # Truncate
+        truncated = _hard_truncate_skill(skill_md, limit=9500)
+
+        # No citations section should be created
+        assert "## Interview Citations" not in truncated

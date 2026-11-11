@@ -224,23 +224,12 @@ def validate_severity_consistency(skill_text: str, calibration: dict) -> list[st
     if not severity_by_category:
         return warnings
 
-    # Compute expected ratios from calibration
-    expected_ratios = {"reject": 0.0, "nitpick": 0.0, "request-changes": 0.0}
-    total_cal = 0
-
-    for cat_data in severity_by_category.values():
-        # Use percentages if available
-        if "percentages" in cat_data:
-            for sev in expected_ratios.keys():
-                sev_key = sev if sev != "request-changes" else "request_changes"
-                rate_key = f"{sev_key}_rate"
-                if rate_key in cat_data:
-                    expected_ratios[sev] += cat_data[rate_key] / 100.0
-                    total_cal += 1
-
-    if total_cal > 0:
-        for sev in expected_ratios:
-            expected_ratios[sev] /= total_cal
+    # Compute expected ratios from corpus severity distribution
+    corpus_dist = calibration.get("corpus_stats", {}).get("severity_distribution", {})
+    expected_ratios = {}
+    for sev, data in corpus_dist.items():
+        if isinstance(data, dict) and "percentage" in data:
+            expected_ratios[sev] = data["percentage"] / 100.0
 
     # Compare actual vs expected
     actual_ratios = {sev: count / total_mentions for sev, count in severity_counts.items()}

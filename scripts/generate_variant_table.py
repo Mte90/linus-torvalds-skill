@@ -31,20 +31,15 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def get_variant_stats() -> list[dict]:
     """Get word counts for all skill/soul variants."""
-    variants = [
-        ("gpt-oss-120b", "linus-torvalds-skill/SKILL.md", "soul/soul.md"),
-        ("glm5.2", "linus-torvalds-skill/SKILL-GLM.md", "soul/soul-glm.md"),
-        ("mistral-small-4-119b", "linus-torvalds-skill/SKILL-Mistral.md", "soul/soul-mistral.md"),
-        ("qwen3.8-27b", "linus-torvalds-skill/SKILL-Qwen.md", "soul/soul-qwen.md"),
-    ]
+    from torvalds_skill.skill_paths import all_models, skill_path, soul_path
 
     stats = []
-    for model, skill_path, soul_path in variants:
+    for model in all_models():
         stats.append(
             {
                 "model": model,
-                "skill_words": word_count(ROOT / skill_path),
-                "soul_words": word_count(ROOT / soul_path),
+                "skill_words": word_count(skill_path(model)),
+                "soul_words": word_count(soul_path(model)),
             }
         )
     return stats

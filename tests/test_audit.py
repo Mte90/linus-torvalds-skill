@@ -178,9 +178,9 @@ class TestGenerateAuditReport:
         fake_data_dir = tmp_path / "data"
         fake_report_dir = tmp_path / "report"
 
-        with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
-            with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
-                with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
+        with patch("torvalds_skill.audit._skill_path", return_value=skill_path):
+            with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
+                with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                     report = generate_audit_report()
 
         assert report["skill_words_out"] == 5
@@ -224,11 +224,12 @@ class TestGenerateAuditReport:
         fake_data_dir = tmp_path / "data"
         fake_report_dir = tmp_path / "report"
         fake_skill_dir = tmp_path / "skill"
+        missing_skill = fake_skill_dir / "missing.md"
 
         # Don't create any files - all should be zeros
-        with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
-            with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
-                with patch("torvalds_skill.audit.SKILL_DIR", fake_skill_dir):
+        with patch("torvalds_skill.audit._skill_path", return_value=missing_skill):
+            with patch("torvalds_skill.audit.DATA_DIR", fake_data_dir):
+                with patch("torvalds_skill.audit.REPORT_DIR", fake_report_dir):
                     report = generate_audit_report()
 
         assert report["emails_in"] == 0

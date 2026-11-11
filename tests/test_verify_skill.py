@@ -15,6 +15,7 @@ from scripts.verify_skill import (
     _score_trigger_diversity,
     check_forbidden_terms,
     check_interview_quotes,
+    check_mode_profile_consistency,
     check_no_tables,
     check_non_fire_violations,
     check_style_proportion,
@@ -170,6 +171,52 @@ Use kmalloc and kfree together.
         violations = check_forbidden_terms(skill_file)
         assert len(violations) == 2
 
+    def test_inline_assembly_exempt(self, tmp_path):
+        """The phrase 'inline assembly' should NOT flag 'inline' as a violation."""
+        skill_file = tmp_path / "inline_asm.md"
+        skill_file.write_text("""# Systems Concepts
+
+Premature optimization includes inline assembly or hand-rolled data structures.
+""")
+        violations = check_forbidden_terms(skill_file)
+        # Should have no violations for 'inline' since it's part of 'inline assembly'
+        assert violations == []
+
+    def test_inline_assembly_with_various_whitespace(self, tmp_path):
+        """'inline assembly' with different whitespace should be exempt."""
+        skill_file = tmp_path / "inline_asm2.md"
+        skill_file.write_text("""# Examples
+
+Test inline  assembly with double space.
+Test inline\tassembly with tab.
+""")
+        violations = check_forbidden_terms(skill_file)
+        assert violations == []
+
+    def test_standalone_inline_still_banned(self, tmp_path):
+        """Standalone 'inline' should still be flagged as a violation."""
+        skill_file = tmp_path / "standalone_inline.md"
+        skill_file.write_text("""# Bad Code
+
+Mark this function inline for performance.
+""")
+        violations = check_forbidden_terms(skill_file)
+        assert len(violations) == 1
+        line_num, term, line = violations[0]
+        assert term == "inline"
+        assert "inline" in line
+
+    def test_inline_in_other_contexts_banned(self, tmp_path):
+        """'inline' in other contexts (not 'assembly') should be flagged."""
+        skill_file = tmp_path / "inline_other.md"
+        skill_file.write_text("""# Bad
+
+Use inline functions for small operations.
+""")
+        violations = check_forbidden_terms(skill_file)
+        assert len(violations) == 1
+        assert violations[0][1] == "inline"
+
 
 class TestCheckNoTables:
     """Test markdown table detection."""
@@ -270,6 +317,29 @@ From his (TED 2016) presentation.
 """)
         count, patterns = check_interview_quotes(skill_file)
         assert count >= 3
+
+    def test_bare_interview_citation_detected(self, tmp_path):
+        """Bare (Interview) without a source should be detected."""
+        skill_file = tmp_path / "bare.md"
+        skill_file.write_text("""# Quotes
+
+He said this (Interview) about the kernel.
+""")
+        count, patterns = check_interview_quotes(skill_file)
+        assert count >= 1
+        assert "(Interview)" in patterns
+
+    def test_bare_and_full_interview_not_double_counted(self, tmp_path):
+        """Full (Interview: src) and bare (Interview) are distinct citations."""
+        skill_file = tmp_path / "mixed.md"
+        skill_file.write_text("""# Sources
+
+(Interview: LWN 2020) and also (Interview) elsewhere.
+""")
+        count, patterns = check_interview_quotes(skill_file)
+        assert count == 2
+        assert "(Interview: LWN 2020)" in patterns
+        assert "(Interview)" in patterns
 
 
 class TestScoreSkillQuality:
@@ -910,3 +980,81 @@ class TestCheckStyleProportion:
         passes, proportion = check_style_proportion(skill_file)
         assert passes is True
         assert proportion == 0.0
+
+
+class TestCheckModeProfileConsistency:
+    """Tests for asymmetric mode vs profile consistency check."""
+
+    def test_modes_match_pass(self, tmp_path):
+        """When skill mode matches profile distill_mode, should PASS."""
+        skill_file = tmp_path / "skill.md"
+        # gpt-oss-120b has distill_mode="single" in profiles.py
+        skill_file.write_text(
+            "---\n"
+            "mode: single\n"
+            "model: gpt-oss-120b\n"
+            "date: 2024-01-01\n"
+            "prompt_hash: abc123\n"
+            "input_hash: def456\n"
+            "pipeline_version: 1.0\n"
+            "---\n"
+            "# Content\n"
+        )
+        status, message = check_mode_profile_consistency(skill_file)
+        assert status == "PASS"
+        assert "matches profile" in message
+
+    def test_two_stage_skill_single_profile_warning(self, tmp_path):
+        """two-stage skill + single profile = WARNING (over-engineered but valid)."""
+        skill_file = tmp_path / "skill.md"
+        # gpt-oss-120b has distill_mode="single" in profiles.py
+        skill_file.write_text(
+            "---\n"
+            "mode: two-stage\n"
+            "model: gpt-oss-120b\n"
+            "date: 2024-01-01\n"
+            "prompt_hash: abc123\n"
+            "input_hash: def456\n"
+            "pipeline_version: 1.0\n"
+            "---\n"
+            "# Content\n"
+        )
+        status, message = check_mode_profile_consistency(skill_file)
+        assert status == "WARNING"
+        assert "over-engineered" in message
+        assert "valid" in message
+
+    def test_single_skill_two_stage_profile_fail(self, tmp_path):
+        """single skill + two-stage profile = FAIL (under-generated)."""
+        skill_file = tmp_path / "skill.md"
+        # mistral-small-4-119b has distill_mode="two-stage" in profiles.py
+        skill_file.write_text(
+            "---\n"
+            "mode: single\n"
+            "model: mistral-small-4-119b\n"
+            "date: 2024-01-01\n"
+            "prompt_hash: abc123\n"
+            "input_hash: def456\n"
+            "pipeline_version: 1.0\n"
+            "---\n"
+            "# Content\n"
+        )
+        status, message = check_mode_profile_consistency(skill_file)
+        assert status == "FAIL"
+        assert "under-generated" in message
+
+    def test_no_frontmatter_pass(self, tmp_path):
+        """File without frontmatter should PASS (skipped)."""
+        skill_file = tmp_path / "skill.md"
+        skill_file.write_text("# Content without frontmatter\n")
+        status, message = check_mode_profile_consistency(skill_file)
+        assert status == "PASS"
+        assert "no frontmatter" in message
+
+    def test_missing_mode_field_pass(self, tmp_path):
+        """File with missing mode field should PASS (skipped)."""
+        skill_file = tmp_path / "skill.md"
+        skill_file.write_text("---\nmodel: gpt-oss-120b\ndate: 2024-01-01\n---\n# Content\n")
+        status, message = check_mode_profile_consistency(skill_file)
+        assert status == "PASS"
+        assert "missing" in message

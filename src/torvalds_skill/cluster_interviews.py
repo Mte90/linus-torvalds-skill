@@ -21,6 +21,18 @@ from .models import CATEGORIES
 
 SAMPLES_PER_CATEGORY = 25
 
+INTERVIEW_SEVERITY_MAP = {
+    "critical": "reject",
+    "high": "request-changes",
+    "medium": "discussion",
+    "low": "nitpick",
+}
+
+
+def _normalize_severity(sev: str) -> str:
+    """Map interview severity to email severity scale."""
+    return INTERVIEW_SEVERITY_MAP.get(sev, sev)
+
 
 def _load_email_moves(moves_path: Path) -> list[dict]:
     """Load email moves from jsonl file. Each line has email_message_id, email_date, moves[]."""
@@ -32,6 +44,7 @@ def _load_email_moves(moves_path: Path) -> list[dict]:
                 continue
             record = json.loads(line)
             email_date = record.get("email_date", "")
+            email_message_id = record.get("email_message_id", "")
             for move in record.get("moves", []):
                 moves.append(
                     {
@@ -41,6 +54,7 @@ def _load_email_moves(moves_path: Path) -> list[dict]:
                         "principle": move["principle"],
                         "quote": move["response"],
                         "source": "email",
+                        "email_message_id": email_message_id,
                         "email_date": email_date,
                     }
                 )
@@ -60,7 +74,7 @@ def _load_interview_moves(moves_path: Path) -> list[dict]:
                 moves.append(
                     {
                         "category": move["category"],
-                        "severity": move["severity"],
+                        "severity": _normalize_severity(move["severity"]),
                         "trigger": move["trigger"],
                         "principle": move["principle"],
                         "quote": move.get("response", move.get("quote", "")),
@@ -197,6 +211,8 @@ def cluster_interviews(email_moves_path: str, interview_moves_path: str, output_
                 "principle": m["principle"],
                 "quote": m["quote"],
                 "source": m["source"],
+                "email_message_id": m.get("email_message_id"),
+                "email_date": m.get("email_date"),
             }
         )
 

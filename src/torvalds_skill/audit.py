@@ -22,7 +22,10 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 _report_dir_env = os.environ.get("TORVALDS_REPORT_DIR")
 REPORT_DIR = Path(_report_dir_env) if _report_dir_env else ROOT / "report"
 DATA_DIR = ROOT / "data"
-SKILL_DIR = ROOT / "linus-torvalds-skill"
+from .skill_paths import SKILL_DIR as _SKILL_DIR
+from .skill_paths import skill_path as _skill_path
+
+SKILL_DIR = _SKILL_DIR
 
 
 def log_decision(stage: str, **kwargs) -> None:
@@ -67,7 +70,7 @@ def generate_audit_report() -> dict:
     - emails_in: count from data/torvalds.mbox or data/moves.jsonl
     - moves_extracted: count lines in data/moves.jsonl
     - moves_sampled: count from patterns.json samples_by_category
-    - skill_words_out: word count of linus-torvalds-skill/SKILL.md
+    - skill_words_out: word count of the base skill file
     - decisions_logged: count lines in report/decisions.jsonl
     """
     # emails_in: try torvalds.mbox first, then moves.jsonl as fallback
@@ -97,7 +100,7 @@ def generate_audit_report() -> dict:
             moves_sampled = 0
 
     # skill_words_out: word count of SKILL.md
-    skill_path = SKILL_DIR / "SKILL.md"
+    skill_path = _skill_path("gpt-oss-120b")
     skill_words_out = _word_count(skill_path)
 
     # decisions_logged: lines in decisions.jsonl
@@ -206,7 +209,7 @@ echo ""
 
 echo "=== Pipeline complete ==="
 echo "Finished at: $(date -Iseconds)"
-echo "Output: linus-torvalds-skill/SKILL.md"
+echo "Output: linus-torvalds-skill/gpt-oss/skill.md"
 """
 
     script_path = ROOT / "reproduce.sh"
